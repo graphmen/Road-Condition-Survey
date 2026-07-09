@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">MOTID Road Survey</string>
+    <string name="title_activity_main">MOTID Road Survey</string>
+    <string name="package_name">zw.gov.motid.roadsurvey</string>
+    <string name="custom_url_scheme">zw.gov.motid.roadsurvey</string>
+</resources>
