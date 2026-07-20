@@ -13,7 +13,7 @@ The project is structured as a monorepo:
 *   `app/` - Next.js React frontend dashboard layout, pages, assets, and proxy API router.
 *   `components/` - Shared UI components (dynamic Leaflet Map rendering, custom markers).
 *   `public/` - Static assets and `roads-data.json` database telemetry cache.
-*   `backend/` - FastAPI Python server mapping KoBo API connections.
+*   `backend/` - FastAPI Python server connecting to Supabase database.
 *   `mobile/` - Vite + React + TypeScript mobile app wrapped with Capacitor.
 
 ---
@@ -42,7 +42,7 @@ The project is structured as a monorepo:
     ```bash
     pip install -r requirements.txt
     ```
-3.  Configure variables in `backend/.env` (override KoBo credentials or ASSET_ID here).
+3.  Configure variables in `backend/.env` (override Supabase credentials or database settings here).
 4.  Run the server:
     ```bash
     python -m uvicorn main:app --reload --port 8000
@@ -107,11 +107,10 @@ Vercel natively builds and hosts the Next.js web application serverlessly.
     *   **Framework Preset**: Next.js
     *   **Root Directory**: `./` (Root directory of the monorepo, since Next.js configuration sits at the root).
 4.  Add **Environment Variables**:
-    *   `KOBO_API_URL` = `https://kf.kobotoolbox.org/api/v2`
-    *   `KOBO_USERNAME` = `vegris2020`
-    *   `KOBO_PASSWORD` = `musasa2020`
-    *   `KOBO_ROADS_ASSET_ID` = `YOUR_KOBO_FORM_ASSET_UID`
-    *   `OFFLINE_MODE` = `false` (Set to `false` on Vercel to fetch directly from KoBoToolbox API when a user loads the dashboard!).
+    *   `SUPABASE_URL` = `https://your-project.supabase.co`
+    *   `SUPABASE_ANON_KEY` = `your-anon-key`
+    *   `DATABASE_URL` = `postgresql://postgres:password@db.your-project.supabase.co:5432/postgres`
+    *   `OFFLINE_MODE` = `false` (Set to `false` on Vercel to fetch directly from the Supabase database when a user loads the dashboard!).
 5.  Click **Deploy**. Vercel will build the frontend, package static assets, and deploy the serverless API proxy routes.
 
 ---
@@ -138,3 +137,40 @@ To add Android platform capabilities to the Capacitor app:
     npx cap open android
     ```
 5.  Run/Build APK in Android Studio. The `CapacitorHttp` plugin is pre-configured in `capacitor.config.ts` to automatically bypass strict CORS webview constraints.
+
+Or build from the command line:
+
+```bash
+cd mobile/android
+.\gradlew.bat assembleDebug
+```
+
+The APK is written to `mobile/android/app/build/outputs/apk/debug/app-debug.apk`.
+
+---
+
+## 📲 Distribute APK to field collectors
+
+Collectors install the app from a public download page on the web dashboard:
+
+**Share this link:** `https://<your-domain>/download`
+
+### Publish a new APK build
+
+1. Build the Android APK (Android Studio or `gradlew assembleDebug` as above).
+2. From the repo root, copy it into the hosted downloads folder:
+
+```powershell
+npm run publish:apk
+# or with options:
+powershell -ExecutionPolicy Bypass -File scripts/publish-apk.ps1 -Version "1.1" -ApkPath "path\to\app.apk"
+```
+
+This copies the file to `public/downloads/motid-road-survey.apk` and updates `public/downloads/app-info.json`.
+
+3. Commit the APK + `app-info.json`, then redeploy the Next.js app (e.g. push to Vercel).
+4. Send collectors: `https://<your-domain>/download`
+
+Local test: [http://localhost:3000/download](http://localhost:3000/download)
+
+The Settings panel on the dashboard also links to this page.

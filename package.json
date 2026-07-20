@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "publish:apk": "powershell -ExecutionPolicy Bypass -File scripts/publish-apk.ps1"
   },
   "dependencies": {
     "next": "14.2.35",

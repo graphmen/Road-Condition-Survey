@@ -1,0 +1,12 @@
+﻿{
+    "available":  true,
+    "minAndroid":  "7.0 (API 24)",
+    "fileName":  "motid-road-survey.apk",
+    "releasedAt":  "2026-07-20T12:59:31.2713500Z",
+    "packageId":  "zw.gov.motid.roadsurvey",
+    "sizeBytes":  7160192,
+    "versionCode":  1,
+    "versionName":  "1.0",
+    "changelog":  "Field collector release for MOTID road condition surveys.",
+    "appName":  "MOTID Road Survey"
+}

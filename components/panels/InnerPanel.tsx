@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { Search, Download, Map, TrendingUp, BarChart2, ClipboardCheck, Database, LayoutDashboard } from "lucide-react";
+import { Search, Download, Map, TrendingUp, BarChart2, ClipboardCheck, Database, LayoutDashboard, Smartphone, ExternalLink } from "lucide-react";
 import { getAssetType, getAssetName, getRecordStatus, getCategoryKey } from "@/components/helpers";
 import type { NavModule } from "./LeftNav";
 import {
@@ -458,6 +458,54 @@ export default function InnerPanel({ module, records, selectedRecord, onSelectRe
         </div>
         <div className="inner-panel-body">
           <ExportInner records={records} />
+        </div>
+      </>
+    );
+  }
+
+  // ─── Settings module ──────────────────────────────────────────────────
+  if (module === "settings") {
+    return (
+      <>
+        <div className="inner-panel-header">
+          <div className="inner-panel-title">{icon}{label}</div>
+        </div>
+        <div className="inner-panel-body" style={{ padding: 14 }}>
+          <div style={{
+            background: "var(--bg-hover)",
+            border: "1px solid var(--border)",
+            borderRadius: 12,
+            padding: 14,
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+              <Smartphone size={16} color="var(--green)" />
+              <div style={{ fontFamily: "var(--font-title)", fontWeight: 700, fontSize: 14, color: "var(--green-dark)" }}>
+                Mobile collector app
+              </div>
+            </div>
+            <p style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.5, marginBottom: 12 }}>
+              Share this link with field collectors so they can download and install the Android APK on their phones.
+            </p>
+            <a
+              href="/download"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                background: "var(--green)",
+                color: "#fff",
+                textDecoration: "none",
+                borderRadius: 8,
+                padding: "10px 12px",
+                fontSize: 12,
+                fontWeight: 700,
+              }}
+            >
+              <ExternalLink size={13} /> Open download page
+            </a>
+          </div>
         </div>
       </>
     );

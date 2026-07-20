@@ -62,6 +62,8 @@ firebase-key.json
 # Large binary / generated files
 *.apk
 *.aab
+# Allow hosted collector APK on the public download page
+!public/downloads/*.apk
 roads_excel_content.txt
 all_assets.txt
 
