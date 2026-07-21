@@ -7,7 +7,7 @@ export interface SurveyDraft {
   survey_date: string;
   vegetation: string;
   gps: string; // "lat lng alt acc"
-  image_SADC_compliant: "yes" | "no";
+  image_SADC_compliant: "yes" | "no" | "mixed";
   photo?: string; // Optional Base64 data URL
   
   // Bridge optional fields

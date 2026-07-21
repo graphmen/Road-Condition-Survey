@@ -3,6 +3,18 @@ import { db } from "./lib/db";
 import type { SurveyDraft } from "./lib/db";
 import { SegmentTracker, PAUSED_ROAD_CONTEXT_KEY, SEGMENT_SESSION_KEY } from "./components/SegmentTracker";
 import type { SegmentGeometry } from "./components/SegmentTracker";
+import { AutocompleteInput } from "./components/AutocompleteInput";
+import {
+  SelectWithOther,
+  AUTHORITY_OPTIONS,
+  CONDITION_GFPM,
+  CONDITION_GFPM_CONSTRUCTION,
+} from "./components/SelectWithOther";
+import {
+  highwaySuggestions,
+  sectionSuggestions,
+  surveyorSuggestions,
+} from "./lib/suggestions";
 import { Geolocation } from "@capacitor/geolocation";
 import { Capacitor } from "@capacitor/core";
 import { BackgroundGeolocation } from "@capgo/background-geolocation";
@@ -175,7 +187,7 @@ const ASSET_CLASSES = [
   },
   {
     id: "shelvet",
-    label: "Shelvets",
+    label: "Shelverts",
     type: "Drainage",
     category: "drainage",
     icon: <FolderOpen size={20} />,
@@ -185,7 +197,7 @@ const ASSET_CLASSES = [
   },
   {
     id: "culvert",
-    label: "Culvets",
+    label: "Culverts",
     type: "Drainage",
     category: "drainage",
     icon: <CircleDot size={20} />,
@@ -347,7 +359,7 @@ export default function App() {
   const liveGpsPosRef = React.useRef<{ lat: number; lng: number; alt: number; acc: number } | null>(null);
   const bestGpsPosRef = React.useRef<{ lat: number; lng: number; alt: number; acc: number } | null>(null);
   const pointGpsEngineRef = React.useRef<"bg" | "cap" | "web" | null>(null);
-  const [imageSadcCompliant, setImageSadcCompliant] = useState<"yes" | "no">("yes");
+  const [imageSadcCompliant, setImageSadcCompliant] = useState<"yes" | "no" | "mixed">("yes");
   const [photo, setPhoto] = useState<string | null>(null);
 
   // Conditional Bridge Fields
@@ -1227,7 +1239,7 @@ export default function App() {
       setSealedType(draft.paved_road_type || "wide_mat_ss");
       setSealedClimate(draft.Climate_Region_001 || "moderate");
       setSealedTerrain(draft.Terrain_Type_002 || "flat");
-      setSealedAuthority(draft.Authority_Name_002 || "rdc");
+      setSealedAuthority(draft.Authority_Name_002 === "ddf" ? "rida" : (draft.Authority_Name_002 || "rdc"));
       setSealedLength(draft.Road_Length_km !== undefined ? String(draft.Road_Length_km) : "");
       setSealedWidth(draft.Road_width_m_002 !== undefined ? String(draft.Road_width_m_002) : "");
       setSealedDrainageType(draft.Drainage_Type_002_001 || "v_drain");
@@ -1251,7 +1263,7 @@ export default function App() {
       setGravelRoute(draft.Route_Number || "");
       setGravelLength(draft.Road_Length !== undefined ? String(draft.Road_Length) : "");
       setGravelClass(draft.gravel_road_class || "urban_collector");
-      setGravelAuthority(draft.Authority_Name || "rdc");
+      setGravelAuthority(draft.Authority_Name === "ddf" ? "rida" : (draft.Authority_Name || "rdc"));
       setGravelVegetation(draft.servitude_vegetation || "medium");
       setGravelClimate(draft.Climate_Region || "moderate");
       setGravelTerrain(draft.Terrain_Type || "flat");
@@ -1276,7 +1288,7 @@ export default function App() {
       setEarthDrainageCond(draft.earth_drainage_condition || "good");
       setEarthTerrain(draft.earth_terrain || "flat");
       setEarthClimate(draft.earth_climate || "moderate");
-      setEarthAuthority(draft.earth_authority || "rdc");
+      setEarthAuthority(draft.earth_authority === "ddf" ? "rida" : (draft.earth_authority || "rdc"));
       setEarthYearConstructed(draft.earth_year_constructed !== undefined ? String(draft.earth_year_constructed) : "");
     } else if (category === "footbridge") {
       setFootbridgeName(draft.footbridge_name || "");
@@ -1362,12 +1374,20 @@ export default function App() {
         showToast("Highway Route is required", "error");
         return;
       }
-      if (!sectionName) {
+      if (!sectionName.trim()) {
         showToast("Section Name is required", "error");
         return;
       }
-      if (!surveyorName) {
+      if (!surveyorName.trim()) {
         showToast("Surveyor Name is required", "error");
+        return;
+      }
+      if (!surveyDate) {
+        showToast("Survey Date is required", "error");
+        return;
+      }
+      if (!vegetation) {
+        showToast("Vegetation Status is required", "error");
         return;
       }
 
@@ -1375,6 +1395,18 @@ export default function App() {
         // Road surveys: GPS is derived from segment geometry — no separate point capture needed
         if (!segmentGeometry || segmentGeometry.points.length === 0) {
           showToast("🛰 Please complete the GPS segment recording before queueing.", "error");
+          return;
+        }
+        if (assetCategory === "sealed" && !sealedName.trim() && !roadName.trim()) {
+          showToast("Sealed road name is required", "error");
+          return;
+        }
+        if (assetCategory === "gravel" && !gravelName.trim() && !roadName.trim()) {
+          showToast("Gravel road name is required", "error");
+          return;
+        }
+        if (assetCategory === "earth" && !earthName.trim() && !roadName.trim()) {
+          showToast("Earth road name is required", "error");
           return;
         }
         // Auto-populate GPS from the first segment point
@@ -1690,6 +1722,7 @@ export default function App() {
   };
 
   const handleDeleteDraft = (id: string) => {
+    if (!window.confirm("Delete this survey? This cannot be undone.")) return;
     db.deleteDraft(id);
     setDrafts(db.getDrafts());
     showToast("Survey draft deleted.", "info");
@@ -1983,7 +2016,7 @@ export default function App() {
       if (draft.bridge) draftName = `Bridge: ${draft.bridge}`;
       else if (draft.footbridge_name) draftName = `Footbridge: ${draft.footbridge_name}`;
       else if (draft.culvet_class) draftName = `Culvert: ${String(draft.culvet_class).replace("_", " ")}`;
-      else if (draft.shelvets_type) draftName = `Shelvet: ${draft.shelvets_type}`;
+      else if (draft.shelvets_type) draftName = `Shelvert: ${draft.shelvets_type}`;
       else if (draft.gravel_road_name) draftName = `Gravel Road: ${draft.gravel_road_name}`;
       else if (draft.earth_road_name) draftName = `Earth Road: ${draft.earth_road_name}`;
       else if (draft.causeway_name) draftName = `Piped Causeway: ${draft.causeway_name}`;
@@ -2538,24 +2571,22 @@ export default function App() {
             {/* Core Metadata */}
             <div className="mobile-form-group">
               <label className="mobile-label">Highway Route</label>
-              <input
-                type="text"
+              <AutocompleteInput
                 placeholder="e.g. A4 Highway (Harare - Masvingo - Beitbridge)"
                 value={roadName}
-                onChange={(e) => setRoadName(e.target.value)}
-                className="mobile-input"
+                onChange={setRoadName}
+                suggestions={highwaySuggestions(drafts)}
                 required
               />
             </div>
 
             <div className="mobile-form-group">
               <label className="mobile-label">Section / Chainage Name</label>
-              <input
-                type="text"
+              <AutocompleteInput
                 placeholder="e.g. Marondera - Rusape Section"
                 value={sectionName}
-                onChange={(e) => setSectionName(e.target.value)}
-                className="mobile-input"
+                onChange={setSectionName}
+                suggestions={sectionSuggestions(drafts)}
                 required
               />
             </div>
@@ -2563,12 +2594,11 @@ export default function App() {
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
               <div className="mobile-form-group">
                 <label className="mobile-label">Surveyor Name</label>
-                <input
-                  type="text"
+                <AutocompleteInput
                   placeholder="e.g. Eng. Rondozai"
                   value={surveyorName}
-                  onChange={(e) => setSurveyorName(e.target.value)}
-                  className="mobile-input"
+                  onChange={setSurveyorName}
+                  suggestions={surveyorSuggestions(drafts)}
                   required
                 />
               </div>
@@ -2584,25 +2614,29 @@ export default function App() {
               </div>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-              <div className="mobile-form-group">
-                <label className="mobile-label">Vegetation Status</label>
-                <select value={vegetation} onChange={(e) => setVegetation(e.target.value)} className="mobile-select">
-                  <option value="none">None</option>
-                  <option value="light">Light</option>
-                  <option value="medium">Medium</option>
-                  <option value="dense">Dense</option>
-                </select>
-              </div>
+            <div style={{ display: "grid", gridTemplateColumns: isRoadType ? "1fr" : "1fr 1fr", gap: "10px" }}>
+              {/* For road types, vegetation moves below the completed segment */}
+              {!isRoadType && (
+                <div className="mobile-form-group">
+                  <label className="mobile-label">Vegetation Status</label>
+                  <select value={vegetation} onChange={(e) => setVegetation(e.target.value)} className="mobile-select" required>
+                    <option value="none">None</option>
+                    <option value="light">Light</option>
+                    <option value="medium">Medium</option>
+                    <option value="dense">Dense</option>
+                  </select>
+                </div>
+              )}
               <div className="mobile-form-group">
                 <label className="mobile-label">SADC Sign Compliant</label>
                 <select
                   value={imageSadcCompliant}
-                  onChange={(e) => setImageSadcCompliant(e.target.value as any)}
+                  onChange={(e) => setImageSadcCompliant(e.target.value as "yes" | "no" | "mixed")}
                   className="mobile-select"
                 >
                   <option value="yes">Yes (Compliant)</option>
                   <option value="no">No (Non-Compliant)</option>
+                  <option value="mixed">Mixed</option>
                 </select>
               </div>
             </div>
@@ -2831,6 +2865,19 @@ export default function App() {
               </div>
             )}
 
+            {/* Vegetation after segment — road surveys only */}
+            {isRoadType && segmentGeometry && (
+              <div className="mobile-form-group">
+                <label className="mobile-label">Vegetation Status</label>
+                <select value={vegetation} onChange={(e) => setVegetation(e.target.value)} className="mobile-select" required>
+                  <option value="none">None</option>
+                  <option value="light">Light</option>
+                  <option value="medium">Medium</option>
+                  <option value="dense">Dense</option>
+                </select>
+              </div>
+            )}
+
             {/* Lock message when road type chosen but no segment yet */}
             {isRoadType && !segmentGeometry && (
               <div style={{ textAlign: "center", padding: "14px 10px", color: "var(--text-muted)", fontSize: "11px", background: "var(--bg-card)", border: "1px dashed var(--border-color)", borderRadius: "var(--radius-md)" }}>
@@ -2992,15 +3039,19 @@ export default function App() {
             {/* Conditional Form: Shelvet */}
             {assetCategory === "shelvet" && (
               <fieldset style={{ border: "1px solid var(--border-color)", padding: "12px", borderRadius: "var(--radius-md)", display: "flex", flexDirection: "column", gap: "10px" }}>
-                <legend style={{ fontSize: "10px", fontWeight: "700", textTransform: "uppercase", color: "var(--text-accent)", padding: "0 6px" }}>Shelvet properties</legend>
+                <legend style={{ fontSize: "10px", fontWeight: "700", textTransform: "uppercase", color: "var(--text-accent)", padding: "0 6px" }}>Shelvert properties</legend>
                 
                 <div className="mobile-form-group">
-                  <label className="mobile-label">Shelvet material/type</label>
-                  <select value={shelvetType} onChange={(e) => setShelvetType(e.target.value)} className="mobile-select">
-                    <option value="armco">Armco steel pipe</option>
-                    <option value="shelvets">Masonry shelvets</option>
-                    <option value="concrete">Concrete shelvets</option>
-                  </select>
+                  <label className="mobile-label">Shelvert material/type</label>
+                  <SelectWithOther
+                    value={shelvetType}
+                    onChange={setShelvetType}
+                    options={[
+                      { value: "armco", label: "Armco steel pipe" },
+                      { value: "shelvets", label: "Masonry shelverts" },
+                      { value: "concrete", label: "Concrete shelverts" },
+                    ]}
+                  />
                 </div>
 
                 <div className="mobile-form-group">
@@ -3088,11 +3139,11 @@ export default function App() {
                   </div>
                   <div className="mobile-form-group">
                     <label className="mobile-label">Authority Name</label>
-                    <select value={sealedAuthority} onChange={(e) => setSealedAuthority(e.target.value)} className="mobile-select">
-                      <option value="rdc">RDC</option>
-                      <option value="mot">MOT</option>
-                      <option value="ddf">DDF</option>
-                    </select>
+                    <SelectWithOther
+                      value={sealedAuthority}
+                      onChange={setSealedAuthority}
+                      options={AUTHORITY_OPTIONS}
+                    />
                   </div>
                 </div>
 
@@ -3150,6 +3201,7 @@ export default function App() {
                       <option value="no_cracks">No cracks</option>
                       <option value="faint_cracks">Faint cracks</option>
                       <option value="distinct_cracks_up_to_1mm">Distinct cracks up to 1mm</option>
+                      <option value="mixed">Mixed</option>
                     </select>
                   </div>
                   <div className="mobile-form-group">
@@ -3158,6 +3210,7 @@ export default function App() {
                       <option value="no_cracks">No cracks</option>
                       <option value="cracks_3_5mm">Cracks 3-5mm</option>
                       <option value="cracks_5_10mm">Cracks 5-10mm</option>
+                      <option value="mixed">Mixed</option>
                     </select>
                   </div>
                 </div>
@@ -3165,11 +3218,12 @@ export default function App() {
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                   <div className="mobile-form-group">
                     <label className="mobile-label">Pothole / Patches</label>
-                    <select value={sealedPotholesPatches} onChange={(e) => setSealedPotholesPatches(e.target.value)} className="mobile-select">
-                      <option value="good">Good</option>
-                      <option value="fair">Fair</option>
-                      <option value="poor">Poor</option>
-                    </select>
+                    <SelectWithOther
+                      value={sealedPotholesPatches}
+                      onChange={setSealedPotholesPatches}
+                      options={CONDITION_GFPM}
+                      includeOther={false}
+                    />
                   </div>
                   <div className="mobile-form-group">
                     <label className="mobile-label">Rutting Degree</label>
@@ -3177,6 +3231,7 @@ export default function App() {
                       <option value="no_rutting__5mm">No rutting &lt;5mm</option>
                       <option value="discernible_5_15mm">Discernible 5-15mm</option>
                       <option value="large_15_25mm">Large 15-25mm</option>
+                      <option value="mixed">Mixed</option>
                     </select>
                   </div>
                 </div>
@@ -3247,15 +3302,17 @@ export default function App() {
                       <option value="dry_season_only">Dry season only</option>
                       <option value="wet_season_only">Wet Season only</option>
                       <option value="rupture">Rupture</option>
+                      <option value="under_construction">Under construction / rehabilitation (detour)</option>
                     </select>
                   </div>
                   <div className="mobile-form-group">
                     <label className="mobile-label">Grid</label>
-                    <select value={sealedGrid} onChange={(e) => setSealedGrid(e.target.value)} className="mobile-select">
-                      <option value="good">Good</option>
-                      <option value="fair">Fair</option>
-                      <option value="poor">Poor</option>
-                    </select>
+                    <SelectWithOther
+                      value={sealedGrid}
+                      onChange={setSealedGrid}
+                      options={CONDITION_GFPM}
+                      includeOther={false}
+                    />
                   </div>
                 </div>
 
@@ -3272,11 +3329,13 @@ export default function App() {
                   </div>
                   <div className="mobile-form-group">
                     <label className="mobile-label" style={{ color: "var(--text-accent)" }}>Riding Quality</label>
-                    <select value={sealedRidingQuality} onChange={(e) => setSealedRidingQuality(e.target.value)} className="mobile-select" style={{ borderColor: "var(--accent-emerald)" }}>
-                      <option value="good">GOOD</option>
-                      <option value="fair">FAIR</option>
-                      <option value="poor">POOR</option>
-                    </select>
+                    <SelectWithOther
+                      value={sealedRidingQuality}
+                      onChange={setSealedRidingQuality}
+                      options={CONDITION_GFPM_CONSTRUCTION}
+                      includeOther={false}
+                      style={{ borderColor: "var(--accent-emerald)" }}
+                    />
                   </div>
                 </div>
               </fieldset>
@@ -3352,11 +3411,11 @@ export default function App() {
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                   <div className="mobile-form-group">
                     <label className="mobile-label">Authority Name</label>
-                    <select value={gravelAuthority} onChange={(e) => setGravelAuthority(e.target.value)} className="mobile-select">
-                      <option value="rdc">RDC</option>
-                      <option value="mot">MOT</option>
-                      <option value="ddf">DDF</option>
-                    </select>
+                    <SelectWithOther
+                      value={gravelAuthority}
+                      onChange={setGravelAuthority}
+                      options={AUTHORITY_OPTIONS}
+                    />
                   </div>
                   <div className="mobile-form-group">
                     <label className="mobile-label">Servitude Vegetation</label>
@@ -3445,6 +3504,7 @@ export default function App() {
                       <option value="none">None</option>
                       <option value="minor">Minor</option>
                       <option value="major">Major</option>
+                      <option value="mixed">Mixed</option>
                     </select>
                   </div>
                 </div>
@@ -3457,6 +3517,7 @@ export default function App() {
                       <option value="dry_season_only">Dry season only</option>
                       <option value="wet_season_only">Wet Season only</option>
                       <option value="rupture">Rupture</option>
+                      <option value="under_construction">Under construction / rehabilitation (detour)</option>
                     </select>
                   </div>
                   <div className="mobile-form-group">
@@ -3473,11 +3534,13 @@ export default function App() {
 
                 <div className="mobile-form-group">
                   <label className="mobile-label" style={{ color: "var(--text-accent)" }}>Riding Quality Condition</label>
-                  <select value={gravelRidingQuality} onChange={(e) => setGravelRidingQuality(e.target.value)} className="mobile-select" style={{ borderColor: "var(--accent-emerald)" }}>
-                    <option value="good">GOOD</option>
-                    <option value="fair">FAIR</option>
-                    <option value="poor">POOR</option>
-                  </select>
+                  <SelectWithOther
+                    value={gravelRidingQuality}
+                    onChange={setGravelRidingQuality}
+                    options={CONDITION_GFPM_CONSTRUCTION}
+                    includeOther={false}
+                    style={{ borderColor: "var(--accent-emerald)" }}
+                  />
                 </div>
               </fieldset>
             )}
@@ -3502,11 +3565,11 @@ export default function App() {
                   </div>
                   <div className="mobile-form-group">
                     <label className="mobile-label">Authority</label>
-                    <select value={earthAuthority} onChange={(e) => setEarthAuthority(e.target.value)} className="mobile-select">
-                      <option value="rdc">RDC</option>
-                      <option value="mot">MOT</option>
-                      <option value="ddf">DDF</option>
-                    </select>
+                    <SelectWithOther
+                      value={earthAuthority}
+                      onChange={setEarthAuthority}
+                      options={AUTHORITY_OPTIONS}
+                    />
                   </div>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
@@ -3563,6 +3626,7 @@ export default function App() {
                       <option value="all_year_round">All Year Round</option>
                       <option value="dry_season_only">Dry Season Only</option>
                       <option value="rupture">Rupture</option>
+                      <option value="under_construction">Under construction / rehabilitation (detour)</option>
                     </select>
                   </div>
                   <div className="mobile-form-group">
@@ -3572,11 +3636,13 @@ export default function App() {
                 </div>
                 <div className="mobile-form-group">
                   <label className="mobile-label" style={{ color: "var(--text-accent)" }}>Overall Condition</label>
-                  <select value={earthCondition} onChange={(e) => setEarthCondition(e.target.value)} className="mobile-select" style={{ borderColor: "var(--accent-emerald)" }}>
-                    <option value="good">GOOD</option>
-                    <option value="fair">FAIR</option>
-                    <option value="poor">POOR</option>
-                  </select>
+                  <SelectWithOther
+                    value={earthCondition}
+                    onChange={setEarthCondition}
+                    options={CONDITION_GFPM_CONSTRUCTION}
+                    includeOther={false}
+                    style={{ borderColor: "var(--accent-emerald)" }}
+                  />
                 </div>
               </fieldset>
             )}
@@ -4281,7 +4347,7 @@ export default function App() {
                   if (draft.bridge) title = `Bridge: ${draft.bridge}`;
                   else if (draft.footbridge_name) title = `Footbridge: ${draft.footbridge_name}`;
                   else if (draft.culvet_class) title = `Culvert: ${String(draft.culvet_class).replace("_", " ")}`;
-                  else if (draft.shelvets_type) title = `Shelvet: ${draft.shelvets_type}`;
+                  else if (draft.shelvets_type) title = `Shelvert: ${draft.shelvets_type}`;
                   else if (draft.gravel_road_name) title = `Gravel Road: ${draft.gravel_road_name}`;
                   else if (draft.earth_road_name) title = `Earth Road: ${draft.earth_road_name}`;
                   else if (draft.causeway_name) title = `Piped Causeway: ${draft.causeway_name}`;
