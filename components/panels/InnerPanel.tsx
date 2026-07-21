@@ -1,7 +1,10 @@
 "use client";
 import { useState } from "react";
 import { Search, Download, Map, TrendingUp, BarChart2, ClipboardCheck, Database, LayoutDashboard, Smartphone, ExternalLink } from "lucide-react";
-import { getAssetType, getAssetName, getRecordStatus, getCategoryKey } from "@/components/helpers";
+import {
+  getAssetType, getAssetName, getRecordStatus, getCategoryKey, formatStatusLabel, getSadcValue, getStatusColor,
+  formatGpsLabel,
+} from "@/components/helpers";
 import type { NavModule } from "./LeftNav";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip as ChartTooltip, Cell,
@@ -69,12 +72,14 @@ function AnalyticsInner({ records }: { records: any[] }) {
     good: highwayGood(records, h.id),
   }));
 
-  const compliant    = records.filter(r => r.image_SADC_compliant === "yes").length;
-  const nonCompliant = records.filter(r => r.image_SADC_compliant === "no").length;
+  const compliant    = records.filter(r => getSadcValue(r) === "yes").length;
+  const nonCompliant = records.filter(r => getSadcValue(r) === "no").length;
+  const sadcMixed    = records.filter(r => getSadcValue(r) === "mixed").length;
   const sadcData = [
     { name: "Compliant",     count: compliant,    fill: "#006633" },
     { name: "Non-Compliant", count: nonCompliant, fill: "#dc2626" },
-  ];
+    { name: "Mixed",         count: sadcMixed,    fill: "#7c3aed" },
+  ].filter(d => d.count > 0);
 
   return (
     <>
@@ -162,7 +167,7 @@ function AnalyticsInner({ records }: { records: any[] }) {
               </ResponsiveContainer>
             </div>
             <div style={{ display: "flex", gap: 8 }}>
-              {[{ label: "Compliant", val: compliant, color: "#006633" }, { label: "Non-Compliant", val: nonCompliant, color: "#dc2626" }].map(s => (
+              {[{ label: "Compliant", val: compliant, color: "#006633" }, { label: "Non-Compliant", val: nonCompliant, color: "#dc2626" }, { label: "Mixed", val: sadcMixed, color: "#7c3aed" }].map(s => (
                 <div key={s.label} style={{ flex: 1, background: "var(--bg-app)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: "10px", textAlign: "center" }}>
                   <div style={{ fontFamily: "var(--font-title)", fontSize: 22, fontWeight: 800, color: s.color }}>{s.val}</div>
                   <div style={{ fontSize: 9, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.5px", marginTop: 2 }}>{s.label}</div>
@@ -250,6 +255,7 @@ function DatabaseInner({ records, onSelectRecord, selectedRecord }: { records: a
               <th>Asset Name</th>
               <th>Type</th>
               <th>Road</th>
+              <th>GPS</th>
               <th>Condition</th>
               <th>Date</th>
             </tr>
@@ -257,13 +263,17 @@ function DatabaseInner({ records, onSelectRecord, selectedRecord }: { records: a
           <tbody>
             {slice.map((r, i) => {
               const cond = getRecordStatus(r);
+              const gpsLabel = formatGpsLabel(r);
               return (
                 <tr key={r._id ?? i} className={selectedRecord?._id === r._id ? "active-row" : ""} onClick={() => onSelectRecord(r)}>
                   <td style={{ color: "var(--text-muted)" }}>{page * PAGE_SIZE + i + 1}</td>
                   <td style={{ fontWeight: 600 }}>{getAssetName(r)}</td>
                   <td>{getAssetType(r)}</td>
                   <td>{(r.road_name ?? "—").split(" (")[0]}</td>
-                  <td><span className={`badge ${cond}`}>{cond}</span></td>
+                  <td style={{ fontFamily: "ui-monospace, monospace", fontSize: 10 }}>
+                    {gpsLabel ?? "—"}
+                  </td>
+                  <td><span className={`badge ${cond}`}>{formatStatusLabel(cond)}</span></td>
                   <td>{r.survey_date ?? "—"}</td>
                 </tr>
               );
@@ -525,7 +535,7 @@ export default function InnerPanel({ module, records, selectedRecord, onSelectRe
         </div>
         <div className="filter-row">
           <select className="filter-pill" value={typeFilter} onChange={e => { setTypeFilter(e.target.value); setPage(0); }} style={{ fontWeight: "bold" }}>
-            <option value="all">🔍 All Types</option>
+            <option value="all">🔍 All</option>
             <option value="sealed">🛣️ Sealed Roads</option>
             <option value="gravel">🪨 Gravel Roads</option>
             <option value="earth">🚜 Earth Roads</option>
@@ -536,7 +546,7 @@ export default function InnerPanel({ module, records, selectedRecord, onSelectRe
             <option value="drift">🌊 Drifts</option>
             <option value="culvert">🕳️ Culverts</option>
             <option value="piped_causeway">🌁 Piped Causeways</option>
-            <option value="shelvet">🧱 Shelvets</option>
+            <option value="shelvet">🧱 Shelverts</option>
             <option value="grid">🐄 Cattle Grids</option>
             <option value="layby">🅿️ Laybys</option>
             <option value="busstop">🚌 Bus Stops</option>
@@ -550,6 +560,8 @@ export default function InnerPanel({ module, records, selectedRecord, onSelectRe
             <option value="good">Good</option>
             <option value="fair">Fair</option>
             <option value="poor">Poor</option>
+            <option value="mixed">Mixed</option>
+            <option value="under_construction">Under construction</option>
           </select>
         </div>
         <div className="filter-row">
@@ -567,16 +579,20 @@ export default function InnerPanel({ module, records, selectedRecord, onSelectRe
           const cond = getRecordStatus(r);
           const name = getAssetName(r);
           const type = getAssetType(r);
+          const gpsLabel = formatGpsLabel(r);
           return (
-            <div key={r._id ?? i} className={`asset-card${selectedRecord?._id === r._id ? " active" : ""}`} onClick={() => onSelectRecord(r)}>
+            <div key={r._id ?? i} className={`asset-card${selectedRecord?._id === r._id ? " active" : ""}`} onClick={() => onSelectRecord(r)} title="Show on map">
               <div className="asset-card-top">
                 <div className="asset-card-name">{name}</div>
-                <span className={`badge ${cond}`}>{cond}</span>
+                <span className={`badge ${cond}`}>{formatStatusLabel(cond)}</span>
               </div>
               <div className="asset-card-sub">{(r.road_name ?? "—").split(" (")[0]}{r.section_name ? ` · ${r.section_name}` : ""}</div>
               <div className="asset-card-meta">
                 <span className="asset-card-type">{type}</span>
                 <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{r.survey_date ?? "—"}</span>
+              </div>
+              <div style={{ marginTop: 4, fontSize: 10, fontFamily: "ui-monospace, monospace", color: "var(--text-secondary)" }}>
+                {gpsLabel ?? "No GPS"}
               </div>
             </div>
           );

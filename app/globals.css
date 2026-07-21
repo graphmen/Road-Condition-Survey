@@ -434,6 +434,8 @@ h1,h2,h3,h4,h5,h6 { font-family: var(--font-title); }
 .badge.good  { background: rgba(0,102,51,0.1);  color: #006633; border: 1px solid rgba(0,102,51,0.2); }
 .badge.fair  { background: rgba(217,119,6,0.1); color: #b45309; border: 1px solid rgba(217,119,6,0.2); }
 .badge.poor  { background: rgba(220,38,38,0.1); color: #b91c1c; border: 1px solid rgba(220,38,38,0.2); }
+.badge.mixed { background: rgba(124,58,237,0.1); color: #6d28d9; border: 1px solid rgba(124,58,237,0.25); }
+.badge.under_construction { background: rgba(37,99,235,0.1); color: #1d4ed8; border: 1px solid rgba(37,99,235,0.25); }
 
 /* ─── Panel Footer (export strip) ────────────────────────────────────────── */
 .panel-footer-strip {
@@ -595,6 +597,31 @@ h1,h2,h3,h4,h5,h6 { font-family: var(--font-title); }
 .map-pin.good { background:#006633; box-shadow:0 0 8px rgba(0,102,51,0.6); }
 .map-pin.fair { background:#f59e0b; box-shadow:0 0 8px rgba(245,158,11,0.6); }
 .map-pin.poor { background:#dc2626; box-shadow:0 0 8px rgba(220,38,38,0.6); }
+.map-pin.mixed { background:#7c3aed; box-shadow:0 0 8px rgba(124,58,237,0.55); }
+.map-pin.under_construction { background:#2563eb; box-shadow:0 0 8px rgba(37,99,235,0.55); }
+
+.map-pin-selected {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.map-pin-selected span {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #FFD100;
+  border: 3px solid #006633;
+  box-shadow: 0 0 0 0 rgba(0, 102, 51, 0.55);
+  animation: mapPinPulse 1.4s ease-out infinite;
+}
+@keyframes mapPinPulse {
+  0% { box-shadow: 0 0 0 0 rgba(0, 102, 51, 0.55); transform: scale(1); }
+  70% { box-shadow: 0 0 0 14px rgba(0, 102, 51, 0); transform: scale(1.08); }
+  100% { box-shadow: 0 0 0 0 rgba(0, 102, 51, 0); transform: scale(1); }
+}
 .custom-div-icon { background:transparent; border:none; }
 
 /* ─── Right Panel ────────────────────────────────────────────────────────── */

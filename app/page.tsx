@@ -7,6 +7,14 @@ import LeftNav, { type NavModule } from "@/components/panels/LeftNav";
 import InnerPanel from "@/components/panels/InnerPanel";
 import RightPanel from "@/components/panels/RightPanel";
 import FullPageModule from "@/components/panels/FullPageModule";
+import MapErrorBoundary from "@/components/MapErrorBoundary";
+import {
+  enrichRecordGeo,
+  buildMapGoto,
+  fireMapGoto,
+  getAssetName,
+  type MapGotoDetail,
+} from "@/components/helpers";
 
 const MapView = dynamic(() => import("@/components/MapView"), {
   ssr: false,
@@ -32,11 +40,14 @@ export default function Dashboard() {
   const [activeModule, setActiveModule]       = useState<NavModule>("assets");
   const [fullPageModule, setFullPageModule]   = useState<NavModule | null>(null);
   const [selectedRecord, setSelectedRecord]   = useState<any | null>(null);
+  const [mapFocus, setMapFocus]               = useState<MapGotoDetail | null>(null);
   const [selectedRoad, setSelectedRoad]       = useState("all");
   const [lastSynced, setLastSynced]           = useState<Date | null>(null);
 
   const [innerOpen, setInnerOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
+  // Once the map has mounted, never unmount it (Leaflet crashes on remount)
+  const [mapUnlocked, setMapUnlocked] = useState(false);
 
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
 
@@ -46,6 +57,10 @@ export default function Dashboard() {
     const t = setTimeout(() => setToast(null), 5000);
     return () => clearTimeout(t);
   }, [toast]);
+
+  useEffect(() => {
+    if (!isLoading || records.length > 0) setMapUnlocked(true);
+  }, [isLoading, records.length]);
 
   const fetchRecords = async (silent = false, force = false) => {
     if (!silent) setIsLoading(true);
@@ -59,7 +74,7 @@ export default function Dashboard() {
       let src = "Local Cache";
       if (data.source === "backend")  src = "Server Cache";
       if (data.source === "server")   src = data.cached ? "Server (Cached)" : "Server Live";
-      if (data.source === "kobotoolbox") src = "Server Live";
+      if (data.source === "supabase") src = "Server Live";
       if (data.fallback)              src = "Offline Cache";
       setSourceInfo(src);
     } catch (e: any) {
@@ -123,14 +138,10 @@ export default function Dashboard() {
   useEffect(() => {
     if (typeof window !== "undefined" && "serviceWorker" in navigator) {
       if (process.env.NODE_ENV === "development") {
+        // Unregister stale SW without reloading — reload was resetting map state mid-click
         navigator.serviceWorker.getRegistrations().then((registrations) => {
           for (const registration of registrations) {
-            registration.unregister().then((boolean) => {
-              if (boolean) {
-                console.log("SW unregistered successfully in development mode");
-                window.location.reload(); // Reload to clear intercept and fetch fresh styled files
-              }
-            });
+            registration.unregister();
           }
         });
       } else {
@@ -155,9 +166,46 @@ export default function Dashboard() {
     }
   };
 
+  /** Select an asset and jump to THAT record's coordinates only. */
   const handleSelectRecord = (r: any) => {
-    setSelectedRecord(r);
+    const enriched = enrichRecordGeo(r);
+    const label = getAssetName(enriched);
+    const focusBase = buildMapGoto(enriched);
+
+    // 1) Leave Database / Survey overlay so the map is visible
+    if (fullPageModule) {
+      setFullPageModule(null);
+      setActiveModule("assets");
+      setInnerOpen(true);
+    } else if (activeModule !== "assets" && activeModule !== "settings") {
+      setActiveModule("assets");
+      setInnerOpen(true);
+    }
+
+    if (selectedRoad !== "all" && enriched?.road_name && enriched.road_name !== selectedRoad) {
+      setSelectedRoad("all");
+    }
+
+    setSelectedRecord(enriched);
     if (!rightOpen) setRightOpen(true);
+
+    if (!focusBase) {
+      setMapFocus(null);
+      setToast({ message: "This asset has no map location (missing GPS).", type: "info" });
+      return;
+    }
+
+    const focus: MapGotoDetail = { ...focusBase, label };
+
+    setMapFocus(focus);
+    setToast({
+      message: `Showing on map: ${label}  ·  ${focus.lat.toFixed(5)}, ${focus.lng.toFixed(5)}`,
+      type: "success",
+    });
+
+    // 2) Fire go-to immediately + after overlay/layout settles (direct Leaflet + event)
+    fireMapGoto(focus);
+    [120, 350, 700, 1200, 2000].forEach((ms) => window.setTimeout(() => fireMapGoto(focus), ms));
   };
 
   // Clicking a nav module:
@@ -278,23 +326,26 @@ export default function Dashboard() {
           </button>
         )}
 
-        {/* Map zone (always rendered underneath) */}
+        {/* Map zone (keep MapView mounted — remounting Leaflet causes container reuse errors) */}
         <div className="map-zone" style={{ position: "relative" }}>
-          {isLoading ? (
+          {!mapUnlocked ? (
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "100%", height: "100%", background: "#f0f2f1", flexDirection: "column", gap: 10 }}>
               <div style={{ width: 36, height: 36, border: "3px solid rgba(0,102,51,0.15)", borderTop: "3px solid #006633", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
               <div style={{ fontSize: 11, color: "#6b8072" }}>Loading telemetry data…</div>
             </div>
           ) : (
-            <MapView
-              records={visibleRecords}
-              selectedRecord={selectedRecord}
-              onSelectRecord={handleSelectRecord}
-            />
+            <MapErrorBoundary>
+              <MapView
+                records={visibleRecords}
+                selectedRecord={selectedRecord}
+                mapFocus={mapFocus}
+                onSelectRecord={handleSelectRecord}
+              />
+            </MapErrorBoundary>
           )}
 
           {/* Full-page overlay — covers the map when a module is selected */}
-          {fullPageModule && !isLoading && (
+          {fullPageModule && (
             <FullPageModule
               module={fullPageModule}
               records={records}

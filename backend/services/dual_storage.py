@@ -1,7 +1,6 @@
 """
 Dual Storage Orchestrator
 Coordinates operations across:
-1. Local Cache (via kobo.py)
 1. Local Cache (via survey_utils.py)
 2. Supabase (Primary PostgreSQL + PostGIS)
 3. Firebase Firestore (Backup / Tier 2)

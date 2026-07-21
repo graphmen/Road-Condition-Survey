@@ -1453,13 +1453,18 @@ export default function App() {
         const derivedGps = `${firstPt.lat.toFixed(6)} ${firstPt.lng.toFixed(6)} ${firstPt.alt ?? 1200} ${Math.round(firstPt.acc)}`;
         setGps(derivedGps);
       } else {
-        // Non-road surveys: require explicit GPS point capture
-        if (!gps) {
-          showToast("GPS location coordinates must be captured.", "error");
+        // Non-road / point surveys: require a fresh Capture GPS before queue/save
+        if (!gps || !gps.trim()) {
+          showToast("Capture GPS at this asset before queueing. Each point survey needs its own location.", "error");
           return;
         }
-        // Validate that the captured GPS meets the accuracy requirement
-        const gpsParts = gps.trim().split(" ");
+        const gpsParts = gps.trim().split(/\s+/);
+        const lat = parseFloat(gpsParts[0]);
+        const lng = parseFloat(gpsParts[1]);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+          showToast("GPS coordinates are invalid. Capture GPS again at this asset.", "error");
+          return;
+        }
         const gpsAcc = gpsParts.length >= 4 ? parseFloat(gpsParts[3]) : NaN;
         if (!isNaN(gpsAcc) && gpsAcc > gpsAccuracyLimit) {
           showToast(`❌ GPS accuracy ±${Math.round(gpsAcc)}m is too poor (≤${gpsAccuracyLimit}m required). Re-capture GPS in open-sky area.`, "error");
@@ -1749,6 +1754,12 @@ export default function App() {
     const keepPausedLine = !isRoadType && !!pausedRoadContext;
     const pausedSnapshot = pausedRoadContext;
     clearForm();
+    // Clear GPS refs so the next point asset cannot reuse this fix
+    liveGpsPosRef.current = null;
+    bestGpsPosRef.current = null;
+    setLiveGpsAccuracy(null);
+    setBestGpsAccuracy(null);
+    setGps("");
     if (keepPausedLine && pausedSnapshot) {
       persistPausedRoadContext(pausedSnapshot);
       setSelectedCategory(null);
@@ -2387,18 +2398,22 @@ export default function App() {
                         }
                         setSelectedCategory(asset.id);
                         setAssetCategory(asset.id as any);
+                        // Always clear GPS when starting any new asset so point surveys
+                        // cannot inherit the previous capture
+                        setSegmentGeometry(null);
+                        setGps("");
+                        setPhotos([]);
+                        setEditingDraftId(null);
+                        liveGpsPosRef.current = null;
+                        bestGpsPosRef.current = null;
+                        setLiveGpsAccuracy(null);
+                        setBestGpsAccuracy(null);
                         if (pausedRoadContext) {
-                          // Mid-line point collect: keep route metadata, don't wipe GPS session
+                          // Mid-line point collect: keep route metadata only
                           setRoadName(pausedRoadContext.roadName || roadName);
                           setSectionName(pausedRoadContext.sectionName || sectionName);
                           setSurveyorName(pausedRoadContext.surveyorName || surveyorName || defaultSurveyor);
                           setSurveyDate(pausedRoadContext.surveyDate || surveyDate);
-                          setSegmentGeometry(null);
-                          setGps("");
-                          setPhotos([]);
-                          setEditingDraftId(null);
-                        } else {
-                          setSegmentGeometry(null);
                         }
                       }}
                       className="asset-card"

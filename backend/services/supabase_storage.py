@@ -188,7 +188,9 @@ def _build_row(record: dict, table_name: str) -> dict:
         "survey_date":          inner.get("survey_date") or inner.get("Date"),
         "gps_point":            inner.get("gps"),
         "image_sadc_compliant": inner.get("image_SADC_compliant") or inner.get("image_sadc_compliant") or "yes",
-        "photo":                inner.get("photo") or None,
+        "photo":                inner.get("photo") or (
+                                    (inner.get("photos") or [None])[0] if isinstance(inner.get("photos"), list) and inner.get("photos") else None
+                                ),
         "raw_data":             inner,
         "source":               inner.get("source") or "mobile_app",
     }

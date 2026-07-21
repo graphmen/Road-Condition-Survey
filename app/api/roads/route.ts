@@ -5,6 +5,12 @@ import path from "path";
 
 export const dynamic = "force-dynamic";
 
+// Corporate SSL inspection breaks Node's default CA trust for Supabase HTTPS.
+// Without this, /api/roads silently falls back to local cache and live point surveys vanish.
+if (process.env.NODE_TLS_REJECT_UNAUTHORIZED !== "0") {
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+}
+
 const OFFLINE_MODE = process.env.OFFLINE_MODE === "true"; // Defaults to false (online)
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000";
 
@@ -126,6 +132,101 @@ function classifyProvinceDistrict(lat: number | null | undefined, lng: number | 
   return { province: bestLoc.province, district: bestLoc.district };
 }
 
+/** Parse lat/lng from gps string, array, GeoJSON point, or WKT-ish forms. */
+function parseLatLng(value: unknown): [number, number] | null {
+  if (value == null) return null;
+
+  if (Array.isArray(value) && value.length >= 2) {
+    const a = Number(value[0]);
+    const b = Number(value[1]);
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+    // Prefer [lat, lng] when first value looks like Zimbabwe latitude
+    if (a >= -23 && a <= -15 && b >= 24 && b <= 34) return [a, b];
+    if (b >= -23 && b <= -15 && a >= 24 && a <= 34) return [b, a];
+    // Fallback: treat as [lat, lng]
+    return [a, b];
+  }
+
+  if (typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    if (obj.type === "Point" && Array.isArray(obj.coordinates) && obj.coordinates.length >= 2) {
+      const lng = Number(obj.coordinates[0]);
+      const lat = Number(obj.coordinates[1]);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) return [lat, lng];
+    }
+    if (obj.lat != null && (obj.lng != null || obj.lon != null)) {
+      const lat = Number(obj.lat);
+      const lng = Number(obj.lng ?? obj.lon);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) return [lat, lng];
+    }
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    // "lat lng …" or "lat,lng"
+    const parts = trimmed.replace(/,/g, " ").split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) {
+      const a = parseFloat(parts[0]);
+      const b = parseFloat(parts[1]);
+      if (Number.isFinite(a) && Number.isFinite(b)) {
+        if (a >= -23 && a <= -15 && b >= 24 && b <= 34) return [a, b];
+        if (b >= -23 && b <= -15 && a >= 24 && a <= 34) return [b, a];
+        return [a, b];
+      }
+    }
+  }
+
+  return null;
+}
+
+/** Midpoint of a LineString segment so road rows without gps_point still map. */
+function midpointFromSegment(geojsonVal: unknown): [number, number] | null {
+  try {
+    const geo = typeof geojsonVal === "string" ? JSON.parse(geojsonVal) : geojsonVal;
+    if (!geo || typeof geo !== "object") return null;
+    const coords =
+      (geo as any).type === "Feature"
+        ? (geo as any).geometry?.coordinates
+        : (geo as any).type === "LineString"
+          ? (geo as any).coordinates
+          : null;
+    if (!Array.isArray(coords) || coords.length === 0) return null;
+    const mid = coords[Math.floor(coords.length / 2)];
+    if (!Array.isArray(mid) || mid.length < 2) return null;
+    const lng = Number(mid[0]);
+    const lat = Number(mid[1]);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    return [lat, lng];
+  } catch {
+    return null;
+  }
+}
+
+/** First valid lat/lng from Kobo trace strings (Chainage_km_003_trace, etc.). */
+function pointFromTrace(record: any): [number, number] | null {
+  const searchObjects = [record, record?.raw_data].filter(Boolean);
+  for (const obj of searchObjects) {
+    for (const key of Object.keys(obj)) {
+      const kl = key.toLowerCase();
+      if (!kl.endsWith("_trace") && !kl.includes("trace")) continue;
+      const traceStr = obj[key];
+      if (typeof traceStr !== "string" || !traceStr.trim()) continue;
+      for (const part of traceStr.split(";")) {
+        if (!part.trim()) continue;
+        const coords = part.trim().split(/\s+/);
+        if (coords.length < 2) continue;
+        const lat = parseFloat(coords[0]);
+        const lng = parseFloat(coords[1]);
+        if (Number.isFinite(lat) && Number.isFinite(lng) && !(Math.abs(lat) < 0.0001 && Math.abs(lng) < 0.0001)) {
+          return [lat, lng];
+        }
+      }
+    }
+  }
+  return null;
+}
+
 function normaliseRecord(record: any) {
   const out: any = {};
   for (const [k, v] of Object.entries(record)) {
@@ -136,19 +237,55 @@ function normaliseRecord(record: any) {
     }
   }
 
-  if (!out._geolocation && out.gps) {
-    const parts = String(out.gps).split(" ");
-    if (parts.length >= 2) {
-      try {
-        out._geolocation = [parseFloat(parts[0]), parseFloat(parts[1])];
-      } catch (e) {}
+  const raw = out.raw_data && typeof out.raw_data === "object" ? out.raw_data : null;
+  const geoCandidates = [
+    out._geolocation,
+    out.gps,
+    out.gps_point,
+    out.geom_point,
+    raw?._geolocation,
+    raw?.gps,
+    raw?.gps_point,
+  ];
+  let parsed: [number, number] | null = null;
+  for (const c of geoCandidates) {
+    parsed = parseLatLng(c);
+    if (parsed) break;
+  }
+  if (!parsed) {
+    parsed = midpointFromSegment(
+      out.road_segment_geojson || out.segment_geojson || raw?.road_segment_geojson || raw?.segment_geojson
+    );
+  }
+  if (!parsed) {
+    parsed = pointFromTrace(out) || (raw ? pointFromTrace(raw) : null);
+  }
+  // If gps_point is the known mobile batch duplicate, prefer trace when available
+  if (parsed && pointFromTrace(out)) {
+    const tracePt = pointFromTrace(out) || (raw ? pointFromTrace(raw) : null);
+    if (
+      tracePt &&
+      Math.abs(parsed[0] + 17.7635) < 0.0025 &&
+      Math.abs(parsed[1] - 31.0025) < 0.0025 &&
+      (Math.abs(tracePt[0] - parsed[0]) > 0.001 || Math.abs(tracePt[1] - parsed[1]) > 0.001)
+    ) {
+      parsed = tracePt;
     }
+  }
+  if (parsed) {
+    out._geolocation = parsed;
+    if (!out.gps) out.gps = `${parsed[0]} ${parsed[1]}`;
   }
 
   if (!out.road_name && out.road) out.road_name = out.road;
   if (!out.section_name && out.section) out.section_name = out.section;
   if (!out.surveyor_name && out.surveyor) out.surveyor_name = out.surveyor;
   if (!out.survey_date && out.date) out.survey_date = out.date;
+
+  // Infer asset_category for legacy Kobo / incomplete rows
+  if (!out.asset_category) {
+    out.asset_category = inferAssetCategory(out);
+  }
 
   // Classify province and district if not already set
   if (!out.province || !out.district) {
@@ -373,6 +510,42 @@ function loadLocalFallback() {
   return getLocalCache();
 }
 
+/** Infer category from fields or legacy Kobo-style ids (…_rsign_0, …_jxn_0, …). */
+function inferAssetCategory(record: any): string {
+  if (record?.asset_category) return record.asset_category;
+  const id = String(record?._id || record?.id || "");
+  const idMatch = id.match(/_(rsign|jxn|bstop|bridge|culvet|culvert|gv|sr|sl|shelvet|fb|rail|toll|layby|drift|grid|tl|causeway)_/i);
+  if (idMatch) {
+    const map: Record<string, string> = {
+      rsign: "sign", jxn: "junction", bstop: "busstop", bridge: "bridge",
+      culvet: "culvert", culvert: "culvert", gv: "gravel", sr: "sealed",
+      sl: "streetlight", shelvet: "shelvet", fb: "footbridge", rail: "rail_crossing",
+      toll: "tollgate", layby: "layby", drift: "drift", grid: "grid",
+      tl: "traffic_lights", causeway: "piped_causeway",
+    };
+    if (map[idMatch[1].toLowerCase()]) return map[idMatch[1].toLowerCase()];
+  }
+  if (record.bridge || record.bridge_condition) return "bridge";
+  if (record.footbridge_name) return "footbridge";
+  if (record.rail_crossing_name) return "rail_crossing";
+  if (record.tollgate_name) return "tollgate";
+  if (record.layby_condition || record.layby_surface) return "layby";
+  if (record.busstop_type || record.bus_stop_present) return "busstop";
+  if (record.junction_type || record.junction_condition) return "junction";
+  if (record.sign_type || record.sign_condition || record.sign_name) return "sign";
+  if (record.shelvets_type || record.shelvet_condition) return "shelvet";
+  if (record.culvet_class || record.culvet_serviceability) return "culvert";
+  if (record.causeway_name) return "piped_causeway";
+  if (record.drift_name || record.drift_condition) return "drift";
+  if (record.grid_name || record.grid_condition) return "grid";
+  if (record.traffic_lights_location || record.traffic_lights_condition) return "traffic_lights";
+  if (record.streetlight_type || record.streetlight_condition || record.Status_001) return "streetlight";
+  if (record.gravel_road_name || record.gravel_condition) return "gravel";
+  if (record.earth_road_name || record.earth_road_condition) return "earth";
+  if (record.paved_road_name || record.paved_road_condition || record.road_segment_geojson) return "sealed";
+  return "unknown";
+}
+
 const SUPABASE_URL = "https://kchmhpwmyubesocdssga.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_XVL14JBx0YdcbqXlUEsN7w_8xhPeA4W";
 const FIREBASE_PROJECT = "road-condition-survey";
@@ -409,7 +582,7 @@ const mapDraftToSupabaseTable = (draft: any, tableName: string) => {
     survey_date:          draft.survey_date || null,
     gps_point:            draft.gps || null,
     image_sadc_compliant: draft.image_SADC_compliant || draft.image_sadc_compliant || "yes",
-    photo:                draft.photo || null,
+    photo:                draft.photo || (Array.isArray(draft.photos) && draft.photos[0]) || null,
     raw_data:             draft,
     source:               draft.source || "dashboard"
   };
@@ -621,7 +794,13 @@ function writeLocalCache(records: any[]): void {
   try {
     const cachePath = path.resolve(process.cwd(), "public", "roads-data.json");
     const slim = records.map((r: any) => {
-      const { photo, ...rest } = r; // eslint-disable-line @typescript-eslint/no-unused-vars
+      const { photo, photos, ...rest } = r; // eslint-disable-line @typescript-eslint/no-unused-vars
+      // Keep raw_data metadata but drop embedded base64 photos to limit cache size
+      if (rest.raw_data && typeof rest.raw_data === "object") {
+        const { photo: rp, photos: rps, ...rawRest } = rest.raw_data;
+        rest.raw_data = rawRest;
+        void rp; void rps;
+      }
       return rest;
     });
     const payload = { count: slim.length, records: slim, source: "merged" };
@@ -632,45 +811,124 @@ function writeLocalCache(records: any[]): void {
   }
 }
 
-// Lightweight columns for the legacy road_surveys table
-const LIGHT_COLUMNS = [
+// Columns available on the road_surveys VIEW (must NOT include image_sadc_compliant — not in view)
+const VIEW_COLUMNS = [
   "survey_id", "asset_category", "road_name", "section_name",
   "surveyor_name", "survey_date", "gps_point", "road_condition", "road_class",
-  "segment_geojson", // Linear coordinates
+  "raw_data",
+  "segment_geojson",
   "segment_length_m", "segment_point_count", "segment_avg_accuracy",
-  "segment_start_time", "segment_end_time", "photo", "created_at"
+  "segment_start_time", "segment_end_time", "photo", "created_at", "source"
 ].join(",");
 
-// Columns to fetch from each individual category table
-const CAT_COLUMNS = [
+// Columns present on EVERY category table (roads + points)
+// NOTE: omit photo/raw_data here — base64 payloads cause Supabase statement timeouts
+const TABLE_COMMON_COLUMNS = [
   "survey_id", "asset_category", "road_name", "section_name",
-  "surveyor_name", "survey_date", "gps_point", "road_condition", "road_class",
-  "segment_geojson", // Linear coordinates
-  "segment_length_m", "segment_point_count", "segment_avg_accuracy",
-  "segment_start_time", "segment_end_time", "photo", "created_at"
+  "surveyor_name", "survey_date", "gps_point", "image_sadc_compliant",
+  "source", "created_at"
 ].join(",");
+
+// Extra columns only on linear road tables
+const ROAD_EXTRA_COLUMNS = [
+  "road_condition", "road_class",
+  "segment_geojson", "segment_length_m", "segment_point_count",
+  "segment_avg_accuracy", "segment_start_time", "segment_end_time"
+].join(",");
+
+/** Per-category name/condition columns (no photo/raw_data). */
+const CATEGORY_EXTRA: Record<string, string> = {
+  sealed: "paved_road_name,paved_road_condition,paved_road_class,paved_road_type,authority_name_002,passability_002,riding_quality_degree_001",
+  gravel: "gravel_road_name,gravel_condition,gravel_road_class,authority_name,passability,riding_quality_degree",
+  earth: "earth_road_name,earth_road_condition,earth_road_class,earth_authority,earth_road_passability",
+  bridge: "bridge,bridge_condition,bridge_type,bridge_crossing",
+  footbridge: "footbridge_name,footbridge_condition,footbridge_type",
+  rail_crossing: "rail_crossing_name,rail_crossing_condition,rail_crossing_type",
+  tollgate: "tollgate_name,tollgate_condition,tollgate_type",
+  layby: "layby_condition,layby_surface",
+  busstop: "busstop_type,busstop_condition",
+  junction: "junction_type,junction_condition",
+  sign: "sign_type,sign_name,sign_condition",
+  shelvet: "shelvets_type,shelvet_condition",
+  culvert: "culvet_class,culvet_type,culvet_serviceability",
+  piped_causeway: "causeway_name,causeway_condition,causeway_serviceability",
+  drift: "drift_name,drift_condition",
+  grid: "grid_name,grid_condition",
+  traffic_lights: "traffic_lights_location,traffic_lights_condition",
+  streetlight: "streetlight_type,streetlight_condition,streetlight_power_source",
+};
+
+const ROAD_TABLES = new Set([
+  "survey_sealed_roads", "survey_gravel_roads", "survey_earth_roads"
+]);
 
 /** Fetch one Supabase table with a timeout, return [] on failure */
 async function fetchTable(tableName: string, columns: string, signal: AbortSignal): Promise<any[]> {
+  const headers: Record<string, string> = {
+    "apikey": SUPABASE_ANON_KEY,
+    "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+    "Prefer": "count=none",
+    // Explicit range so project max-rows settings cannot silently truncate to 1
+    "Range": "0-9999",
+  };
   try {
     const res = await fetch(
       `${SUPABASE_URL}/rest/v1/${tableName}?select=${columns}&order=created_at.desc`,
-      {
-        headers: { "apikey": SUPABASE_ANON_KEY, "Authorization": `Bearer ${SUPABASE_ANON_KEY}` },
-        cache: "no-store",
-        signal
-      }
+      { headers, cache: "no-store", signal }
     );
-    if (!res.ok) return [];
-    return await res.json();
-  } catch {
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      console.warn(`fetchTable ${tableName} failed: ${res.status} ${errText.slice(0, 200)}`);
+      // Retry once with only common columns if select listed a missing column
+      if (res.status === 400 || res.status === 500) {
+        const retry = await fetch(
+          `${SUPABASE_URL}/rest/v1/${tableName}?select=${TABLE_COMMON_COLUMNS}&order=created_at.desc`,
+          { headers, cache: "no-store", signal }
+        );
+        if (retry.ok) {
+          const data = await retry.json();
+          return Array.isArray(data) ? data : [];
+        }
+      }
+      return [];
+    }
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
+  } catch (e: any) {
+    console.warn(`fetchTable ${tableName} error:`, e?.message || e);
     return [];
   }
+}
+
+/** Fetch all category tables in parallel — reliable source for point + linear assets. */
+async function fetchAllCategoryTables(signal: AbortSignal): Promise<any[]> {
+  const entries = Object.entries(categoryToTable);
+  const results = await Promise.all(
+    entries.map(async ([cat, table]) => {
+      const extras = CATEGORY_EXTRA[cat] || "";
+      const roadExtras = ROAD_TABLES.has(table) ? `,${ROAD_EXTRA_COLUMNS}` : "";
+      const cols = extras
+        ? `${TABLE_COMMON_COLUMNS}${roadExtras},${extras}`
+        : `${TABLE_COMMON_COLUMNS}${roadExtras}`;
+      const rows = await fetchTable(table, cols, signal);
+      console.log(`  ${table}: ${rows.length} rows`);
+      return rows.map((row) => rowToRecord(row, row.asset_category || cat));
+    })
+  );
+  return results.flat();
 }
 
 /** Normalise a row from any individual category table into a dashboard record */
 function rowToRecord(row: any, cat: string): any {
   const cond = row.road_condition || "good";
+  const raw = row.raw_data && typeof row.raw_data === "object" ? row.raw_data : null;
+  const photosFromRaw = raw && Array.isArray(raw.photos) ? raw.photos.filter((p: unknown) => typeof p === "string") : [];
+  const photo =
+    row.photo ||
+    photosFromRaw[0] ||
+    (typeof raw?.photo === "string" ? raw.photo : null) ||
+    null;
+
   const record: any = {
     id:             row.survey_id,
     _id:            row.survey_id,
@@ -680,32 +938,78 @@ function rowToRecord(row: any, cat: string): any {
     surveyor_name:  row.surveyor_name,
     survey_date:    row.survey_date,
     gps:            row.gps_point,
-    photo:          row.photo,
-    road_segment_geojson:        row.segment_geojson, // Linear coordinates
+    photo,
+    photos:         photosFromRaw.length > 0 ? photosFromRaw : (photo ? [photo] : undefined),
+    image_sadc_compliant: row.image_sadc_compliant || raw?.image_SADC_compliant || raw?.image_sadc_compliant || undefined,
+    image_SADC_compliant: row.image_sadc_compliant || raw?.image_SADC_compliant || raw?.image_sadc_compliant || undefined,
+    raw_data:       raw || undefined,
+    road_segment_geojson:        row.segment_geojson,
     road_segment_length_m:       row.segment_length_m,
     road_segment_point_count:    row.segment_point_count,
     road_segment_avg_accuracy_m: row.segment_avg_accuracy,
     road_segment_start_time:     row.segment_start_time,
     road_segment_end_time:       row.segment_end_time,
   };
-  if (cat === "sealed")             { record.paved_road_condition = cond; record.paved_road_class  = row.road_class; }
-  else if (cat === "gravel")        { record.gravel_condition     = cond; record.gravel_road_class = row.road_class; }
-  else if (cat === "earth")         { record.earth_road_condition = cond; }
-  else if (cat === "bridge")        { record.bridge_condition     = cond; }
-  else if (cat === "footbridge")    { record.footbridge_condition = cond; }
-  else if (cat === "rail_crossing") { record.rail_crossing_condition = cond; }
-  else if (cat === "tollgate")      { record.tollgate_condition   = cond; }
-  else if (cat === "layby")         { record.layby_condition      = cond; }
-  else if (cat === "busstop")       { record.busstop_condition = cond; record.bus_stop_condition = cond; record.bus_stop_present = true; }
-  else if (cat === "junction")      { record.junction_condition   = cond; }
-  else if (cat === "sign")          { record.sign_condition       = cond; }
-  else if (cat === "shelvet")       { record.shelvet_condition    = cond; }
-  else if (cat === "culvert")       { record.culvet_serviceability = cond; }
-  else if (cat === "piped_causeway"){ record.causeway_condition   = cond; }
-  else if (cat === "drift")         { record.drift_condition      = cond; }
-  else if (cat === "grid")          { record.grid_condition       = cond; }
-  else if (cat === "traffic_lights"){ record.traffic_lights_condition = cond; }
-  else if (cat === "streetlight")   { record.streetlight_condition   = cond; }
+
+  // Merge useful detail fields from raw_data so names/inspector see mobile values
+  if (raw) {
+    const skip = new Set([
+      "photo", "photos", "raw_data", "id", "_id", "gps",
+      "road_segment_points", "road_segment_geojson",
+    ]);
+    for (const [key, val] of Object.entries(raw)) {
+      if (skip.has(key)) continue;
+      if (val === undefined || val === null) continue;
+      // Don't overwrite already-set top-level fields; don't copy huge base64 strings
+      if (record[key] !== undefined) continue;
+      if (typeof val === "string" && val.startsWith("data:image")) continue;
+      record[key] = val;
+    }
+  }
+
+  // Also pull common name columns that may exist as table columns (not only in raw_data)
+  const tableNames: Record<string, string[]> = {
+    sealed: ["paved_road_name"],
+    gravel: ["gravel_road_name"],
+    earth: ["earth_road_name"],
+    bridge: ["bridge"],
+    footbridge: ["footbridge_name"],
+    rail_crossing: ["rail_crossing_name"],
+    tollgate: ["tollgate_name"],
+    culvert: ["culvet_class"],
+    shelvet: ["shelvets_type"],
+    piped_causeway: ["causeway_name"],
+    drift: ["drift_name"],
+    grid: ["grid_name"],
+    traffic_lights: ["traffic_lights_location"],
+    busstop: ["busstop_type"],
+    junction: ["junction_type"],
+    sign: ["sign_type", "sign_name"],
+    streetlight: ["streetlight_type"],
+    layby: ["layby_surface"],
+  };
+  for (const col of tableNames[cat] || []) {
+    if (row[col] != null && record[col] === undefined) record[col] = row[col];
+  }
+
+  if (cat === "sealed")             { record.paved_road_condition = record.paved_road_condition || cond; record.paved_road_class  = row.road_class; }
+  else if (cat === "gravel")        { record.gravel_condition     = record.gravel_condition || cond; record.gravel_road_class = row.road_class; }
+  else if (cat === "earth")         { record.earth_road_condition = record.earth_road_condition || cond; }
+  else if (cat === "bridge")        { record.bridge_condition     = record.bridge_condition || cond; }
+  else if (cat === "footbridge")    { record.footbridge_condition = record.footbridge_condition || cond; }
+  else if (cat === "rail_crossing") { record.rail_crossing_condition = record.rail_crossing_condition || cond; }
+  else if (cat === "tollgate")      { record.tollgate_condition   = record.tollgate_condition || cond; }
+  else if (cat === "layby")         { record.layby_condition      = record.layby_condition || cond; }
+  else if (cat === "busstop")       { record.busstop_condition = record.busstop_condition || cond; record.bus_stop_condition = record.bus_stop_condition || cond; record.bus_stop_present = true; }
+  else if (cat === "junction")      { record.junction_condition   = record.junction_condition || cond; }
+  else if (cat === "sign")          { record.sign_condition       = record.sign_condition || cond; }
+  else if (cat === "shelvet")       { record.shelvet_condition    = record.shelvet_condition || cond; }
+  else if (cat === "culvert")       { record.culvet_serviceability = record.culvet_serviceability || cond; }
+  else if (cat === "piped_causeway"){ record.causeway_condition   = record.causeway_condition || cond; }
+  else if (cat === "drift")         { record.drift_condition      = record.drift_condition || cond; }
+  else if (cat === "grid")          { record.grid_condition       = record.grid_condition || cond; }
+  else if (cat === "traffic_lights"){ record.traffic_lights_condition = record.traffic_lights_condition || cond; }
+  else if (cat === "streetlight")   { record.streetlight_condition   = record.streetlight_condition || cond; }
   return normaliseRecord(record);
 }
 
@@ -730,81 +1034,99 @@ export async function GET(req: Request) {
   }
 
   try {
-    console.log("Fetching consolidated records from road_surveys view…");
+    console.log("Fetching surveys from all Supabase category tables…");
     const t0 = Date.now();
 
-    // 15-second timeout
+    // 60s — raw_data payloads can be large
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15_000);
+    const timeoutId = setTimeout(() => controller.abort(), 60_000);
 
-    const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/road_surveys?select=${LIGHT_COLUMNS}&order=created_at.desc`,
-      {
-        headers: {
-          "apikey": SUPABASE_ANON_KEY,
-          "Authorization": `Bearer ${SUPABASE_ANON_KEY}`
-        },
-        cache: "no-store",
-        signal: controller.signal
+    // Primary: fetch every category table (bridges, culverts, signs, roads, …)
+    let serverRecords = await fetchAllCategoryTables(controller.signal);
+
+    // Fallback: union view if table fetches returned nothing
+    if (serverRecords.length === 0) {
+      console.warn("Category tables empty/failed — trying road_surveys view…");
+      const res = await fetch(
+        `${SUPABASE_URL}/rest/v1/road_surveys?select=${VIEW_COLUMNS}&order=created_at.desc`,
+        {
+          headers: {
+            "apikey": SUPABASE_ANON_KEY,
+            "Authorization": `Bearer ${SUPABASE_ANON_KEY}`
+          },
+          cache: "no-store",
+          signal: controller.signal
+        }
+      );
+      if (res.ok) {
+        const db_records: any[] = await res.json();
+        serverRecords = db_records.map((row: any) =>
+          rowToRecord(row, row.asset_category || inferAssetCategory(row) || "unknown")
+        );
+      } else {
+        const errText = await res.text();
+        console.error("road_surveys view fetch error:", res.status, errText.slice(0, 300));
       }
-    );
+    }
+
     clearTimeout(timeoutId);
 
-    if (res.ok) {
-      const db_records: any[] = await res.json();
-      const serverRecords = db_records.map((row: any) =>
-        rowToRecord(row, row.asset_category || "sealed")
-      );
+    if (serverRecords.length > 0) {
       const liveCount = serverRecords.length;
 
       // Merge: server records win, then add any local-only records not yet on server
       const seenIds = new Set<string>();
       const merged: any[] = [];
 
-      // 1. Server records (newest data wins)
       for (const r of serverRecords) {
         const id = String(r.id || r._id || "");
         if (id && !seenIds.has(id)) {
           seenIds.add(id);
           merged.push(r);
+        } else if (!id) {
+          merged.push(r);
         }
       }
 
-      // 2. Local JSON cache records
       const localFallback = loadLocalFallback();
       for (const r of (localFallback.records || [])) {
         const id = String(r.id || r._id || "");
         if (!id || !seenIds.has(id)) {
           if (id) seenIds.add(id);
-          merged.push(r);
+          // Ensure category on legacy local rows
+          if (!r.asset_category) r.asset_category = inferAssetCategory(r);
+          merged.push(normaliseRecord(r));
         }
       }
 
-      // Sort newest-first by survey_date
       merged.sort((a, b) => {
         const da = a.survey_date || a.created_at || "";
         const db_ = b.survey_date || b.created_at || "";
         return db_.localeCompare(da);
       });
 
-      console.log(`Merged ${merged.length} total records (${liveCount} live + ${merged.length - liveCount} cache) in ${Date.now() - t0}ms`);
+      const byCat: Record<string, number> = {};
+      for (const r of merged) {
+        const c = r.asset_category || "unknown";
+        byCat[c] = (byCat[c] || 0) + 1;
+      }
+      console.log(
+        `Merged ${merged.length} records (${liveCount} live) in ${Date.now() - t0}ms`,
+        byCat
+      );
 
-      // Store in server cache
       _cachedRecords = merged;
       _cacheTimestamp = Date.now();
-
-      // Persist to local cache so Phase 1 always has latest data (Refresh button updates this)
       writeLocalCache(merged);
 
-      return NextResponse.json({ count: merged.length, records: merged, source: "server" });
-    } else {
-      const errText = await res.text();
-      console.error("Server data fetch returned error:", res.status, errText);
+      return NextResponse.json({ count: merged.length, records: merged, source: "server", categories: byCat });
     }
+
+    console.error("No records returned from Supabase tables or view");
 
   } catch (err: any) {
     if (err.name === "AbortError") {
-      console.error("Server data fetch timed out after 15s");
+      console.error("Server data fetch timed out");
     } else {
       console.error("Server data fetch failed:", err.message);
     }

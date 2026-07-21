@@ -1,80 +1,150 @@
 "use client";
-import { useEffect, useState, Fragment } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { MapContainer, TileLayer, Marker, Popup, useMap, ZoomControl, Polyline } from "react-leaflet";
 import L from "leaflet";
-import { getRecordStatus, getAssetType, getAssetName, getCategoryKey } from "@/components/helpers";
+import {
+  getRecordStatus,
+  getAssetType,
+  getAssetName,
+  getCategoryKey,
+  getStatusColor,
+  formatStatusLabel,
+  resolveAssetLocation,
+  MAP_GOTO_EVENT,
+  type MapGotoDetail,
+} from "@/components/helpers";
 import { Layers, ChevronLeft, ChevronRight } from "lucide-react";
 
 const parseLineCoordinates = (record: any): [number, number][] | null => {
-  const geojsonStr = record.road_segment_geojson || record.segment_geojson || record.raw_data?.road_segment_geojson || record.raw_data?.segment_geojson;
-  
-  if (geojsonStr) {
-    try {
-      const geojson = typeof geojsonStr === "string" ? JSON.parse(geojsonStr) : geojsonStr;
-      if (geojson) {
-        // Case 1: Root is a Feature containing a LineString geometry
-        if (geojson.type === "Feature" && geojson.geometry && geojson.geometry.type === "LineString" && Array.isArray(geojson.geometry.coordinates)) {
-          return geojson.geometry.coordinates.map((coord: any) => [Number(coord[1]), Number(coord[0])]); // Swap [lng, lat] to [lat, lng]
-        }
-        
-        // Case 2: Root is directly a LineString
-        if (geojson.type === "LineString" && Array.isArray(geojson.coordinates)) {
-          return geojson.coordinates.map((coord: any) => [Number(coord[1]), Number(coord[0])]); // Swap [lng, lat] to [lat, lng]
-        }
-      }
-    } catch (e) {
-      console.error("Error parsing road segment geojson:", e);
-    }
-  }
-
-  // Fallback: Check for trace coordinate strings (e.g. from Kobo or other forms)
-  // in both the main record object and nested raw_data object
-  const searchObjects = [record, record.raw_data].filter(Boolean);
-  for (const obj of searchObjects) {
-    for (const key of Object.keys(obj)) {
-      if (key.toLowerCase().endsWith("_trace") || key.toLowerCase().includes("trace")) {
-        const traceStr = obj[key];
-        if (typeof traceStr === "string" && traceStr.trim().length > 0) {
-          try {
-            const points: [number, number][] = [];
-            const parts = traceStr.split(";");
-            for (const part of parts) {
-              if (!part.trim()) continue;
-              const coords = part.trim().split(" ");
-              if (coords.length >= 2) {
-                const lat = Number(coords[0]);
-                const lng = Number(coords[1]);
-                if (!isNaN(lat) && !isNaN(lng)) {
-                  points.push([lat, lng]);
-                }
-              }
-            }
-            if (points.length > 0) {
-              return points;
-            }
-          } catch (e) {
-            console.error(`Error parsing trace string in key ${key}:`, e);
-          }
-        }
-      }
-    }
-  }
-
+  const loc = resolveAssetLocation(record);
+  if (loc?.kind === "line") return loc.coords;
   return null;
 };
 
-function ChangeMapCenter({ lat, lng }: { lat: number; lng: number }) {
+const selectedPinIcon = L.divIcon({
+  className: "custom-div-icon",
+  html: `<div class="map-pin-selected"><span></span></div>`,
+  iconSize: [28, 28],
+  iconAnchor: [14, 14],
+});
+
+/** Always-mounted controller: per-record go-to (direct + event, survives overlay close). */
+function MapGoToController({ focus }: { focus: MapGotoDetail | null }) {
   const map = useMap();
+  const appliedNonceRef = useRef<number>(0);
+
   useEffect(() => {
-    const currentZoom = map.getZoom();
-    // Keep current zoom if we are already zoomed in (zoom >= 12), otherwise zoom in to 14
-    const targetZoom = currentZoom < 12 ? 14 : currentZoom;
-    map.setView([lat, lng], targetZoom);
-  }, [lat, lng, map]);
+    (window as any).__motidMap = map;
+    return () => {
+      if ((window as any).__motidMap === map) (window as any).__motidMap = null;
+    };
+  }, [map]);
+
+  const apply = (detail: MapGotoDetail | null | undefined) => {
+    if (!detail || !Number.isFinite(detail.lat) || !Number.isFinite(detail.lng)) return;
+    if (detail.nonce && detail.nonce < appliedNonceRef.current) return;
+    if (detail.nonce) appliedNonceRef.current = detail.nonce;
+    try {
+      map.invalidateSize({ animate: false });
+      const zoom = detail.zoom ?? 17;
+      if (detail.usePointCamera === false && detail.line && detail.line.length >= 2) {
+        const bounds = L.latLngBounds(detail.line.map(([la, ln]) => L.latLng(la, ln)));
+        if (bounds.isValid()) {
+          map.flyToBounds(bounds, { padding: [56, 56], maxZoom: 17, duration: 0.6 });
+          (window as any).__motidLastGoto = {
+            surveyId: detail.surveyId,
+            lat: detail.lat,
+            lng: detail.lng,
+            nonce: detail.nonce,
+            mode: "fitBounds",
+            t: Date.now(),
+          };
+          return;
+        }
+      }
+      map.flyTo([detail.lat, detail.lng], zoom, { duration: 0.6 });
+      (window as any).__motidLastGoto = {
+        surveyId: detail.surveyId,
+        lat: detail.lat,
+        lng: detail.lng,
+        nonce: detail.nonce,
+        mode: "flyTo",
+        t: Date.now(),
+      };
+    } catch (err) {
+      console.warn("Map go-to failed:", err);
+    }
+  };
+
+  useEffect(() => {
+    (window as any).__motidApplyGoto = apply;
+    return () => {
+      if ((window as any).__motidApplyGoto === apply) (window as any).__motidApplyGoto = undefined;
+    };
+  }, [map]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const onEvent = (e: Event) => {
+      apply((e as CustomEvent<MapGotoDetail>).detail);
+    };
+    window.addEventListener(MAP_GOTO_EVENT, onEvent as EventListener);
+    return () => window.removeEventListener(MAP_GOTO_EVENT, onEvent as EventListener);
+  }, [map]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!focus) return;
+    apply(focus);
+    const timers = [100, 300, 700, 1200, 2000].map((ms) => window.setTimeout(() => apply(focus), ms));
+    return () => timers.forEach((t) => window.clearTimeout(t));
+  }, [focus?.nonce, focus?.surveyId, map]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return null;
 }
 
-const createCustomIcon = (condition: "good" | "fair" | "poor") =>
+function SelectedAssetMarker({ focus }: { focus: MapGotoDetail | null }) {
+  const markerRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (!focus) return;
+    const open = () => {
+      try {
+        markerRef.current?.openPopup?.();
+      } catch {
+        /* ignore */
+      }
+    };
+    const t0 = window.setTimeout(open, 300);
+    const t1 = window.setTimeout(open, 650);
+    return () => {
+      window.clearTimeout(t0);
+      window.clearTimeout(t1);
+    };
+  }, [focus?.nonce]);
+
+  if (!focus || !Number.isFinite(focus.lat) || !Number.isFinite(focus.lng)) return null;
+
+  return (
+    <Marker
+      position={[focus.lat, focus.lng]}
+      icon={selectedPinIcon}
+      zIndexOffset={2000}
+      ref={markerRef}
+    >
+      <Popup>
+        <div style={{ color: "#1a2b22", fontSize: 11.5, fontFamily: "var(--font-body)", minWidth: 170 }}>
+          <div style={{ fontFamily: "var(--font-title)", fontWeight: 700, color: "#006633", fontSize: 13, marginBottom: 6 }}>
+            {focus.label || "Selected asset"}
+          </div>
+          <div style={{ fontSize: 11, color: "#6b8072" }}>
+            {focus.lat.toFixed(5)}, {focus.lng.toFixed(5)}
+          </div>
+        </div>
+      </Popup>
+    </Marker>
+  );
+}
+
+const createCustomIcon = (condition: string) =>
   L.divIcon({
     className: "custom-div-icon",
     html: `<div class="map-pin ${condition}"></div>`,
@@ -90,11 +160,12 @@ const TILE_LAYERS: Record<string, { label: string; emoji: string; url: string; a
   osm:       { label: "OpenStreetMap",emoji: "🗾", url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",       attribution: "&copy; OpenStreetMap contributors" },
 };
 
-const hasValidGeo = (r: any) =>
-  Array.isArray(r?._geolocation) &&
-  r._geolocation.length >= 2 &&
-  typeof r._geolocation[0] === "number" &&
-  typeof r._geolocation[1] === "number";
+const hasValidGeo = (r: any) => {
+  if (!Array.isArray(r?._geolocation) || r._geolocation.length < 2) return false;
+  const lat = Number(r._geolocation[0]);
+  const lng = Number(r._geolocation[1]);
+  return Number.isFinite(lat) && Number.isFinite(lng);
+};
 
 const INITIAL_VISIBLE_PARAMS: Record<string, boolean> = {
   sealed: true,
@@ -114,7 +185,8 @@ const INITIAL_VISIBLE_PARAMS: Record<string, boolean> = {
   drift: true,
   grid: true,
   traffic_lights: true,
-  streetlight: true
+  streetlight: true,
+  unknown: true,
 };
 
 const PARAMETER_GROUPS = [
@@ -141,7 +213,7 @@ const PARAMETER_GROUPS = [
     items: [
       { key: "culvert", label: "Culverts", emoji: "🕳️" },
       { key: "piped_causeway", label: "Piped Causeways", emoji: "🌁" },
-      { key: "shelvet", label: "Shelvets", emoji: "🧱" },
+      { key: "shelvet", label: "Shelverts", emoji: "🧱" },
       { key: "grid", label: "Cattle Grids", emoji: "🐄" }
     ]
   },
@@ -163,42 +235,118 @@ const PARAMETER_GROUPS = [
   }
 ];
 
-
+function recordKey(record: any, prefix: string, index: number) {
+  const id = record?._id ?? record?.id ?? record?.survey_id;
+  return id != null && String(id).length > 0 ? `${prefix}-${id}-${index}` : `${prefix}-${index}`;
+}
 
 interface MapViewProps {
   records: any[];
   selectedRecord: any | null;
+  mapFocus?: MapGotoDetail | null;
   onSelectRecord: (record: any) => void;
 }
 
-export default function MapView({ records, selectedRecord, onSelectRecord }: MapViewProps) {
-  // Fix for Next.js HMR/Fast Refresh "Map container is already initialized" error
-  if (typeof window !== "undefined") {
-    const container = document.getElementById("map-container");
-    if (container) {
-      (container as any)._leaflet_id = null;
-    }
-  }
+export default function MapView({ records, selectedRecord, mapFocus = null, onSelectRecord }: MapViewProps) {
+  // Client-only mount — never manually touch Leaflet's _leaflet_id (that causes
+  // "Map container is being reused by another instance" during remove).
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const defaultCenter: [number, number] = [-19.0154, 29.1549];
-  // Default to Google Hybrid
   const [activeLayer, setActiveLayer] = useState("hybrid");
-  // Basemap panel open/collapsed
   const [basemapOpen, setBasemapOpen] = useState(false);
-  // Legend open/collapsed
   const [legendOpen, setLegendOpen] = useState(false);
-  // Parameter Layers checklist open/collapsed
   const [layersOpen, setLayersOpen] = useState(false);
-  // Layer visibility state
   const [visibleParameters, setVisibleParameters] = useState<Record<string, boolean>>(INITIAL_VISIBLE_PARAMS);
+
+  useEffect(() => {
+    if (!selectedRecord) return;
+    const cat = getCategoryKey(selectedRecord);
+    setVisibleParameters(prev => (prev[cat] === false ? { ...prev, [cat]: true } : prev));
+  }, [selectedRecord]);
 
   const layer = TILE_LAYERS[activeLayer];
 
+  const lineLayers = useMemo(() => {
+    return records.map((record, index) => {
+      const lineCoords = parseLineCoordinates(record);
+      if (!lineCoords || lineCoords.length === 0) return null;
+      const catKey = getCategoryKey(record);
+      if (visibleParameters[catKey] === false) return null;
+      const condition = getRecordStatus(record);
+      return (
+        <Polyline
+          key={recordKey(record, "line", index)}
+          positions={lineCoords}
+          pathOptions={{
+            color: getStatusColor(condition),
+            weight: selectedRecord && selectedRecord._id === record._id ? 7 : 4,
+            opacity: selectedRecord && selectedRecord._id === record._id ? 1.0 : 0.7,
+          }}
+          eventHandlers={{ click: () => onSelectRecord(record) }}
+        />
+      );
+    });
+  }, [records, visibleParameters, selectedRecord, onSelectRecord]);
+
+  const markerLayers = useMemo(() => {
+    return records.map((record, index) => {
+      if (!hasValidGeo(record)) return null;
+      const catKey = getCategoryKey(record);
+      if (visibleParameters[catKey] === false) return null;
+      const condition = getRecordStatus(record);
+      const assetType = getAssetType(record);
+      const name = getAssetName(record);
+      const lat = Number(record._geolocation[0]);
+      const lng = Number(record._geolocation[1]);
+
+      return (
+        <Marker
+          key={recordKey(record, "marker", index)}
+          position={[lat, lng]}
+          icon={createCustomIcon(condition)}
+          eventHandlers={{ click: () => onSelectRecord(record) }}
+        >
+          <Popup>
+            <div style={{ color: "#1a2b22", fontSize: 11.5, fontFamily: "var(--font-body)", minWidth: 175 }}>
+              <div style={{ fontFamily: "var(--font-title)", fontWeight: 700, color: "#006633", fontSize: 13, marginBottom: 6 }}>
+                {name}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                {[
+                  { label: "Type",      val: assetType },
+                  { label: "Road",      val: (record.road_name ?? "—").split(" (")[0] },
+                  { label: "Section",   val: record.section_name ?? "—" },
+                  { label: "Condition", val: formatStatusLabel(condition).toUpperCase(), color: getStatusColor(condition) },
+                  { label: "Surveyor",  val: record.surveyor_name ?? "N/A" },
+                  { label: "Date",      val: record.survey_date ?? "N/A" },
+                ].map(row => (
+                  <div key={row.label} style={{ display: "flex", justifyContent: "space-between", gap: 8, borderBottom: "1px solid rgba(0,102,51,0.07)", paddingBottom: 2 }}>
+                    <span style={{ color: "#6b8072" }}>{row.label}:</span>
+                    <span style={{ fontWeight: 600, color: (row as any).color ?? "#1a2b22", textAlign: "right" }}>{row.val}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </Popup>
+        </Marker>
+      );
+    });
+  }, [records, visibleParameters, onSelectRecord]);
+
+  if (!mounted) {
+    return (
+      <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: "#f0f2f1" }}>
+        <div style={{ fontSize: 11, color: "#6b8072" }}>Loading map…</div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ width: "100%", height: "100%", position: "relative" }}>
-
-
-      {/* ── Basemap switcher — left side, collapsible ────────────────── */}
       <div style={{
         position: "absolute",
         top: 12,
@@ -209,7 +357,6 @@ export default function MapView({ records, selectedRecord, onSelectRecord }: Map
         gap: 6,
         pointerEvents: "none",
       }}>
-        {/* Toggle button */}
         <button
           onClick={() => setBasemapOpen(o => !o)}
           title={basemapOpen ? "Collapse basemap panel" : "Expand basemap panel"}
@@ -237,7 +384,6 @@ export default function MapView({ records, selectedRecord, onSelectRecord }: Map
           {basemapOpen ? <ChevronLeft size={12} /> : <ChevronRight size={12} />}
         </button>
 
-        {/* Panel */}
         <div style={{
           pointerEvents: basemapOpen ? "all" : "none",
           opacity: basemapOpen ? 1 : 0,
@@ -287,7 +433,6 @@ export default function MapView({ records, selectedRecord, onSelectRecord }: Map
         </div>
       </div>
 
-      {/* ── Parameter Layers switcher — right side, collapsible ───────── */}
       <div style={{
         position: "absolute",
         top: 12,
@@ -299,7 +444,6 @@ export default function MapView({ records, selectedRecord, onSelectRecord }: Map
         pointerEvents: "none",
         alignItems: "flex-end",
       }}>
-        {/* Toggle button */}
         <button
           onClick={() => setLayersOpen(o => !o)}
           title={layersOpen ? "Collapse layers panel" : "Expand layers panel"}
@@ -322,58 +466,32 @@ export default function MapView({ records, selectedRecord, onSelectRecord }: Map
             fontFamily: "var(--font-body)",
           }}
         >
-          <span>📂</span>
-          Parameter Layers
-          {layersOpen ? <ChevronRight size={12} style={{ transform: "rotate(90deg)" }} /> : <ChevronLeft size={12} style={{ transform: "rotate(-90deg)" }} />}
+          Layers
+          {layersOpen ? <ChevronRight size={12} /> : <ChevronLeft size={12} />}
         </button>
 
-        {/* Panel */}
         <div style={{
           pointerEvents: layersOpen ? "all" : "none",
           opacity: layersOpen ? 1 : 0,
-          maxHeight: layersOpen ? 460 : 0,
-          overflowY: "auto",
+          maxHeight: layersOpen ? 420 : 0,
+          overflow: "hidden",
           transition: "max-height 0.25s cubic-bezier(0.4,0,0.2,1), opacity 0.2s",
           background: "#ffffff",
           border: "1px solid rgba(0,102,51,0.18)",
           borderRadius: "10px",
           boxShadow: "0 4px 14px rgba(0,0,0,0.12)",
-          padding: layersOpen ? "12px" : "0 12px",
-          display: "flex",
-          flexDirection: "column",
-          gap: 10,
-          minWidth: 220,
-          maxWidth: 260,
+          padding: layersOpen ? "10px 12px" : "0 12px",
+          minWidth: 180,
+          maxWidth: 220,
         }}>
-          {/* Shortcuts */}
-          <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--border)", paddingBottom: 6 }}>
-            <button
-              onClick={() => setVisibleParameters(INITIAL_VISIBLE_PARAMS)}
-              style={{ background: "none", border: "none", color: "var(--green)", cursor: "pointer", fontSize: 10.5, fontWeight: 700, padding: 0 }}
-            >
-              Select All
-            </button>
-            <button
-              onClick={() => {
-                const cleared = { ...INITIAL_VISIBLE_PARAMS };
-                Object.keys(cleared).forEach(k => cleared[k] = false);
-                setVisibleParameters(cleared);
-              }}
-              style={{ background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontSize: 10.5, fontWeight: 700, padding: 0 }}
-            >
-              Clear All
-            </button>
-          </div>
-
-          {/* Grouped list */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 320, overflowY: "auto", paddingRight: 4 }}>
-            {PARAMETER_GROUPS.map(g => (
-              <div key={g.label} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.5px", color: "var(--text-muted)", borderBottom: "1px solid rgba(0,102,51,0.08)", paddingBottom: 2 }}>
-                  {g.label}
-                </div>
-                {g.items.map(item => {
-                  const isChecked = !!visibleParameters[item.key];
+          {PARAMETER_GROUPS.map(group => (
+            <div key={group.label} style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 9, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.6px", color: "#6b8072", marginBottom: 4 }}>
+                {group.label}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                {group.items.map(item => {
+                  const isChecked = visibleParameters[item.key] !== false;
                   return (
                     <label
                       key={item.key}
@@ -399,12 +517,11 @@ export default function MapView({ records, selectedRecord, onSelectRecord }: Map
                   );
                 })}
               </div>
-            ))}
-          </div>
+            </div>
+          ))}
         </div>
       </div>
 
-      {/* ── Condition legend — bottom-left, collapsible ─────────────── */}
       <div style={{
         position: "absolute",
         bottom: 28,
@@ -415,7 +532,6 @@ export default function MapView({ records, selectedRecord, onSelectRecord }: Map
         gap: 5,
         pointerEvents: "none",
       }}>
-        {/* Collapsed content (slides up) */}
         <div style={{
           pointerEvents: legendOpen ? "all" : "none",
           opacity: legendOpen ? 1 : 0,
@@ -434,29 +550,16 @@ export default function MapView({ records, selectedRecord, onSelectRecord }: Map
             { label: "Good Condition", color: "#006633" },
             { label: "Fair Condition", color: "#f59e0b" },
             { label: "Poor Condition", color: "#dc2626" },
+            { label: "Mixed", color: "#7c3aed" },
+            { label: "Under construction", color: "#2563eb" },
           ].map(item => (
             <div key={item.label} className="legend-row">
               <div className="legend-dot" style={{ background: item.color }} />
               <span>{item.label}</span>
             </div>
           ))}
-          <div style={{ marginTop: 5, borderTop: "1px solid rgba(0,102,51,0.1)", paddingTop: 5 }}>
-            <div className="map-legend-title" style={{ marginBottom: 3 }}>Assets</div>
-            {[
-              { label: "Bridge / Culvert" },
-              { label: "Junction / Sign" },
-              { label: "Road Segment" },
-              { label: "Bus Stop / Light" },
-            ].map(item => (
-              <div key={item.label} className="legend-row">
-                <span style={{ fontSize: 9, color: "#6b8072" }}>●</span>
-                <span>{item.label}</span>
-              </div>
-            ))}
-          </div>
         </div>
 
-        {/* Toggle button — sits below the content */}
         <button
           onClick={() => setLegendOpen(o => !o)}
           title={legendOpen ? "Collapse legend" : "Expand legend"}
@@ -485,85 +588,19 @@ export default function MapView({ records, selectedRecord, onSelectRecord }: Map
         </button>
       </div>
 
-      {/* ── Map ─────────────────────────────────────────────────────── */}
       <MapContainer
-        id="map-container"
         center={defaultCenter}
         zoom={6.5}
         scrollWheelZoom
         zoomControl={false}
         style={{ width: "100%", height: "100%" }}
       >
-        {/* Zoom control moved to bottom-right, away from basemap panel */}
         <ZoomControl position="bottomright" />
-
         <TileLayer key={activeLayer} attribution={layer.attribution} url={layer.url} maxZoom={20} />
-
-        {records.map(record => {
-          const lineCoords = parseLineCoordinates(record);
-          if (!lineCoords || lineCoords.length === 0) return null;
-          const catKey = getCategoryKey(record);
-          if (!visibleParameters[catKey]) return null;
-          const condition = getRecordStatus(record);
-
-          return (
-            <Polyline
-              key={`line-${record._id}`}
-              positions={lineCoords}
-              pathOptions={{
-                color: condition === "good" ? "#006633" : condition === "fair" ? "#f59e0b" : "#dc2626",
-                weight: selectedRecord && selectedRecord._id === record._id ? 7 : 4,
-                opacity: selectedRecord && selectedRecord._id === record._id ? 1.0 : 0.7,
-              }}
-              eventHandlers={{ click: () => onSelectRecord(record) }}
-            />
-          );
-        })}
-
-        {records.map(record => {
-          if (!hasValidGeo(record)) return null;
-          const catKey = getCategoryKey(record);
-          if (!visibleParameters[catKey]) return null;
-          const condition = getRecordStatus(record);
-          const assetType = getAssetType(record);
-          const name = getAssetName(record);
-
-          return (
-            <Marker
-              key={`marker-${record._id}`}
-              position={[record._geolocation[0], record._geolocation[1]]}
-              icon={createCustomIcon(condition)}
-              eventHandlers={{ click: () => onSelectRecord(record) }}
-            >
-              <Popup>
-                <div style={{ color: "#1a2b22", fontSize: 11.5, fontFamily: "var(--font-body)", minWidth: 175 }}>
-                  <div style={{ fontFamily: "var(--font-title)", fontWeight: 700, color: "#006633", fontSize: 13, marginBottom: 6 }}>
-                    {name}
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                    {[
-                      { label: "Type",      val: assetType },
-                      { label: "Road",      val: (record.road_name ?? "—").split(" (")[0] },
-                      { label: "Section",   val: record.section_name ?? "—" },
-                      { label: "Condition", val: condition.toUpperCase(), color: condition === "good" ? "#006633" : condition === "fair" ? "#b45309" : "#b91c1c" },
-                      { label: "Surveyor",  val: record.surveyor_name ?? "N/A" },
-                      { label: "Date",      val: record.survey_date ?? "N/A" },
-                    ].map(row => (
-                      <div key={row.label} style={{ display: "flex", justifyContent: "space-between", gap: 8, borderBottom: "1px solid rgba(0,102,51,0.07)", paddingBottom: 2 }}>
-                        <span style={{ color: "#6b8072" }}>{row.label}:</span>
-                        <span style={{ fontWeight: 600, color: (row as any).color ?? "#1a2b22", textAlign: "right" }}>{row.val}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </Popup>
-            </Marker>
-          );
-        })}
-
-        {selectedRecord && hasValidGeo(selectedRecord) && (
-          <ChangeMapCenter lat={selectedRecord._geolocation[0]} lng={selectedRecord._geolocation[1]} />
-        )}
+        {lineLayers}
+        {markerLayers}
+        <MapGoToController focus={mapFocus} />
+        <SelectedAssetMarker focus={mapFocus} />
       </MapContainer>
     </div>
   );

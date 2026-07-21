@@ -6,7 +6,11 @@ import {
   ResponsiveContainer, PieChart, Pie, Cell, Legend, Tooltip as ChartTooltip,
   BarChart, Bar, XAxis, YAxis, LineChart, Line, CartesianGrid, AreaChart, Area,
 } from "recharts";
-import { getRecordStatus, getAssetType, getAssetName } from "@/components/helpers";
+import {
+  getRecordStatus, getAssetType, getAssetName, formatStatusLabel, getStatusColor, normalizePhotos, getSadcValue,
+  AUTHORITY_OPTIONS, CONDITION_WITH_CONSTRUCTION_OPTIONS,
+  formatGpsLabel,
+} from "@/components/helpers";
 import type { NavModule } from "./LeftNav";
 
 /* ─── helpers ─────────────────────────────────────────────────────────────── */
@@ -139,7 +143,7 @@ const ASSET_TYPES = [
   { key: "bus_stop",        label: "Bus Stop",        check: (r: any) => getAssetType(r) === "Bus Stop" },
   { key: "junction",        label: "Junction",        check: (r: any) => getAssetType(r) === "Junction" },
   { key: "road_sign",       label: "Road Sign",       check: (r: any) => getAssetType(r) === "Road Sign" },
-  { key: "shelvet",         label: "Shelvet",         check: (r: any) => getAssetType(r) === "Shelvet" },
+  { key: "shelvet",         label: "Shelvert",        check: (r: any) => getAssetType(r) === "Shelvert" || getAssetType(r) === "Shelvert" },
   { key: "culvert",         label: "Culvert",         check: (r: any) => getAssetType(r) === "Culvert" },
   { key: "piped_causeway",  label: "Piped Causeway",  check: (r: any) => getAssetType(r) === "Piped Causeway" },
   { key: "drift",           label: "Drift",           check: (r: any) => getAssetType(r) === "Drift" },
@@ -148,7 +152,13 @@ const ASSET_TYPES = [
   { key: "streetlight",     label: "Streetlight",     check: (r: any) => getAssetType(r) === "Streetlight" || getAssetType(r) === "Street Light" }
 ];
 
-const COND_COLORS: Record<string, string> = { good: "#006633", fair: "#f59e0b", poor: "#dc2626" };
+const COND_COLORS: Record<string, string> = {
+  good: "#006633",
+  fair: "#f59e0b",
+  poor: "#dc2626",
+  mixed: "#7c3aed",
+  under_construction: "#2563eb",
+};
 
 export const ZIM_PROVINCES_DISTRICTS: Record<string, string[]> = {
   "Harare": ["Harare", "Chitungwiza", "Epworth"],
@@ -190,6 +200,8 @@ function DashboardPage({ records, lastSynced }: { records: any[]; lastSynced?: D
   const good   = records.filter(r => getRecordStatus(r) === "good").length;
   const fair   = records.filter(r => getRecordStatus(r) === "fair").length;
   const poor   = records.filter(r => getRecordStatus(r) === "poor").length;
+  const mixed  = records.filter(r => getRecordStatus(r) === "mixed").length;
+  const underConstruction = records.filter(r => getRecordStatus(r) === "under_construction").length;
   const surveyors = new Set(records.map(r => r.surveyor_name).filter(Boolean)).size;
   const dates  = records.map(r => r.survey_date).filter(Boolean).sort();
   const dateRange = dates.length ? `${dates[0]} → ${dates[dates.length - 1]}` : "N/A";
@@ -198,13 +210,23 @@ function DashboardPage({ records, lastSynced }: { records: any[]; lastSynced?: D
     { name: "Good", value: good, color: "#006633" },
     { name: "Fair", value: fair, color: "#f59e0b" },
     { name: "Poor", value: poor, color: "#dc2626" },
+    { name: "Mixed", value: mixed, color: "#7c3aed" },
+    { name: "Under construction", value: underConstruction, color: "#2563eb" },
   ].filter(d => d.value > 0);
 
   const typeData = ASSET_TYPES.map(t => ({ name: t.label, count: records.filter(t.check).length })).filter(d => d.count > 0);
 
   const hwData = HIGHWAYS.map(h => {
     const hw = hwRecords(records, h.id);
-    return { name: h.id, total: hw.length, good: hw.filter(r => getRecordStatus(r) === "good").length, fair: hw.filter(r => getRecordStatus(r) === "fair").length, poor: hw.filter(r => getRecordStatus(r) === "poor").length };
+    return {
+      name: h.id,
+      total: hw.length,
+      good: hw.filter(r => getRecordStatus(r) === "good").length,
+      fair: hw.filter(r => getRecordStatus(r) === "fair").length,
+      poor: hw.filter(r => getRecordStatus(r) === "poor").length,
+      mixed: hw.filter(r => getRecordStatus(r) === "mixed").length,
+      under_construction: hw.filter(r => getRecordStatus(r) === "under_construction").length,
+    };
   }).filter(d => d.total > 0);
 
   const surveyorData = Array.from(
@@ -418,23 +440,39 @@ function AnalyticsPage({ records }: { records: any[] }) {
   const good   = records.filter(r => getRecordStatus(r) === "good").length;
   const fair   = records.filter(r => getRecordStatus(r) === "fair").length;
   const poor   = records.filter(r => getRecordStatus(r) === "poor").length;
+  const mixed  = records.filter(r => getRecordStatus(r) === "mixed").length;
+  const underConstruction = records.filter(r => getRecordStatus(r) === "under_construction").length;
 
   const condData = [
     { name: "Good", value: good, color: "#006633" },
     { name: "Fair", value: fair, color: "#f59e0b" },
     { name: "Poor", value: poor, color: "#dc2626" },
+    { name: "Mixed", value: mixed, color: "#7c3aed" },
+    { name: "Under construction", value: underConstruction, color: "#2563eb" },
   ].filter(d => d.value > 0);
 
   const typeData = ASSET_TYPES.map(t => ({ name: t.label, count: records.filter(t.check).length })).filter(d => d.count > 0);
 
   const hwData = HIGHWAYS.map(h => {
     const hw = hwRecords(records, h.id);
-    return { name: h.id, good: hw.filter(r => getRecordStatus(r) === "good").length, fair: hw.filter(r => getRecordStatus(r) === "fair").length, poor: hw.filter(r => getRecordStatus(r) === "poor").length };
+    return {
+      name: h.id,
+      good: hw.filter(r => getRecordStatus(r) === "good").length,
+      fair: hw.filter(r => getRecordStatus(r) === "fair").length,
+      poor: hw.filter(r => getRecordStatus(r) === "poor").length,
+      mixed: hw.filter(r => getRecordStatus(r) === "mixed").length,
+      under_construction: hw.filter(r => getRecordStatus(r) === "under_construction").length,
+    };
   });
 
-  const compliant    = records.filter(r => r.image_SADC_compliant === "yes" || r.image_sadc_compliant === "yes" || r.sadc_compliant === "yes" || r.sign_sadc_compliant === "yes").length;
-  const nonCompliant = records.filter(r => r.image_SADC_compliant === "no"  || r.image_sadc_compliant === "no"  || r.sadc_compliant === "no"  || r.sign_sadc_compliant === "no").length;
-  const sadcData = [{ name: "Compliant", count: compliant, fill: "#006633" }, { name: "Non-Compliant", count: nonCompliant, fill: "#dc2626" }];
+  const compliant    = records.filter(r => getSadcValue(r) === "yes").length;
+  const nonCompliant = records.filter(r => getSadcValue(r) === "no").length;
+  const sadcMixed    = records.filter(r => getSadcValue(r) === "mixed").length;
+  const sadcData = [
+    { name: "Compliant", count: compliant, fill: "#006633" },
+    { name: "Non-Compliant", count: nonCompliant, fill: "#dc2626" },
+    { name: "Mixed", count: sadcMixed, fill: "#7c3aed" },
+  ].filter(d => d.count > 0);
 
   const surveyorData = Array.from(
     records.reduce((map, r) => { const s = r.surveyor_name ?? "Unknown"; map.set(s, (map.get(s) ?? 0) + 1); return map; }, new Map<string, number>())
@@ -623,12 +661,14 @@ function SurveyPage({ records, onSelectRecord }: { records: any[]; onSelectRecor
           <option value="good">Good</option>
           <option value="fair">Fair</option>
           <option value="poor">Poor</option>
+          <option value="mixed">Mixed</option>
+          <option value="under_construction">Under construction</option>
         </select>
         <select value={road} onChange={e => setRoad(e.target.value)} style={{ padding: "8px 12px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 8, fontSize: 12, outline: "none", fontFamily: "var(--font-body)", color: "var(--text-secondary)", background: "#fff", flex: 1 }}>
           <option value="all">All Highways</option>
           {roads.map(r => <option key={r} value={r}>{(r ?? "").split(" (")[0]}</option>)}
         </select>
-        <span style={{ fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap" }}>{filtered.length} records</span>
+        <span style={{ fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap" }}>{filtered.length} records · click to open on map</span>
       </div>
 
       {/* Cards grid */}
@@ -636,6 +676,7 @@ function SurveyPage({ records, onSelectRecord }: { records: any[]; onSelectRecor
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
           {filtered.map((r, i) => {
             const c = getRecordStatus(r);
+            const gpsLabel = formatGpsLabel(r);
             return (
               <div key={r._id ?? i} onClick={() => onSelectRecord(r)} style={{ background: "#fff", borderRadius: 10, border: `1px solid ${c === "poor" ? "rgba(220,38,38,0.25)" : "var(--border)"}`, padding: "13px 15px", cursor: "pointer", transition: "all 0.15s", boxShadow: "var(--shadow-sm)" }}
                 onMouseOver={e => (e.currentTarget.style.borderColor = "var(--green)")}
@@ -649,7 +690,11 @@ function SurveyPage({ records, onSelectRecord }: { records: any[]; onSelectRecor
                   <span style={{ color: "var(--green)", fontWeight: 700, textTransform: "uppercase", fontSize: 9.5 }}>{getAssetType(r)}</span>
                   <span style={{ color: "var(--text-muted)" }}>{r.survey_date ?? "—"}</span>
                 </div>
+                <div style={{ marginTop: 6, fontSize: 10.5, color: "var(--text-secondary)", fontFamily: "ui-monospace, monospace" }}>
+                  GPS: {gpsLabel ?? "—"}
+                </div>
                 {r.surveyor_name && <div style={{ marginTop: 5, fontSize: 10, color: "var(--text-muted)" }}>👤 {r.surveyor_name}</div>}
+                <div style={{ marginTop: 8, fontSize: 10, fontWeight: 700, color: "var(--green)" }}>🗺 Show on map</div>
               </div>
             );
           })}
@@ -704,7 +749,7 @@ const CATEGORY_GROUPS = [
     items: [
       { key: "culvert",       label: "Culvert",        emoji: "🔩" },
       { key: "piped_causeway",label: "Piped Causeway", emoji: "📡" },
-      { key: "shelvet",       label: "Shelvet",        emoji: "🛡️" },
+      { key: "shelvet",       label: "Shelvert",        emoji: "🛡️" },
       { key: "grid",          label: "Grid",           emoji: "#️⃣" },
     ]
   },
@@ -739,7 +784,7 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
   const [surveyDate, setSurveyDate] = useState(new Date().toISOString().split("T")[0]);
   const [vegetation, setVegetation] = useState("none");
   const [gps, setGps] = useState("");
-  const [imageSadcCompliant, setImageSadcCompliant] = useState<"yes" | "no">("yes");
+  const [imageSadcCompliant, setImageSadcCompliant] = useState<"yes" | "no" | "mixed">("yes");
 
   // Sealed Roads Fields
   const [pavedRoadName, setPavedRoadName] = useState("");
@@ -851,9 +896,9 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
   const [signType, setSignType] = useState("warning");
   const [signVisibility, setSignVisibility] = useState("good");
 
-  // Shelvet Fields
-  const [shelvetType, setShelvetType] = useState("armco");
-  const [shelvetCondition, setShelvetCondition] = useState("good");
+  // Shelvert Fields
+  const [shelvetType, setShelvertType] = useState("armco");
+  const [shelvetCondition, setShelvertCondition] = useState("good");
 
   // Culvert Fields
   const [culvertClass, setCulvertClass] = useState("pipe_culvert");
@@ -898,6 +943,9 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
   const [province, setProvince] = useState("Harare");
   const [district, setDistrict] = useState("Harare");
   const [photo, setPhoto] = useState<string | null>(null);
+  const [photos, setPhotos] = useState<string[]>([]);
+  const [sealedAuthority, setSealedAuthority] = useState("rdc");
+  const [gravelAuthority, setGravelAuthority] = useState("rdc");
 
   const handleProvinceChange = (p: string) => {
     setProvince(p);
@@ -918,7 +966,8 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
       setImageSadcCompliant(record.image_SADC_compliant || "yes");
       setProvince(record.province || "Harare");
       setDistrict(record.district || "Harare");
-      setPhoto(record.photo || null);
+      setPhoto(record.photo || normalizePhotos(record)[0] || null);
+      setPhotos(normalizePhotos(record));
 
       setPavedRoadName(record.paved_road_name || record.Road_Name_002 || "");
       setPavedRoadClass(record.paved_road_class || record.Road_Class_002 || "secondary");
@@ -940,6 +989,10 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
       setGrid(record.grid || "good");
       setYearConstructedToSealedStandard(record.year_constructed_to_sealed_standard || "");
       setLastSurfaceYear(record.last_surface_year || "");
+      {
+        const auth = record.Authority_Name_002 || record.authority_name_002 || "rdc";
+        setSealedAuthority(auth === "ddf" ? "rida" : auth);
+      }
 
       setGravelRoadName(record.gravel_road_name || record.Road_Name || "");
       setGravelRoadClass(record.gravel_road_class || record.Road_Class || "urban_collector");
@@ -951,6 +1004,10 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
       setGravelPotholesDegree(record.potholes_degree || record.Potholes_Degree || "none");
       setGravelPassability(record.passability || "all_year_round");
       setGravelYearOfConstruction(record.year_of_construction || "");
+      {
+        const gAuth = record.Authority_Name || record.authority_name || "rdc";
+        setGravelAuthority(gAuth === "ddf" ? "rida" : gAuth);
+      }
 
       setEarthRoadName(record.earth_road_name || "");
       setEarthRoadClass(record.earth_road_class || "tertiary_feeder");
@@ -1019,8 +1076,8 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
       setSadcCompliant(record.sadc_compliant || record.image_SADC_compliant || "yes");
       setSignVisibility(record.sign_visibility || "good");
 
-      setShelvetType(record.shelvets_type || "armco");
-      setShelvetCondition(record.shelvet_condition || "good");
+      setShelvertType(record.shelvets_type || "armco");
+      setShelvertCondition(record.shelvet_condition || "good");
 
       setCulvertClass(record.culvet_class || "pipe_culvert");
       setCulvertType(record.culvet_type || "concrete");
@@ -1067,6 +1124,9 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
       setProvince("Harare");
       setDistrict("Harare");
       setPhoto(null);
+      setPhotos([]);
+      setSealedAuthority("rdc");
+      setGravelAuthority("rdc");
       
       setPavedRoadName("");
       setPavedRoadClass("secondary");
@@ -1167,8 +1227,8 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
       setSadcCompliant("yes");
       setSignVisibility("good");
 
-      setShelvetType("armco");
-      setShelvetCondition("good");
+      setShelvertType("armco");
+      setShelvertCondition("good");
 
       setCulvertClass("pipe_culvert");
       setCulvertType("concrete");
@@ -1256,7 +1316,8 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
       image_sadc_compliant: imageSadcCompliant,
       province,
       district,
-      photo: photo || null,
+      photo: photos[0] || photo || null,
+      photos: photos.length > 0 ? photos : (photo ? [photo] : undefined),
     };
     if (section === "sealed") {
       data.paved_road_name = pavedRoadName;
@@ -1277,6 +1338,8 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
       data.road_studs = roadStuds;
       data.passability_002 = passability002;
       data.grid = grid;
+      data.Authority_Name_002 = sealedAuthority;
+      data.authority_name_002 = sealedAuthority;
       if (yearConstructedToSealedStandard) data.year_constructed_to_sealed_standard = Number(yearConstructedToSealedStandard);
       if (lastSurfaceYear) data.last_surface_year = Number(lastSurfaceYear);
     } else if (section === "gravel") {
@@ -1289,6 +1352,8 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
       data.riding_quality_degree = gravelRidingQuality;
       data.potholes_degree = gravelPotholesDegree;
       data.passability = gravelPassability;
+      data.Authority_Name = gravelAuthority;
+      data.authority_name = gravelAuthority;
       if (gravelYearOfConstruction) data.year_of_construction = Number(gravelYearOfConstruction);
     } else if (section === "earth") {
       data.earth_road_name = earthRoadName;
@@ -1518,13 +1583,21 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             <div>
               <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 5 }}>Highway Route</label>
-              <select value={roadName} onChange={e => setRoadName(e.target.value)} style={{ width: "100%", padding: "8px 12px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 8, fontSize: 12, outline: "none", fontFamily: "var(--font-body)", background: "#fff" }}>
-                <option value="A1 Highway (Harare - Chirundu)">A1 (Harare - Chirundu)</option>
-                <option value="A2 Highway (Harare - Nyamapanda)">A2 (Harare - Nyamapanda)</option>
-                <option value="A3 Highway (Harare - Bulawayo)">A3 (Harare - Bulawayo)</option>
-                <option value="A4 Highway (Harare - Masvingo - Beitbridge)">A4 (Harare - Beitbridge)</option>
-                <option value="A5 Highway (Harare - Mutare)">A5 (Harare - Mutare)</option>
-              </select>
+              <input
+                type="text"
+                list="highway-route-suggestions"
+                value={roadName}
+                onChange={e => setRoadName(e.target.value)}
+                placeholder="e.g. A1 Highway (Harare - Chirundu)"
+                style={{ width: "100%", padding: "8px 12px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 8, fontSize: 12, outline: "none", fontFamily: "var(--font-body)", background: "#fff" }}
+              />
+              <datalist id="highway-route-suggestions">
+                <option value="A1 Highway (Harare - Chirundu)" />
+                <option value="A2 Highway (Harare - Nyamapanda)" />
+                <option value="A3 Highway (Harare - Bulawayo)" />
+                <option value="A4 Highway (Harare - Masvingo - Beitbridge)" />
+                <option value="A5 Highway (Harare - Mutare)" />
+              </datalist>
             </div>
             <div>
               <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 5 }}>Section Name</label>
@@ -1583,43 +1656,37 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
               <select value={imageSadcCompliant} onChange={e => setImageSadcCompliant(e.target.value as any)} style={{ width: "100%", padding: "8px 12px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 8, fontSize: 12, outline: "none", fontFamily: "var(--font-body)" }}>
                 <option value="yes">Yes</option>
                 <option value="no">No</option>
+                <option value="mixed">Mixed</option>
               </select>
             </div>
           </div>
 
-          {/* Photo Upload Option */}
+          {/* Multi-photo upload (matches mobile photos[]) */}
           <div>
-            <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 5 }}>Photo (Optional)</label>
-            {photo ? (
-              <div style={{ position: "relative", width: "100%", height: 180, borderRadius: 10, overflow: "hidden", border: "1px solid rgba(0,102,51,0.2)", boxShadow: "0 2px 8px rgba(0,0,0,0.06)" }}>
-                <img src={photo} alt="Asset preview" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                <button
-                  type="button"
-                  onClick={() => setPhoto(null)}
-                  style={{
-                    position: "absolute",
-                    top: 8,
-                    right: 8,
-                    background: "rgba(220, 38, 38, 0.95)",
-                    border: "none",
-                    borderRadius: "50%",
-                    width: 28,
-                    height: 28,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    cursor: "pointer",
-                    color: "#ffffff",
-                    boxShadow: "0 2px 4px rgba(0,0,0,0.15)",
-                    transition: "background 0.2s"
-                  }}
-                  onMouseOver={(e) => (e.currentTarget.style.background = "#dc2626")}
-                  onMouseOut={(e) => (e.currentTarget.style.background = "rgba(220, 38, 38, 0.95)")}
-                >
-                  <Trash2 size={13} />
-                </button>
+            <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 5 }}>
+              Photos (Optional) — {photos.length}/12
+            </label>
+            {photos.length > 0 && (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 10 }}>
+                {photos.map((src, idx) => (
+                  <div key={idx} style={{ position: "relative", aspectRatio: "1", borderRadius: 8, overflow: "hidden", border: "1px solid rgba(0,102,51,0.2)" }}>
+                    <img src={src} alt={`Photo ${idx + 1}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = photos.filter((_, i) => i !== idx);
+                        setPhotos(next);
+                        setPhoto(next[0] || null);
+                      }}
+                      style={{ position: "absolute", top: 4, right: 4, background: "rgba(220,38,38,0.95)", border: "none", borderRadius: "50%", width: 24, height: 24, color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                ))}
               </div>
-            ) : (
+            )}
+            {photos.length < 12 && (
               <label
                 style={{
                   display: "flex",
@@ -1632,33 +1699,36 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
                   background: "rgba(0,102,51,0.02)",
                   cursor: "pointer",
                   gap: 6,
-                  transition: "all 0.2s",
-                  fontFamily: "var(--font-body)"
-                }}
-                onMouseOver={(e) => {
-                  e.currentTarget.style.borderColor = "var(--green)";
-                  e.currentTarget.style.background = "rgba(0,102,51,0.05)";
-                }}
-                onMouseOut={(e) => {
-                  e.currentTarget.style.borderColor = "rgba(0,102,51,0.25)";
-                  e.currentTarget.style.background = "rgba(0,102,51,0.02)";
+                  fontFamily: "var(--font-body)",
                 }}
               >
                 <Camera size={18} color="var(--text-secondary)" />
-                <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)" }}>Click to take photo or upload image</span>
+                <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)" }}>
+                  {photos.length === 0 ? "Add photo(s)" : "Add another photo"}
+                </span>
                 <input
                   type="file"
                   accept="image/*"
+                  multiple
                   capture="environment"
                   onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) {
-                      const reader = new FileReader();
-                      reader.onloadend = () => {
-                        setPhoto(reader.result as string);
-                      };
-                      reader.readAsDataURL(file);
-                    }
+                    const files = Array.from(e.target.files || []).slice(0, 12 - photos.length);
+                    if (!files.length) return;
+                    Promise.all(
+                      files.map(
+                        (file) =>
+                          new Promise<string>((resolve) => {
+                            const reader = new FileReader();
+                            reader.onloadend = () => resolve(String(reader.result || ""));
+                            reader.readAsDataURL(file);
+                          })
+                      )
+                    ).then((urls) => {
+                      const next = [...photos, ...urls.filter(Boolean)].slice(0, 12);
+                      setPhotos(next);
+                      setPhoto(next[0] || null);
+                    });
+                    e.target.value = "";
                   }}
                   style={{ display: "none" }}
                 />
@@ -1699,9 +1769,9 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
                 <div>
                   <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Riding Quality</label>
                   <select value={pavedRoadCondition} onChange={e => setPavedRoadCondition(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
-                    <option value="good">Good</option>
-                    <option value="fair">Fair</option>
-                    <option value="poor">Poor</option>
+                    {CONDITION_WITH_CONSTRUCTION_OPTIONS.map(o => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
                   </select>
                 </div>
                 <div>
@@ -1710,6 +1780,10 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
                     <option value="none">None</option>
                     <option value="light">Light</option>
                     <option value="severe">Severe</option>
+                    <option value="mixed">Mixed</option>
+                    <option value="good">Good</option>
+                    <option value="fair">Fair</option>
+                    <option value="poor">Poor</option>
                   </select>
                 </div>
                 <div>
@@ -1755,6 +1829,23 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
                   <input type="number" placeholder="e.g. 2018" value={yearConstructedToSealedStandard} onChange={e => setYearConstructedToSealedStandard(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff", outline: "none" }} />
                 </div>
               </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Authority</label>
+                  <select value={sealedAuthority} onChange={e => setSealedAuthority(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                    {AUTHORITY_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Passability</label>
+                  <select value={passability002} onChange={e => setPassability002(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                    <option value="all_year_round">All Year Round</option>
+                    <option value="dry_season_only">Dry Season Only</option>
+                    <option value="under_construction">Under construction / rehabilitation (detour)</option>
+                  </select>
+                </div>
+              </div>
             </div>
           )}
 
@@ -1791,9 +1882,9 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
                 <div>
                   <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Condition</label>
                   <select value={gravelCondition} onChange={e => setGravelCondition(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
-                    <option value="good">Good</option>
-                    <option value="fair">Fair</option>
-                    <option value="poor">Poor</option>
+                    {CONDITION_WITH_CONSTRUCTION_OPTIONS.map(o => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
                   </select>
                 </div>
                 <div>
@@ -1810,6 +1901,7 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
                     <option value="none">None</option>
                     <option value="minor">Minor</option>
                     <option value="severe">Severe</option>
+                    <option value="mixed">Mixed</option>
                   </select>
                 </div>
               </div>
@@ -1821,11 +1913,29 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
                     <option value="good">Good</option>
                     <option value="fair">Fair</option>
                     <option value="poor">Poor</option>
+                    <option value="mixed">Mixed</option>
                   </select>
                 </div>
                 <div>
                   <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Year Constructed</label>
                   <input type="number" placeholder="e.g. 2012" value={gravelYearOfConstruction} onChange={e => setGravelYearOfConstruction(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff", outline: "none" }} />
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Authority</label>
+                  <select value={gravelAuthority} onChange={e => setGravelAuthority(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                    {AUTHORITY_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Passability</label>
+                  <select value={gravelPassability} onChange={e => setGravelPassability(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                    <option value="all_year_round">All Year Round</option>
+                    <option value="dry_season_only">Dry Season Only</option>
+                    <option value="under_construction">Under construction / rehabilitation (detour)</option>
+                  </select>
                 </div>
               </div>
             </div>
@@ -1851,9 +1961,9 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
                 <div>
                   <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Condition</label>
                   <select value={earthRoadCondition} onChange={e => setEarthRoadCondition(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
-                    <option value="good">Good</option>
-                    <option value="fair">Fair</option>
-                    <option value="poor">Poor</option>
+                    {CONDITION_WITH_CONSTRUCTION_OPTIONS.map(o => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
                   </select>
                 </div>
               </div>
@@ -1873,8 +1983,17 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
                     <option value="all_year_round">All Year Round</option>
                     <option value="dry_season_only">Dry Season Only</option>
                     <option value="impassable">Impassable</option>
+                    <option value="rupture">Rupture</option>
+                    <option value="under_construction">Under construction / rehabilitation (detour)</option>
                   </select>
                 </div>
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Authority</label>
+                <select value={earthAuthority} onChange={e => setEarthAuthority(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                  {AUTHORITY_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
               </div>
             </div>
           )}
@@ -2313,11 +2432,11 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
 
           {section === "shelvet" && (
             <div style={{ background: "#f0f7f3", border: "1px solid rgba(0,102,51,0.15)", borderRadius: 12, padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "var(--green)", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 4 }}>Shelvet Details</div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "var(--green)", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 4 }}>Shelvert Details</div>
               
               <div>
                 <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Material / Type</label>
-                <select value={shelvetType} onChange={e => setShelvetType(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                <select value={shelvetType} onChange={e => setShelvertType(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
                   <option value="armco">Armco steel pipe</option>
                   <option value="shelvets">Masonry shelvets</option>
                   <option value="concrete">Concrete shelvets</option>
@@ -2326,7 +2445,7 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
 
               <div>
                 <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Condition State</label>
-                <select value={shelvetCondition} onChange={e => setShelvetCondition(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                <select value={shelvetCondition} onChange={e => setShelvertCondition(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
                   <option value="good">Good (Dry/Solid)</option>
                   <option value="corroded">Corroded / Rusty</option>
                   <option value="collapsed">Collapsed frame</option>
@@ -2638,7 +2757,7 @@ function DatabasePage({ records, onSelectRecord, onRefresh, onToast }: { records
   const [provinceFilter, setProvinceFilter] = useState("all");
   const [districtFilter, setDistrictFilter] = useState("all");
   const [surveyorFilter, setSurveyorFilter] = useState("all");
-  const [selectedTable, setSelectedTable] = useState("sealed");
+  const [selectedTable, setSelectedTable] = useState("all");
 
   // Modal States
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -2756,8 +2875,8 @@ function DatabasePage({ records, onSelectRecord, onRefresh, onToast }: { records
   let headers: { col: string; label: string }[] = [];
   if (selectedTable === "all") {
     headers = [
+      { col: "asset_type", label: "Category" },
       { col: "asset_name", label: "Asset Name" },
-      { col: "asset_type", label: "Type" },
       { col: "road_name", label: "Road / Highway" },
       { col: "section_name", label: "Section" },
       { col: "province", label: "Province" },
@@ -2769,6 +2888,7 @@ function DatabasePage({ records, onSelectRecord, onRefresh, onToast }: { records
     ];
   } else {
     headers = [
+      { col: "asset_type", label: "Category" },
       { col: "asset_name", label: "Asset Name" },
       { col: "condition", label: "Condition" },
       { col: "survey_date", label: "Survey Date" },
@@ -2821,6 +2941,7 @@ function DatabasePage({ records, onSelectRecord, onRefresh, onToast }: { records
 
         {/* Parameter Selector */}
         <select value={selectedTable} onChange={e => { setSelectedTable(e.target.value); setPage(0); }} style={{ padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 8, fontSize: 12, outline: "none", background: "#fff", color: "var(--text-secondary)", fontFamily: "var(--font-body)", cursor: "pointer", fontWeight: "bold" }}>
+          <option value="all">🔍 All</option>
           <option value="sealed">🛣️ Sealed Roads</option>
           <option value="gravel">🪨 Gravel Roads</option>
           <option value="earth">🚜 Earth Roads</option>
@@ -2831,7 +2952,7 @@ function DatabasePage({ records, onSelectRecord, onRefresh, onToast }: { records
           <option value="drift">🌊 Drifts</option>
           <option value="culvert">🕳️ Culverts</option>
           <option value="piped_causeway">🌁 Piped Causeways</option>
-          <option value="shelvet">🧱 Shelvets</option>
+          <option value="shelvet">🧱 Shelverts</option>
           <option value="grid">🐄 Cattle Grids</option>
           <option value="layby">🅿️ Laybys</option>
           <option value="busstop">🚌 Bus Stops</option>
@@ -2857,6 +2978,8 @@ function DatabasePage({ records, onSelectRecord, onRefresh, onToast }: { records
           <option value="good">Good</option>
           <option value="fair">Fair</option>
           <option value="poor">Poor</option>
+          <option value="mixed">Mixed</option>
+          <option value="under_construction">Under construction</option>
         </select>
 
         {/* Surveyor Filter */}
@@ -2932,10 +3055,9 @@ function DatabasePage({ records, onSelectRecord, onRefresh, onToast }: { records
                 </td>
               </tr>
             ) : slice.map((r, i) => {
-              const lat = r._geolocation?.[0];
-              const lng = r._geolocation?.[1];
+              const gpsLabel = formatGpsLabel(r);
               return (
-                <tr key={r._id ?? i} onClick={() => onSelectRecord(r)} style={{ cursor: "pointer", transition: "background 0.1s" }}
+                <tr key={r._id ?? i} onClick={() => onSelectRecord(r)} title="Click row to show on map" style={{ cursor: "pointer", transition: "background 0.1s" }}
                   onMouseOver={e => (e.currentTarget.style.background = "var(--bg-hover)")}
                   onMouseOut={e => (e.currentTarget.style.background = "transparent")}>
                   <td style={{ padding: "8px 12px", borderBottom: "1px solid rgba(0,102,51,0.06)", color: "var(--text-muted)", fontWeight: 600 }}>{page * PAGE_SIZE + i + 1}</td>
@@ -2947,20 +3069,23 @@ function DatabasePage({ records, onSelectRecord, onRefresh, onToast }: { records
                       valContent = getAssetType(r);
                     } else if (h.col === "condition") {
                       const c = getRecordStatus(r);
-                      valContent = <span className={`badge ${c}`}>{c}</span>;
+                      valContent = <span className={`badge ${c}`}>{formatStatusLabel(c)}</span>;
                     } else if (h.col === "gps") {
-                      valContent = typeof lat === "number" ? `${lat.toFixed(4)}, ${lng?.toFixed(4)}` : "—";
+                      valContent = gpsLabel ? (
+                        <span style={{ fontFamily: "ui-monospace, monospace" }}>{gpsLabel}</span>
+                      ) : "—";
                     } else {
                       const rawVal = r[h.col];
                       valContent = rawVal !== null && rawVal !== undefined && rawVal !== "" ? formatValue(rawVal) : "—";
                     }
                     return (
-                      <td key={h.col} style={{ padding: "8px 12px", borderBottom: "1px solid rgba(0,102,51,0.06)", color: h.col === "asset_name" ? "var(--text-primary)" : "var(--text-secondary)", fontWeight: h.col === "asset_name" ? 600 : 400, whiteSpace: "nowrap", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis" }}>
+                      <td key={h.col} style={{ padding: "8px 12px", borderBottom: "1px solid rgba(0,102,51,0.06)", color: h.col === "asset_name" ? "var(--text-primary)" : "var(--text-secondary)", fontWeight: h.col === "asset_name" ? 600 : 400, whiteSpace: "nowrap", maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis" }}>
                         {valContent}
                       </td>
                     );
                   })}
                   <td style={{ padding: "8px 12px", borderBottom: "1px solid rgba(0,102,51,0.06)", whiteSpace: "nowrap" }} onClick={e => e.stopPropagation()}>
+                    <button type="button" onClick={() => onSelectRecord(r)} title="Show on map" style={{ background: "var(--bg-active)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--green)", cursor: "pointer", marginRight: 8, fontWeight: 700, fontSize: 11, fontFamily: "var(--font-body)", padding: "4px 8px" }}>🗺 Map</button>
                     <button type="button" onClick={() => { setEditRecord(r); setIsFormOpen(true); }} style={{ background: "none", border: "none", color: "var(--green)", cursor: "pointer", marginRight: 10, fontWeight: 700, fontSize: 11, fontFamily: "var(--font-body)" }}>Edit</button>
                     <button type="button" onClick={(e) => handleDelete(e, r._id)} style={{ background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontWeight: 700, fontSize: 11, fontFamily: "var(--font-body)" }}>Delete</button>
                   </td>
@@ -2998,7 +3123,7 @@ const EXPORT_PARAMETERS = [
   { key: "drift",           label: "Drifts",          emoji: "🌊" },
   { key: "culvert",         label: "Culverts",        emoji: "🕳️" },
   { key: "piped_causeway",  label: "Piped Causeways", emoji: "🌁" },
-  { key: "shelvet",         label: "Shelvets",        emoji: "🧱" },
+  { key: "shelvet",         label: "Shelverts",        emoji: "🧱" },
   { key: "grid",            label: "Cattle Grids",    emoji: "🐄" },
   { key: "layby",           label: "Lay-bys",         emoji: "🅿️" },
   { key: "busstop",         label: "Bus Stops",       emoji: "🚌" },
@@ -3010,7 +3135,7 @@ const EXPORT_PARAMETERS = [
 
 const ALL_PARAM_KEYS = EXPORT_PARAMETERS.map(p => p.key);
 
-function ExportPage({ records }: { records: any[] }) {
+function ExportPage({ records, onSelectRecord }: { records: any[]; onSelectRecord?: (r: any) => void }) {
   const [fmt, setFmt]   = useState("csv");
   const [road, setRoad] = useState("all");
   const [cond, setCond] = useState("all");
@@ -3253,6 +3378,8 @@ function ExportPage({ records }: { records: any[] }) {
               <option value="good">Good</option>
               <option value="fair">Fair</option>
               <option value="poor">Poor</option>
+              <option value="mixed">Mixed</option>
+              <option value="under_construction">Under construction</option>
             </select>
           </div>
 
@@ -3348,7 +3475,14 @@ function ExportPage({ records }: { records: any[] }) {
                 {recordsToPreview.slice(0, 15).map((r, i) => {
                   const c = getRecordStatus(r);
                   return (
-                    <tr key={i}>
+                    <tr
+                      key={r._id ?? i}
+                      onClick={() => onSelectRecord?.(r)}
+                      title="Click to show on map"
+                      style={{ cursor: onSelectRecord ? "pointer" : "default" }}
+                      onMouseOver={e => { if (onSelectRecord) e.currentTarget.style.background = "var(--bg-hover)"; }}
+                      onMouseOut={e => { e.currentTarget.style.background = "transparent"; }}
+                    >
                       <td style={{ padding: "6px 10px", borderBottom: "1px solid rgba(0,102,51,0.06)", fontWeight: 600, color: "var(--text-primary)" }}>{getAssetName(r)}</td>
                       <td style={{ padding: "6px 10px", borderBottom: "1px solid rgba(0,102,51,0.06)", color: "var(--text-secondary)" }}>{getAssetType(r)}</td>
                       <td style={{ padding: "6px 10px", borderBottom: "1px solid rgba(0,102,51,0.06)", color: "var(--text-muted)", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{(r.road_name ?? "—").split(" (")[0]}</td>
@@ -3436,9 +3570,9 @@ export default function FullPageModule({ module, records, onSelectRecord, onClos
         {module === "dashboard" && <DashboardPage records={records} lastSynced={lastSynced} />}
         {module === "highways"  && <HighwaysPage  records={records} />}
         {module === "analytics" && <AnalyticsPage records={records} />}
-        {module === "survey"    && <SurveyPage    records={records} onSelectRecord={r => { onSelectRecord(r); onClose(); }} />}
-        {module === "database"  && <DatabasePage  records={records} onSelectRecord={r => { onSelectRecord(r); onClose(); }} onRefresh={onRefresh} onToast={onToast} />}
-        {module === "export"    && <ExportPage    records={records} />}
+        {module === "survey"    && <SurveyPage    records={records} onSelectRecord={onSelectRecord} />}
+        {module === "database"  && <DatabasePage  records={records} onSelectRecord={onSelectRecord} onRefresh={onRefresh} onToast={onToast} />}
+        {module === "export"    && <ExportPage    records={records} onSelectRecord={onSelectRecord} />}
       </div>
     </div>
   );

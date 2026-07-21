@@ -4,7 +4,7 @@ import {
   ResponsiveContainer, PieChart, Pie, Cell, Legend,
   BarChart, Bar, XAxis, YAxis, Tooltip as ChartTooltip,
 } from "recharts";
-import { getRecordStatus, getAssetType, getAssetName } from "@/components/helpers";
+import { getRecordStatus, getAssetType, getAssetName, formatStatusLabel, getStatusColor, normalizePhotos, getSadcValue, AUTHORITY_OPTIONS, CONDITION_WITH_CONSTRUCTION_OPTIONS } from "@/components/helpers";
 
 interface RightPanelProps {
   records: any[];
@@ -39,7 +39,8 @@ const EXCLUDED_KEYS = new Set([
   "geom_segment_wkt",
   "id",
   "uuid",
-  "photo"
+  "photo",
+  "photos",
 ]);
 
 const CORE_DISPLAYED_KEYS = new Set([
@@ -78,11 +79,15 @@ export default function RightPanel({ records, selectedRecord, onClose }: RightPa
   const good  = records.filter(r => getRecordStatus(r) === "good").length;
   const fair  = records.filter(r => getRecordStatus(r) === "fair").length;
   const poor  = records.filter(r => getRecordStatus(r) === "poor").length;
+  const mixed = records.filter(r => getRecordStatus(r) === "mixed").length;
+  const underConstruction = records.filter(r => getRecordStatus(r) === "under_construction").length;
 
   const condData = [
     { name: "Good", value: good, color: "#006633" },
     { name: "Fair", value: fair, color: "#f59e0b" },
     { name: "Poor", value: poor, color: "#dc2626" },
+    { name: "Mixed", value: mixed, color: "#7c3aed" },
+    { name: "Under construction", value: underConstruction, color: "#2563eb" },
   ].filter(d => d.value > 0);
 
   const hwData = HIGHWAYS.map(id => ({
@@ -90,10 +95,13 @@ export default function RightPanel({ records, selectedRecord, onClose }: RightPa
     assets: hwCount(records, id),
   })).filter(d => d.assets > 0);
 
-  const compliant    = records.filter(r => r.image_SADC_compliant === "yes").length;
-  const nonCompliant = records.filter(r => r.image_SADC_compliant === "no").length;
+  const compliant    = records.filter(r => getSadcValue(r) === "yes").length;
+  const nonCompliant = records.filter(r => getSadcValue(r) === "no").length;
+  const sadcMixed    = records.filter(r => getSadcValue(r) === "mixed").length;
 
   const topPoor = records.filter(r => getRecordStatus(r) === "poor").slice(0, 5);
+  const selectedPhotos = selectedRecord ? normalizePhotos(selectedRecord) : [];
+  const selectedStatus = selectedRecord ? getRecordStatus(selectedRecord) : "good";
 
   const dynamicRows = selectedRecord
     ? Object.entries(selectedRecord)
@@ -147,14 +155,23 @@ export default function RightPanel({ records, selectedRecord, onClose }: RightPa
                   <div className="inspector-name">{getAssetName(selectedRecord)}</div>
                   <div className="inspector-type">{getAssetType(selectedRecord)}</div>
                 </div>
-                <span className={`badge ${getRecordStatus(selectedRecord)}`}>
-                  {getRecordStatus(selectedRecord)}
+                <span className={`badge ${selectedStatus}`}>
+                  {formatStatusLabel(selectedStatus)}
                 </span>
               </div>
 
-              {selectedRecord.photo && (
-                <div style={{ marginBottom: 10, borderRadius: 8, overflow: "hidden", border: "1px solid rgba(0,0,0,0.1)", maxHeight: 150, width: "100%", boxShadow: "0 2px 6px rgba(0,0,0,0.06)" }}>
-                  <img src={selectedRecord.photo} alt="Asset" style={{ width: "100%", height: "100%", maxHeight: 150, objectFit: "cover" }} />
+              {selectedPhotos.length > 0 && (
+                <div style={{ marginBottom: 10, display: "grid", gridTemplateColumns: selectedPhotos.length > 1 ? "1fr 1fr" : "1fr", gap: 6 }}>
+                  {selectedPhotos.slice(0, 6).map((src, idx) => (
+                    <div key={idx} style={{ borderRadius: 8, overflow: "hidden", border: "1px solid rgba(0,0,0,0.1)", maxHeight: selectedPhotos.length > 1 ? 100 : 150, width: "100%", boxShadow: "0 2px 6px rgba(0,0,0,0.06)" }}>
+                      <img src={src} alt={`Asset ${idx + 1}`} style={{ width: "100%", height: "100%", maxHeight: selectedPhotos.length > 1 ? 100 : 150, objectFit: "cover" }} />
+                    </div>
+                  ))}
+                  {selectedPhotos.length > 6 && (
+                    <div style={{ fontSize: 10, color: "var(--text-muted)", gridColumn: "1 / -1" }}>
+                      +{selectedPhotos.length - 6} more photos
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -202,7 +219,7 @@ export default function RightPanel({ records, selectedRecord, onClose }: RightPa
                 {(selectedRecord.image_SADC_compliant || selectedRecord.image_sadc_compliant || selectedRecord.sadc_compliant || selectedRecord.sign_sadc_compliant) && (
                   <div className="detail-row">
                     <span className="detail-row-label">SADC Compliant</span>
-                    <span className="detail-row-val">{(selectedRecord.image_SADC_compliant || selectedRecord.image_sadc_compliant || selectedRecord.sadc_compliant || selectedRecord.sign_sadc_compliant || "—").toUpperCase()}</span>
+                    <span className="detail-row-val">{(getSadcValue(selectedRecord) || "—").toUpperCase()}</span>
                   </div>
                 )}
 
@@ -243,7 +260,7 @@ export default function RightPanel({ records, selectedRecord, onClose }: RightPa
                 </PieChart>
               </ResponsiveContainer>
             </div>
-            {[{ label: "Good", val: good, color: "#006633" }, { label: "Fair", val: fair, color: "#f59e0b" }, { label: "Poor", val: poor, color: "#dc2626" }].map(row => (
+            {[{ label: "Good", val: good, color: "#006633" }, { label: "Fair", val: fair, color: "#f59e0b" }, { label: "Poor", val: poor, color: "#dc2626" }, { label: "Mixed", val: mixed, color: "#7c3aed" }, { label: "UC", val: underConstruction, color: "#2563eb" }].filter(row => row.val > 0 || ["Good","Fair","Poor"].includes(row.label)).map(row => (
               <div className="progress-row" key={row.label}>
                 <div className="progress-label-row">
                   <span>{row.label}</span>
@@ -281,7 +298,7 @@ export default function RightPanel({ records, selectedRecord, onClose }: RightPa
           <div className="section-label">SADC Sign Compliance</div>
           <div className="analytics-card" style={{ marginTop: 8 }}>
             <div style={{ display: "flex", gap: 8 }}>
-              {[{ label: "Compliant", val: compliant, color: "#006633" }, { label: "Non-Compliant", val: nonCompliant, color: "#dc2626" }].map(s => (
+              {[{ label: "Compliant", val: compliant, color: "#006633" }, { label: "Non-Compliant", val: nonCompliant, color: "#dc2626" }, { label: "Mixed", val: sadcMixed, color: "#7c3aed" }].map(s => (
                 <div key={s.label} style={{ flex: 1, background: "var(--bg-app)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: "10px 8px", textAlign: "center" }}>
                   <div style={{ fontFamily: "var(--font-title)", fontSize: 22, fontWeight: 800, color: s.color }}>{s.val}</div>
                   <div style={{ fontSize: 9, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.5px", marginTop: 2 }}>{s.label}</div>
