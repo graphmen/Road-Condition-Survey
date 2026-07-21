@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { db } from "./lib/db";
 import type { SurveyDraft } from "./lib/db";
-import { SegmentTracker } from "./components/SegmentTracker";
+import { SegmentTracker, PAUSED_ROAD_CONTEXT_KEY, SEGMENT_SESSION_KEY } from "./components/SegmentTracker";
 import type { SegmentGeometry } from "./components/SegmentTracker";
 import { Geolocation } from "@capacitor/geolocation";
+import { Capacitor } from "@capacitor/core";
 import {
   Database,
   PlusCircle,
@@ -35,7 +36,30 @@ import {
   Grid,
   Flame,
   Sun,
+  Gauge,
+  Play,
+  Pause,
 } from "lucide-react";
+
+type RoadCategory = "sealed" | "gravel" | "earth";
+type PausedRoadContext = {
+  roadCategory: RoadCategory;
+  roadName: string;
+  sectionName: string;
+  surveyorName: string;
+  surveyDate: string;
+  pointCount: number;
+  length_m: number;
+};
+
+function loadPausedRoadContext(): PausedRoadContext | null {
+  try {
+    const raw = localStorage.getItem(PAUSED_ROAD_CONTEXT_KEY);
+    return raw ? (JSON.parse(raw) as PausedRoadContext) : null;
+  } catch {
+    return null;
+  }
+}
 
 const ASSET_CLASSES = [
   {
@@ -255,13 +279,50 @@ export default function App() {
   const [assetCategory, setAssetCategory] = useState<"sealed" | "gravel" | "earth" | "bridge" | "footbridge" | "rail_crossing" | "tollgate" | "layby" | "busstop" | "junction" | "sign" | "shelvet" | "culvert" | "piped_causeway" | "drift" | "grid" | "traffic_lights" | "streetlight">("sealed");
   const [segmentGeometry, setSegmentGeometry] = useState<SegmentGeometry | null>(null);
   const isRoadType = assetCategory === "sealed" || assetCategory === "gravel" || assetCategory === "earth";
-  const [roadName, setRoadName] = useState("A4 Highway (Harare - Masvingo - Beitbridge)");
+  const [pausedRoadContext, setPausedRoadContext] = useState<PausedRoadContext | null>(() => loadPausedRoadContext());
+
+  const persistPausedRoadContext = (ctx: PausedRoadContext | null) => {
+    setPausedRoadContext(ctx);
+    try {
+      if (ctx) localStorage.setItem(PAUSED_ROAD_CONTEXT_KEY, JSON.stringify(ctx));
+      else localStorage.removeItem(PAUSED_ROAD_CONTEXT_KEY);
+    } catch (e) {
+      console.warn("Failed to persist paused road context:", e);
+    }
+  };
+
+  const discardPausedRoadSession = () => {
+    persistPausedRoadContext(null);
+    try {
+      localStorage.removeItem(SEGMENT_SESSION_KEY);
+    } catch (_) { /* ignore */ }
+    setSegmentGeometry(null);
+  };
+
+  const resumePausedRoadSurvey = () => {
+    const ctx = pausedRoadContext ?? loadPausedRoadContext();
+    if (!ctx) return;
+    setAssetCategory(ctx.roadCategory);
+    setSelectedCategory(ctx.roadCategory);
+    setRoadName(ctx.roadName);
+    setSectionName(ctx.sectionName);
+    setSurveyorName(ctx.surveyorName || defaultSurveyor);
+    setSurveyDate(ctx.surveyDate || new Date().toISOString().split("T")[0]);
+    setSegmentGeometry(null); // SegmentTracker restores in-progress points from localStorage
+    setGps("");
+    setPhoto(null);
+    setEditingDraftId(null);
+    showToast("Paused line restored — tap Resume Line Recording to continue.", "info");
+  };
+  const [roadName, setRoadName] = useState("");
   const [sectionName, setSectionName] = useState("");
   const [surveyorName, setSurveyorName] = useState("");
   const [surveyDate, setSurveyDate] = useState(new Date().toISOString().split("T")[0]);
   const [vegetation, setVegetation] = useState("medium");
   const [gps, setGps] = useState("");
   const [isCapturingGps, setIsCapturingGps] = useState(false);
+  const [liveGpsAccuracy, setLiveGpsAccuracy] = useState<number | null>(null);
+  const liveGpsPosRef = React.useRef<{ lat: number; lng: number; alt: number; acc: number } | null>(null);
   const [imageSadcCompliant, setImageSadcCompliant] = useState<"yes" | "no">("yes");
   const [photo, setPhoto] = useState<string | null>(null);
 
@@ -457,8 +518,32 @@ export default function App() {
       setGpsAccuracyLimit(parseFloat(savedLimit));
     }
 
-    // Background GPS Warming
+    // Background GPS Warming + live accuracy for point surveys
     const startGpsWarming = async () => {
+      const applyFix = (latitude: number, longitude: number, altitude: number | null, accuracy: number) => {
+        setLiveGpsAccuracy(accuracy);
+        liveGpsPosRef.current = {
+          lat: latitude,
+          lng: longitude,
+          alt: altitude ? Math.round(altitude) : 1200,
+          acc: Math.round(accuracy),
+        };
+      };
+
+      // Browser / Vite preview: Capacitor permissions are unimplemented — use navigator API
+      if (!Capacitor.isNativePlatform() && "geolocation" in navigator) {
+        const webId = navigator.geolocation.watchPosition(
+          (position) => {
+            const { latitude, longitude, altitude, accuracy } = position.coords;
+            applyFix(latitude, longitude, altitude, accuracy ?? 99);
+          },
+          (webErr) => console.warn("Browser GPS watch failed:", webErr),
+          { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 }
+        );
+        warmUpWatchIdRef.current = `web:${webId}`;
+        return;
+      }
+
       try {
         try {
           await Geolocation.requestPermissions();
@@ -467,9 +552,14 @@ export default function App() {
         }
         const id = await Geolocation.watchPosition(
           { enableHighAccuracy: true, timeout: 30000, maximumAge: 0 },
-          (position) => {
-            if (position) {
-              console.log("GPS Warmed up, accuracy:", position.coords.accuracy);
+          (position, err) => {
+            if (err) {
+              console.warn("GPS watch error:", err);
+              return;
+            }
+            if (position?.coords) {
+              const { latitude, longitude, altitude, accuracy } = position.coords;
+              applyFix(latitude, longitude, altitude, accuracy);
             }
           }
         );
@@ -490,7 +580,12 @@ export default function App() {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
       if (warmUpWatchIdRef.current) {
-        Geolocation.clearWatch({ id: warmUpWatchIdRef.current });
+        if (warmUpWatchIdRef.current.startsWith("web:")) {
+          const webId = Number(warmUpWatchIdRef.current.slice(4));
+          navigator.geolocation.clearWatch(webId);
+        } else {
+          Geolocation.clearWatch({ id: warmUpWatchIdRef.current });
+        }
       }
     };
   }, []);
@@ -815,8 +910,28 @@ export default function App() {
     }
   };
 
+  const applyCapturedGps = (lat: number, lng: number, alt: number, acc: number) => {
+    if (acc > gpsAccuracyLimit) {
+      showToast(`❌ GPS accuracy ±${acc}m is too poor (target: ≤${gpsAccuracyLimit}m). Stand in open-sky area and try again!`, "error");
+      setIsCapturingGps(false);
+      return false;
+    }
+    setGps(`${lat.toFixed(6)} ${lng.toFixed(6)} ${alt} ${acc}`);
+    setIsCapturingGps(false);
+    showToast(`🟢 High-precision GPS captured (accuracy: ±${acc}m)`, "success");
+    return true;
+  };
+
   const handleCaptureGps = async () => {
     setIsCapturingGps(true);
+
+    // Prefer the live watched fix when it already meets the accuracy threshold
+    const live = liveGpsPosRef.current;
+    if (live && live.acc <= gpsAccuracyLimit) {
+      applyCapturedGps(live.lat, live.lng, live.alt, live.acc);
+      return;
+    }
+
     try {
       try {
         await Geolocation.requestPermissions();
@@ -834,15 +949,9 @@ export default function App() {
         const { latitude, longitude, altitude, accuracy } = position.coords;
         const alt = altitude ? Math.round(altitude) : 1200;
         const acc = Math.round(accuracy);
-        
-        if (acc > gpsAccuracyLimit) {
-          showToast(`❌ GPS accuracy ±${acc}m is too poor (target: ≤${gpsAccuracyLimit}m). Stand in open-sky area and try again!`, "error");
-          setIsCapturingGps(false);
-        } else {
-          setGps(`${latitude.toFixed(6)} ${longitude.toFixed(6)} ${alt} ${acc}`);
-          setIsCapturingGps(false);
-          showToast(`🟢 High-precision GPS captured (accuracy: ±${acc}m)`, "success");
-        }
+        setLiveGpsAccuracy(accuracy);
+        liveGpsPosRef.current = { lat: latitude, lng: longitude, alt, acc };
+        applyCapturedGps(latitude, longitude, alt, acc);
       } else {
         throw new Error("No coordinate data returned from GPS module.");
       }
@@ -854,15 +963,9 @@ export default function App() {
             const { latitude, longitude, altitude, accuracy } = position.coords;
             const alt = altitude ? Math.round(altitude) : 1200;
             const acc = accuracy ? Math.round(accuracy) : 5;
-            
-            if (acc > gpsAccuracyLimit) {
-              showToast(`❌ Browser GPS accuracy ±${acc}m is too poor (target: ≤${gpsAccuracyLimit}m). Try again!`, "error");
-              setIsCapturingGps(false);
-            } else {
-              setGps(`${latitude.toFixed(6)} ${longitude.toFixed(6)} ${alt} ${acc}`);
-              setIsCapturingGps(false);
-              showToast("GPS Telemetry captured successfully!", "success");
-            }
+            setLiveGpsAccuracy(accuracy ?? acc);
+            liveGpsPosRef.current = { lat: latitude, lng: longitude, alt, acc };
+            applyCapturedGps(latitude, longitude, alt, acc);
           },
           (webErr) => {
             console.error("Web fallback Geolocation failed:", webErr);
@@ -878,12 +981,14 @@ export default function App() {
 
   const simulateZimbabweGps = () => {
     // Generate coordinates on routes between Harare (-17.8292, 31.0522) and Beitbridge (-22.2178, 30.0000)
-    const lat = (-17.5 - Math.random() * 4.5).toFixed(6);
-    const lng = (29.0 + Math.random() * 3.5).toFixed(6);
+    const lat = (-17.5 - Math.random() * 4.5);
+    const lng = (29.0 + Math.random() * 3.5);
     const alt = Math.floor(400 + Math.random() * 1200);
     const acc = Math.floor(1 + Math.random() * 3); // 1, 2, or 3 (must be <= 3m)
-    
-    setGps(`${lat} ${lng} ${alt} ${acc}`);
+
+    setLiveGpsAccuracy(acc);
+    liveGpsPosRef.current = { lat, lng, alt, acc };
+    setGps(`${lat.toFixed(6)} ${lng.toFixed(6)} ${alt} ${acc}`);
     showToast("Simulated GPS coordinates captured on Zimbabwean highway.", "info");
     setIsCapturingGps(false);
   };
@@ -891,6 +996,7 @@ export default function App() {
   const clearForm = () => {
     setSectionName("");
     setGps("");
+    setRoadName("");
     setBridgeName("");
     setSealedName("");
     setGravelName("");
@@ -1133,6 +1239,10 @@ export default function App() {
     e.preventDefault();
 
     if (!saveAsDraft) {
+      if (!roadName.trim()) {
+        showToast("Highway Route is required", "error");
+        return;
+      }
       if (!sectionName) {
         showToast("Section Name is required", "error");
         return;
@@ -1228,7 +1338,7 @@ export default function App() {
         pothole_patches: sealedPotholesPatches,
         vegetation: sealedVegetation,
 
-        // KoBo raw keys
+        // Schema raw keys
         Road_Name_002: finalSealedName,
         Route_number_004: sealedRoute || "A4",
         Road_Class_002: sealedClass,
@@ -1267,7 +1377,7 @@ export default function App() {
         drainage_condition: gravelDrainageCond,
         vegetation: gravelVegetation,
 
-        // KoBo raw keys
+        // Schema raw keys
         Road_Name: finalGravelName,
         Route_Number: gravelRoute || "A4",
         Road_Length: gravelLength ? parseFloat(gravelLength) : undefined,
@@ -1443,7 +1553,21 @@ export default function App() {
 
     const updated = db.getDrafts();
     setDrafts(updated);
+
+    // Keep paused line session when saving a point asset mid-route
+    const keepPausedLine = !isRoadType && !!pausedRoadContext;
+    const pausedSnapshot = pausedRoadContext;
     clearForm();
+    if (keepPausedLine && pausedSnapshot) {
+      persistPausedRoadContext(pausedSnapshot);
+      setSelectedCategory(null);
+      showToast(
+        `Point saved. Resume ${pausedSnapshot.roadCategory} line (${pausedSnapshot.pointCount} GPS pts) when ready.`,
+        "info"
+      );
+    } else if (isRoadType) {
+      discardPausedRoadSession();
+    }
   };
 
   const handleDeleteDraft = (id: string) => {
@@ -1936,6 +2060,61 @@ export default function App() {
                 <h2 style={{ fontSize: "16px", fontWeight: "800", color: "var(--accent-emerald)", fontFamily: "var(--font-title)" }}>Select Asset to Survey</h2>
                 <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Choose from the road and structures inventory classes below</span>
               </div>
+
+              {pausedRoadContext && (
+                <div
+                  style={{
+                    background: "rgba(180,83,9,0.08)",
+                    border: "1.5px solid #b45309",
+                    borderRadius: "var(--radius-md)",
+                    padding: "12px",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "10px",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: "10px" }}>
+                    <Pause size={18} color="#b45309" style={{ marginTop: 2, flexShrink: 0 }} />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: "12px", fontWeight: 800, color: "#b45309" }}>
+                        Line survey paused
+                      </div>
+                      <div style={{ fontSize: "10px", color: "var(--text-secondary)", marginTop: 3, lineHeight: 1.45 }}>
+                        {ASSET_CLASSES.find((a) => a.id === pausedRoadContext.roadCategory)?.label || "Road"}
+                        {pausedRoadContext.roadName ? ` · ${pausedRoadContext.roadName}` : ""}
+                        {" · "}
+                        {pausedRoadContext.pointCount} GPS pts
+                        {pausedRoadContext.length_m ? ` · ${pausedRoadContext.length_m} m` : ""}
+                        . Collect a point asset below, then resume the same line.
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: "8px" }}>
+                    <button
+                      type="button"
+                      onClick={resumePausedRoadSurvey}
+                      className="mobile-btn"
+                      style={{ flex: 1, height: "38px", fontSize: "11px", gap: "6px" }}
+                    >
+                      <Play size={14} />
+                      Resume Line
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (window.confirm("Discard the paused line segment? GPS points will be lost.")) {
+                          discardPausedRoadSession();
+                          showToast("Paused line discarded.", "info");
+                        }
+                      }}
+                      className="mobile-btn mobile-btn-outline"
+                      style={{ height: "38px", fontSize: "11px", color: "#dc2626", borderColor: "#dc2626" }}
+                    >
+                      Discard
+                    </button>
+                  </div>
+                </div>
+              )}
               
               {/* Category Filters Badges */}
               <div style={{
@@ -2008,9 +2187,26 @@ export default function App() {
                       key={asset.id}
                       type="button"
                       onClick={() => {
+                        const isRoadAsset = asset.id === "sealed" || asset.id === "gravel" || asset.id === "earth";
+                        if (pausedRoadContext && isRoadAsset) {
+                          resumePausedRoadSurvey();
+                          return;
+                        }
                         setSelectedCategory(asset.id);
                         setAssetCategory(asset.id as any);
-                        setSegmentGeometry(null);
+                        if (pausedRoadContext) {
+                          // Mid-line point collect: keep route metadata, don't wipe GPS session
+                          setRoadName(pausedRoadContext.roadName || roadName);
+                          setSectionName(pausedRoadContext.sectionName || sectionName);
+                          setSurveyorName(pausedRoadContext.surveyorName || surveyorName || defaultSurveyor);
+                          setSurveyDate(pausedRoadContext.surveyDate || surveyDate);
+                          setSegmentGeometry(null);
+                          setGps("");
+                          setPhoto(null);
+                          setEditingDraftId(null);
+                        } else {
+                          setSegmentGeometry(null);
+                        }
                       }}
                       className="asset-card"
                       style={{
@@ -2076,6 +2272,51 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => {
+                    // Soft exit while a line is paused — keep GPS session for later resume
+                    if (pausedRoadContext) {
+                      setSelectedCategory(null);
+                      showToast("Paused line kept. Collect a point asset or resume the road.", "info");
+                      return;
+                    }
+                    // If actively tracking (session exists), auto-pause so points are not lost
+                    let hasActiveSession = false;
+                    try {
+                      const raw = localStorage.getItem(SEGMENT_SESSION_KEY);
+                      if (raw) {
+                        const sess = JSON.parse(raw);
+                        hasActiveSession = Array.isArray(sess.points) && sess.points.length > 0;
+                      }
+                    } catch (_) { /* ignore */ }
+                    if (hasActiveSession && isRoadType && !segmentGeometry) {
+                      persistPausedRoadContext({
+                        roadCategory: assetCategory as RoadCategory,
+                        roadName,
+                        sectionName,
+                        surveyorName,
+                        surveyDate,
+                        pointCount: (() => {
+                          try {
+                            const sess = JSON.parse(localStorage.getItem(SEGMENT_SESSION_KEY) || "{}");
+                            return sess.points?.length || 0;
+                          } catch { return 0; }
+                        })(),
+                        length_m: 0,
+                      });
+                      // Mark session as paused so remount does not auto-reconnect GPS
+                      try {
+                        const raw = localStorage.getItem(SEGMENT_SESSION_KEY);
+                        if (raw) {
+                          const sess = JSON.parse(raw);
+                          sess.phase = "paused";
+                          sess.savedAt = Date.now();
+                          localStorage.setItem(SEGMENT_SESSION_KEY, JSON.stringify(sess));
+                        }
+                      } catch (_) { /* ignore */ }
+                      setSelectedCategory(null);
+                      setSegmentGeometry(null);
+                      showToast("Line auto-paused. Collect a point or tap Resume Line.", "info");
+                      return;
+                    }
                     setSelectedCategory(null);
                     clearForm();
                   }}
@@ -2178,13 +2419,14 @@ export default function App() {
             {/* Core Metadata */}
             <div className="mobile-form-group">
               <label className="mobile-label">Highway Route</label>
-              <select value={roadName} onChange={(e) => setRoadName(e.target.value)} className="mobile-select">
-                <option value="A4 Highway (Harare - Masvingo - Beitbridge)">A4 (Harare - Beitbridge)</option>
-                <option value="A1 Highway (Harare - Chirundu)">A1 (Harare - Chirundu)</option>
-                <option value="A3 Highway (Harare - Bulawayo)">A3 (Harare - Bulawayo)</option>
-                <option value="A5 Highway (Harare - Mutare)">A5 (Harare - Mutare)</option>
-                <option value="A2 Highway (Harare - Nyamapanda)">A2 (Harare - Nyamapanda)</option>
-              </select>
+              <input
+                type="text"
+                placeholder="e.g. A4 Highway (Harare - Masvingo - Beitbridge)"
+                value={roadName}
+                onChange={(e) => setRoadName(e.target.value)}
+                className="mobile-input"
+                required
+              />
             </div>
 
             <div className="mobile-form-group">
@@ -2247,13 +2489,46 @@ export default function App() {
             </div>
 
             {/* Geolocation Input — hidden for road types (GPS is captured via segment tracker) */}
-            {!isRoadType && (
+            {!isRoadType && (() => {
+              const pointAccColour =
+                liveGpsAccuracy == null ? "#6b7280"
+                  : liveGpsAccuracy <= gpsAccuracyLimit ? "#22c55e"
+                  : "#ef4444";
+              const pointAccLabel =
+                liveGpsAccuracy == null ? "Waiting for GPS…"
+                  : liveGpsAccuracy <= gpsAccuracyLimit
+                    ? `±${liveGpsAccuracy.toFixed(1)} m — Excellent 🟢`
+                    : `±${liveGpsAccuracy.toFixed(1)} m — Poor 🔴 (locked: must be ≤${gpsAccuracyLimit.toFixed(1)}m)`;
+              const gpsReady = liveGpsAccuracy != null && liveGpsAccuracy <= gpsAccuracyLimit;
+
+              return (
               <div className="mobile-form-group">
                 <label className="mobile-label">GPS Geolocation</label>
+
+                {/* Live accuracy meter — same behaviour as linear segment tracker */}
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                    background: "var(--bg-card)",
+                    border: `2px solid ${pointAccColour}`,
+                    borderRadius: "var(--radius-md)",
+                    padding: "8px 12px",
+                    marginBottom: "8px",
+                    transition: "border-color 0.4s",
+                  }}
+                >
+                  <Gauge size={15} color={pointAccColour} />
+                  <span style={{ fontSize: "11px", fontWeight: 700, color: pointAccColour }}>
+                    {pointAccLabel}
+                  </span>
+                </div>
+
                 <div style={{ display: "flex", gap: "8px" }}>
                   <input
                     type="text"
-                    placeholder="Capture telemetry location"
+                    placeholder={gpsReady ? "Ready — tap capture" : `Waiting for ≤${gpsAccuracyLimit.toFixed(1)} m accuracy…`}
                     value={gps}
                     readOnly
                     className="mobile-input"
@@ -2262,9 +2537,15 @@ export default function App() {
                   <button
                     type="button"
                     onClick={handleCaptureGps}
-                    disabled={isCapturingGps}
+                    disabled={isCapturingGps || !gpsReady}
                     className="mobile-btn"
-                    style={{ width: "42px", height: "38px", padding: 0 }}
+                    style={{
+                      width: "42px",
+                      height: "38px",
+                      padding: 0,
+                      opacity: isCapturingGps || !gpsReady ? 0.45 : 1,
+                    }}
+                    title={gpsReady ? "Capture GPS" : `Wait until accuracy ≤ ${gpsAccuracyLimit.toFixed(1)} m`}
                   >
                     {isCapturingGps ? (
                       <div className="spinner"></div>
@@ -2274,10 +2555,39 @@ export default function App() {
                   </button>
                 </div>
                 <span style={{ fontSize: "9px", color: "var(--text-muted)", marginTop: "4px", display: "block" }}>
-                  🛰 Requires high-precision GPS signal (accuracy ≤ 3.0 m)
+                  🛰 Live GPS accuracy shown above — capture unlocks at ≤ {gpsAccuracyLimit.toFixed(1)} m (Excellent)
                 </span>
+                {!Capacitor.isNativePlatform() && liveGpsAccuracy == null && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const lat = -17.8292;
+                      const lng = 31.0522;
+                      const alt = 1480;
+                      const acc = 2.4;
+                      setLiveGpsAccuracy(acc);
+                      liveGpsPosRef.current = { lat, lng, alt, acc };
+                      showToast("Simulated live GPS: ±2.4 m — Excellent. Tap capture.", "info");
+                    }}
+                    style={{
+                      marginTop: "8px",
+                      width: "100%",
+                      padding: "8px",
+                      fontSize: "10px",
+                      fontWeight: 700,
+                      borderRadius: "var(--radius-sm)",
+                      border: "1px dashed var(--border-color)",
+                      background: "var(--bg-app)",
+                      color: "var(--text-muted)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Browser testing: simulate Excellent GPS (≤3 m)
+                  </button>
+                )}
               </div>
-            )}
+              );
+            })()}
 
             {/* Optional Photo Capture */}
             <div className="mobile-form-group">
@@ -2349,10 +2659,35 @@ export default function App() {
                   : assetCategory === "gravel" ? "Gravel Road"
                   : "Earth Road"
                 }
-                onSegmentComplete={(geo) => setSegmentGeometry(geo)}
-                onReset={() => setSegmentGeometry(null)}
+                onSegmentComplete={(geo) => {
+                  setSegmentGeometry(geo);
+                  persistPausedRoadContext(null);
+                }}
+                onReset={() => {
+                  setSegmentGeometry(null);
+                  discardPausedRoadSession();
+                }}
                 existingGeometry={segmentGeometry}
                 accuracyThreshold={gpsAccuracyLimit}
+                onSegmentPaused={(info) => {
+                  persistPausedRoadContext({
+                    roadCategory: assetCategory as RoadCategory,
+                    roadName,
+                    sectionName,
+                    surveyorName,
+                    surveyDate,
+                    pointCount: info.pointCount,
+                    length_m: info.length_m,
+                  });
+                }}
+                onCollectPointAlongRoute={() => {
+                  setSelectedCategory(null);
+                  setGps("");
+                  setPhoto(null);
+                  setSegmentGeometry(null);
+                  setEditingDraftId(null);
+                  showToast("Line paused. Pick a point asset (bus stop, bridge…), then resume the same line.", "info");
+                }}
               />
             )}
 

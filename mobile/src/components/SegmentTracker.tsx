@@ -5,7 +5,7 @@ import { App as CapApp } from "@capacitor/app";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "leaflet-textpath";
-import { MapPin, Navigation, Square, Plus, CheckCircle2, Activity, Gauge, Clock, Wifi } from "lucide-react";
+import { MapPin, Navigation, Square, Plus, CheckCircle2, Activity, Gauge, Clock, Wifi, Pause, Play, MapPinned } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -35,15 +35,21 @@ interface Props {
   onReset: () => void;
   existingGeometry?: SegmentGeometry | null;
   accuracyThreshold?: number;
+  /** Fired when user pauses tracking (points are preserved in localStorage). */
+  onSegmentPaused?: (info: { pointCount: number; length_m: number }) => void;
+  /** Fired when user wants to collect a point asset along the paused route. */
+  onCollectPointAlongRoute?: () => void;
 }
 
-type Phase = "idle" | "tracking" | "completed";
+type Phase = "idle" | "tracking" | "paused" | "completed";
+
+export const SEGMENT_SESSION_KEY = "roads_active_segment";
+export const PAUSED_ROAD_CONTEXT_KEY = "roads_paused_road_context";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const MIN_DISTANCE_M = 3;        // minimum metres between consecutive auto-points
 const AUTO_ADD_INTERVAL_MS = 3000; // auto-add interval in ms
-const SEGMENT_SESSION_KEY = "roads_active_segment"; // localStorage key for in-flight session
 const SESSION_PERSIST_EVERY_N = 5; // persist to localStorage every N new points added
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -192,7 +198,15 @@ function findClosestSnappedPoint(
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function SegmentTracker({ roadLabel, onSegmentComplete, onReset, existingGeometry, accuracyThreshold = 3.0 }: Props) {
+export function SegmentTracker({
+  roadLabel,
+  onSegmentComplete,
+  onReset,
+  existingGeometry,
+  accuracyThreshold = 3.0,
+  onSegmentPaused,
+  onCollectPointAlongRoute,
+}: Props) {
   const [phase, setPhase] = useState<Phase>(existingGeometry ? "completed" : "idle");
   const [points, setPoints] = useState<SegmentPoint[]>(existingGeometry?.points ?? []);
   const [currentPos, setCurrentPos] = useState<SegmentPoint | null>(null);
@@ -244,13 +258,19 @@ export function SegmentTracker({ roadLabel, onSegmentComplete, onReset, existing
 
   // ── Session persistence helpers ─────────────────────────────────────────────
 
-  const persistSession = useCallback((pts: SegmentPoint[], startTime: string, mode: string) => {
+  const persistSession = useCallback((
+    pts: SegmentPoint[],
+    startTime: string,
+    mode: string,
+    sessionPhase: "tracking" | "paused" = "tracking",
+  ) => {
     try {
       const session = {
         points: pts,
         startTime,
         trackingMode: mode,
         roadLabel,
+        phase: sessionPhase,
         savedAt: Date.now(),
       };
       localStorage.setItem(SEGMENT_SESSION_KEY, JSON.stringify(session));
@@ -296,6 +316,7 @@ export function SegmentTracker({ roadLabel, onSegmentComplete, onReset, existing
         startTime: string;
         trackingMode: "auto" | "manual";
         savedAt: number;
+        phase?: "tracking" | "paused";
       };
 
       // Ignore stale sessions older than 24 hours
@@ -323,14 +344,16 @@ export function SegmentTracker({ roadLabel, onSegmentComplete, onReset, existing
       const elapsedSec = Math.round((Date.now() - new Date(session.startTime).getTime()) / 1000);
       setElapsed(elapsedSec);
 
-      // Switch to tracking phase — this triggers map init + timer
-      setPhase("tracking");
-      phaseRef.current = "tracking";
+      const restoredPhase = session.phase === "paused" ? "paused" : "tracking";
+      setPhase(restoredPhase);
+      phaseRef.current = restoredPhase;
 
-      // Reconnect to native GPS service (deferred so phase state & map have time to settle)
-      setTimeout(() => {
-        if (reconnectTrackingRef.current) reconnectTrackingRef.current(restoredPoints.length);
-      }, 800);
+      // Only reconnect GPS when the session was actively tracking (not paused)
+      if (restoredPhase === "tracking") {
+        setTimeout(() => {
+          if (reconnectTrackingRef.current) reconnectTrackingRef.current(restoredPoints.length);
+        }, 800);
+      }
 
     } catch (e) {
       console.warn("Failed to restore GPS session:", e);
@@ -778,6 +801,38 @@ export function SegmentTracker({ roadLabel, onSegmentComplete, onReset, existing
   // Keep the ref in sync so early-mounted useEffects can call it
   reconnectTrackingRef.current = reconnectTracking;
 
+  // ── Pause / resume segment (collect point assets mid-line) ─────────────────
+
+  const pauseSegment = async (forPointCollect = false) => {
+    if (watchIdRef.current) {
+      try {
+        await BackgroundGeolocation.stop();
+      } catch (e) {
+        console.error("Error stopping background geolocation on pause:", e);
+      }
+      watchIdRef.current = null;
+    }
+    if (timerRef.current) clearInterval(timerRef.current);
+
+    const pts = [...pointsRef.current];
+    persistSession(pts, startTimeRef.current, trackingModeRef.current, "paused");
+    setPhase("paused");
+    phaseRef.current = "paused";
+    setStatusMsg("⏸ Segment paused — GPS points kept. Resume anytime or collect a point asset.");
+
+    const info = { pointCount: pts.length, length_m: totalDistance(pts) };
+    onSegmentPaused?.(info);
+    if (forPointCollect) onCollectPointAlongRoute?.();
+  };
+
+  const resumeSegment = async () => {
+    setPhase("tracking");
+    phaseRef.current = "tracking";
+    persistSession(pointsRef.current, startTimeRef.current, trackingModeRef.current, "tracking");
+    setStatusMsg("▶ Resuming segment recording…");
+    await reconnectTracking(pointsRef.current.length);
+  };
+
   // ── Manual add point ───────────────────────────────────────────────────────
 
   const manualAdd = () => {
@@ -1192,36 +1247,164 @@ export function SegmentTracker({ roadLabel, onSegmentComplete, onReset, existing
         )}
 
         {/* Action Buttons */}
-        <div style={{ display: "flex", gap: "8px" }}>
-          <button
-            type="button"
-            onClick={manualAdd}
-            disabled={!currentPos}
-            className="mobile-btn mobile-btn-outline"
-            style={{ flex: 1, height: "42px", fontSize: "12px", gap: "6px" }}
-          >
-            <Plus size={14} />
-            Add Point Now
-          </button>
-          <button
-            type="button"
-            onClick={endSegment}
-            disabled={points.length < 2}
-            className="mobile-btn"
-            style={{
-              flex: 1, height: "42px", fontSize: "12px", gap: "6px",
-              background: points.length >= 2 ? "#dc2626" : undefined,
-              borderColor: points.length >= 2 ? "#dc2626" : undefined,
-            }}
-          >
-            <Square size={14} />
-            End Segment
-          </button>
+        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+          <div style={{ display: "flex", gap: "8px" }}>
+            <button
+              type="button"
+              onClick={manualAdd}
+              disabled={!currentPos}
+              className="mobile-btn mobile-btn-outline"
+              style={{ flex: 1, height: "42px", fontSize: "12px", gap: "6px" }}
+            >
+              <Plus size={14} />
+              Add Point Now
+            </button>
+            <button
+              type="button"
+              onClick={endSegment}
+              disabled={points.length < 2}
+              className="mobile-btn"
+              style={{
+                flex: 1, height: "42px", fontSize: "12px", gap: "6px",
+                background: points.length >= 2 ? "#dc2626" : undefined,
+                borderColor: points.length >= 2 ? "#dc2626" : undefined,
+              }}
+            >
+              <Square size={14} />
+              End Segment
+            </button>
+          </div>
+          <div style={{ display: "flex", gap: "8px" }}>
+            <button
+              type="button"
+              onClick={() => pauseSegment(false)}
+              disabled={points.length < 1}
+              className="mobile-btn mobile-btn-outline"
+              style={{ flex: 1, height: "40px", fontSize: "11px", gap: "6px" }}
+            >
+              <Pause size={14} />
+              Pause
+            </button>
+            <button
+              type="button"
+              onClick={() => pauseSegment(true)}
+              disabled={points.length < 1}
+              className="mobile-btn"
+              style={{
+                flex: 1.4, height: "40px", fontSize: "11px", gap: "6px",
+                background: "#b45309",
+                borderColor: "#b45309",
+              }}
+            >
+              <MapPinned size={14} />
+              Pause &amp; Collect Point
+            </button>
+          </div>
         </div>
 
         <p style={{ fontSize: "9px", color: "var(--text-muted)", textAlign: "center", margin: 0 }}>
-          Minimum 2 points required · Red button activates after first auto-point
+          Pause keeps this line so you can survey a bus stop / bridge, then resume the same segment
         </p>
+      </div>
+    );
+  }
+
+  // ── Phase: PAUSED ───────────────────────────────────────────────────────────
+  if (phase === "paused") {
+    const pausedDist = totalDistance(points);
+    return (
+      <div
+        style={{
+          display: "flex", flexDirection: "column", gap: "12px",
+          padding: "14px",
+          background: "var(--bg-card)",
+          border: "2px solid #b45309",
+          borderRadius: "var(--radius-md)",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <div
+            style={{
+              width: 36, height: 36, borderRadius: "50%",
+              background: "rgba(180,83,9,0.12)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}
+          >
+            <Pause size={18} color="#b45309" />
+          </div>
+          <div>
+            <p style={{ margin: 0, fontSize: "13px", fontWeight: 800, color: "#b45309" }}>
+              Segment Paused
+            </p>
+            <p style={{ margin: "2px 0 0", fontSize: "10px", color: "var(--text-muted)" }}>
+              {roadLabel} — GPS line kept safely. Collect a point asset, then resume.
+            </p>
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "8px" }}>
+          {[
+            { label: "Points", value: points.length },
+            { label: "Distance", value: fmtDist(pausedDist) },
+            { label: "Elapsed", value: fmtElapsed(elapsed) },
+          ].map((s) => (
+            <div
+              key={s.label}
+              style={{
+                background: "var(--bg-app)",
+                border: "1px solid var(--border-color)",
+                borderRadius: "var(--radius-sm)",
+                padding: "8px",
+                textAlign: "center",
+              }}
+            >
+              <div style={{ fontSize: "13px", fontWeight: 700 }}>{s.value}</div>
+              <div style={{ fontSize: "9px", color: "var(--text-muted)", textTransform: "uppercase" }}>{s.label}</div>
+            </div>
+          ))}
+        </div>
+
+        <button
+          type="button"
+          onClick={resumeSegment}
+          className="mobile-btn"
+          style={{ width: "100%", height: "44px", fontSize: "13px", gap: "8px" }}
+        >
+          <Play size={16} />
+          Resume Line Recording
+        </button>
+
+        {onCollectPointAlongRoute && (
+          <button
+            type="button"
+            onClick={() => onCollectPointAlongRoute()}
+            className="mobile-btn mobile-btn-outline"
+            style={{ width: "100%", height: "42px", fontSize: "12px", gap: "8px", color: "#b45309", borderColor: "#b45309" }}
+          >
+            <MapPinned size={15} />
+            Collect Point Asset (bus stop, bridge…)
+          </button>
+        )}
+
+        <button
+          type="button"
+          onClick={endSegment}
+          disabled={points.length < 2}
+          className="mobile-btn"
+          style={{
+            width: "100%", height: "40px", fontSize: "12px", gap: "6px",
+            background: points.length >= 2 ? "#dc2626" : undefined,
+            borderColor: points.length >= 2 ? "#dc2626" : undefined,
+            opacity: points.length < 2 ? 0.5 : 1,
+          }}
+        >
+          <Square size={14} />
+          End Segment Instead
+        </button>
+
+        {statusMsg && (
+          <p style={{ fontSize: "11px", color: "#b45309", margin: 0, textAlign: "center" }}>{statusMsg}</p>
+        )}
       </div>
     );
   }
