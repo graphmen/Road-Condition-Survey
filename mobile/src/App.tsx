@@ -281,6 +281,7 @@ export default function App() {
   const [segmentGeometry, setSegmentGeometry] = useState<SegmentGeometry | null>(null);
   const isRoadType = assetCategory === "sealed" || assetCategory === "gravel" || assetCategory === "earth";
   const [pausedRoadContext, setPausedRoadContext] = useState<PausedRoadContext | null>(() => loadPausedRoadContext());
+  const [autoResumeSegment, setAutoResumeSegment] = useState(false);
 
   const persistPausedRoadContext = (ctx: PausedRoadContext | null) => {
     setPausedRoadContext(ctx);
@@ -294,27 +295,46 @@ export default function App() {
 
   const discardPausedRoadSession = () => {
     persistPausedRoadContext(null);
+    setAutoResumeSegment(false);
     try {
       localStorage.removeItem(SEGMENT_SESSION_KEY);
     } catch (_) { /* ignore */ }
     setSegmentGeometry(null);
   };
 
-  const resumePausedRoadSurvey = () => {
+  const resumePausedRoadSurvey = async () => {
     const ctx = pausedRoadContext ?? loadPausedRoadContext();
     if (!ctx) return;
+    // Release point GPS so SegmentTracker can claim BackgroundGeolocation cleanly
+    try {
+      if (pointGpsEngineRef.current === "bg" || warmUpWatchIdRef.current === "bg-active") {
+        await BackgroundGeolocation.stop();
+      }
+    } catch { /* ignore */ }
+    pointGpsEngineRef.current = null;
+    warmUpWatchIdRef.current = null;
+
+    setAutoResumeSegment(true);
     setAssetCategory(ctx.roadCategory);
     setSelectedCategory(ctx.roadCategory);
     setRoadName(ctx.roadName);
     setSectionName(ctx.sectionName);
     setSurveyorName(ctx.surveyorName || defaultSurveyor);
     setSurveyDate(ctx.surveyDate || new Date().toISOString().split("T")[0]);
-    setSegmentGeometry(null); // SegmentTracker restores in-progress points from localStorage
+    setSegmentGeometry(null);
     setGps("");
     setPhoto(null);
     setEditingDraftId(null);
-    showToast("Paused line restored — tap Resume Line Recording to continue.", "info");
+    showToast("Resuming line from last GPS point…", "info");
   };
+
+  // Clear one-shot autoResume after SegmentTracker has had time to resume
+  useEffect(() => {
+    if (!autoResumeSegment) return;
+    const t = setTimeout(() => setAutoResumeSegment(false), 2500);
+    return () => clearTimeout(t);
+  }, [autoResumeSegment]);
+
   const [roadName, setRoadName] = useState("");
   const [sectionName, setSectionName] = useState("");
   const [surveyorName, setSurveyorName] = useState("");
@@ -522,31 +542,83 @@ export default function App() {
       setGpsAccuracyLimit(parseFloat(savedLimit));
     }
 
-    // High-precision GPS warming for point surveys (same engine as linear segments on native)
-    const startGpsWarming = async () => {
-      const applyFix = (latitude: number, longitude: number, altitude: number | null, accuracy: number) => {
-        if (!Number.isFinite(accuracy) || accuracy <= 0) return;
-        const alt = altitude && Number.isFinite(altitude) ? Math.round(altitude) : 1200;
-        const accRound = Math.round(accuracy * 10) / 10;
-        const fix = { lat: latitude, lng: longitude, alt, acc: Math.round(accuracy) };
-
-        setLiveGpsAccuracy(accRound);
-        liveGpsPosRef.current = fix;
-
-        // Keep the best (lowest) accuracy fix for capture unlock
-        setBestGpsAccuracy((prev) => {
-          if (prev == null || accuracy < prev) {
-            bestGpsPosRef.current = fix;
-            return accRound;
-          }
-          return prev;
+    // Request location permission early — do NOT start BackgroundGeolocation here.
+    // SegmentTracker owns BG during road surveys; App owns it only on point forms.
+    (async () => {
+      if (!Capacitor.isNativePlatform()) return;
+      try {
+        await BackgroundGeolocation.requestPermissions({
+          permissions: ["location", "backgroundLocation", "notification"],
         });
-        if (!bestGpsPosRef.current || accuracy < bestGpsPosRef.current.acc) {
-          bestGpsPosRef.current = fix;
-        }
+      } catch {
+        try { await Geolocation.requestPermissions(); } catch { /* ignore */ }
+      }
+    })();
+
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
+  const applyPointGpsFix = React.useCallback((latitude: number, longitude: number, altitude: number | null, accuracy: number) => {
+    if (!Number.isFinite(accuracy) || accuracy <= 0) return;
+    const alt = altitude && Number.isFinite(altitude) ? Math.round(altitude) : 1200;
+    const accRound = Math.round(accuracy * 10) / 10;
+    const fix = { lat: latitude, lng: longitude, alt, acc: Math.round(accuracy) };
+    setLiveGpsAccuracy(accRound);
+    liveGpsPosRef.current = fix;
+    setBestGpsAccuracy((prev) => {
+      if (prev == null || accuracy < prev) {
+        bestGpsPosRef.current = fix;
+        return accRound;
+      }
+      return prev;
+    });
+    if (!bestGpsPosRef.current || accuracy < bestGpsPosRef.current.acc) {
+      bestGpsPosRef.current = fix;
+    }
+  }, []);
+
+  const stopPointGpsEngine = React.useCallback(async () => {
+    try {
+      if (pointGpsEngineRef.current === "bg" || warmUpWatchIdRef.current === "bg-active") {
+        await BackgroundGeolocation.stop();
+      } else if (warmUpWatchIdRef.current?.startsWith("web:")) {
+        navigator.geolocation.clearWatch(Number(warmUpWatchIdRef.current.slice(4)));
+      } else if (warmUpWatchIdRef.current && pointGpsEngineRef.current === "cap") {
+        await Geolocation.clearWatch({ id: warmUpWatchIdRef.current });
+      }
+    } catch { /* ignore */ }
+    warmUpWatchIdRef.current = null;
+    pointGpsEngineRef.current = null;
+  }, []);
+
+  // Point-asset forms ONLY — exclusive owner of BackgroundGeolocation when !isRoadType
+  useEffect(() => {
+    if (activeTab !== "form" || selectedCategory == null || isRoadType) {
+      return;
+    }
+
+    let alive = true;
+    const startPointGps = async () => {
+      // Reset best-fix each time we open a point form so we don't reuse a stale line fix
+      setLiveGpsAccuracy(null);
+      setBestGpsAccuracy(null);
+      liveGpsPosRef.current = null;
+      bestGpsPosRef.current = null;
+
+      const applyFix = (lat: number, lng: number, alt: number | null, acc: number) => {
+        if (!alive) return;
+        applyPointGpsFix(lat, lng, alt, acc);
       };
 
-      // Browser / Vite preview
       if (!Capacitor.isNativePlatform() && "geolocation" in navigator) {
         const webId = navigator.geolocation.watchPosition(
           (position) => {
@@ -561,128 +633,8 @@ export default function App() {
         return;
       }
 
-      // Native: use BackgroundGeolocation (fused GPS, same as road segments) for sub-3m fixes
       try {
-        try {
-          await BackgroundGeolocation.requestPermissions({
-            permissions: ["location", "backgroundLocation", "notification"],
-          });
-        } catch (permErr) {
-          console.warn("BG location permission request:", permErr);
-          try { await Geolocation.requestPermissions(); } catch (_) { /* ignore */ }
-        }
-
-        await BackgroundGeolocation.start(
-          {
-            backgroundTitle: "MOTID GPS lock",
-            backgroundMessage: "Acquiring high-precision GPS for survey…",
-            requestPermissions: true,
-            stale: false,
-            distanceFilter: 0,
-          },
-          (location, err) => {
-            if (err) {
-              console.warn("BG GPS watch error:", err);
-              return;
-            }
-            if (location) {
-              applyFix(location.latitude, location.longitude, location.altitude ?? null, location.accuracy);
-            }
-          }
-        );
-        warmUpWatchIdRef.current = "bg-active";
-        pointGpsEngineRef.current = "bg";
-        return;
-      } catch (err) {
-        console.warn("BG GPS warm-up failed, falling back to Capacitor Geolocation:", err);
-      }
-
-      try {
-        const id = await Geolocation.watchPosition(
-          { enableHighAccuracy: true, timeout: 60000, maximumAge: 0 },
-          (position, err) => {
-            if (err) {
-              console.warn("GPS watch error:", err);
-              return;
-            }
-            if (position?.coords) {
-              const { latitude, longitude, altitude, accuracy } = position.coords;
-              applyFix(latitude, longitude, altitude, accuracy);
-            }
-          }
-        );
-        warmUpWatchIdRef.current = id;
-        pointGpsEngineRef.current = "cap";
-      } catch (err2) {
-        console.warn("GPS warm-up watch failed to start:", err2);
-      }
-    };
-    startGpsWarming();
-
-    // Extra: every 2s force a fresh high-accuracy reading while accuracy is still poor
-    const boostTimer = window.setInterval(async () => {
-      const best = bestGpsPosRef.current?.acc;
-      const limit = parseFloat(localStorage.getItem("roads_gps_accuracy_limit") || "3");
-      if (best != null && best <= limit) return;
-      if (!Capacitor.isNativePlatform()) return;
-      try {
-        const position = await Geolocation.getCurrentPosition({
-          enableHighAccuracy: true,
-          timeout: 10000,
-          maximumAge: 0,
-        });
-        if (position?.coords) {
-          const { latitude, longitude, altitude, accuracy } = position.coords;
-          const alt = altitude ? Math.round(altitude) : 1200;
-          const accRound = Math.round(accuracy * 10) / 10;
-          const fix = { lat: latitude, lng: longitude, alt, acc: Math.round(accuracy) };
-          setLiveGpsAccuracy(accRound);
-          liveGpsPosRef.current = fix;
-          setBestGpsAccuracy((prev) => {
-            if (prev == null || accuracy < prev) {
-              bestGpsPosRef.current = fix;
-              return accRound;
-            }
-            return prev;
-          });
-        }
-      } catch (_) {
-        /* keep waiting */
-      }
-    }, 2000);
-
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
-
-    window.addEventListener("online", handleOnline);
-    window.addEventListener("offline", handleOffline);
-
-    return () => {
-      window.removeEventListener("online", handleOnline);
-      window.removeEventListener("offline", handleOffline);
-      window.clearInterval(boostTimer);
-      if (warmUpWatchIdRef.current === "bg-active" || pointGpsEngineRef.current === "bg") {
-        BackgroundGeolocation.stop().catch(() => {});
-      } else if (warmUpWatchIdRef.current) {
-        if (warmUpWatchIdRef.current.startsWith("web:")) {
-          const webId = Number(warmUpWatchIdRef.current.slice(4));
-          navigator.geolocation.clearWatch(webId);
-        } else {
-          Geolocation.clearWatch({ id: warmUpWatchIdRef.current }).catch(() => {});
-        }
-      }
-    };
-  }, []);
-
-  // Re-engage high-precision GPS whenever a point-asset form is open
-  // (road SegmentTracker may have stopped the shared BG location engine)
-  useEffect(() => {
-    if (activeTab !== "form" || selectedCategory == null || isRoadType) return;
-    if (!Capacitor.isNativePlatform()) return;
-
-    let alive = true;
-    (async () => {
-      try {
+        try { await BackgroundGeolocation.stop(); } catch { /* clear any leftover */ }
         await BackgroundGeolocation.start(
           {
             backgroundTitle: "MOTID GPS lock",
@@ -693,42 +645,41 @@ export default function App() {
           },
           (location, err) => {
             if (!alive || err || !location) return;
-            const accuracy = location.accuracy;
-            if (!Number.isFinite(accuracy) || accuracy <= 0) return;
-            const alt = location.altitude && Number.isFinite(location.altitude)
-              ? Math.round(location.altitude) : 1200;
-            const accRound = Math.round(accuracy * 10) / 10;
-            const fix = {
-              lat: location.latitude,
-              lng: location.longitude,
-              alt,
-              acc: Math.round(accuracy),
-            };
-            setLiveGpsAccuracy(accRound);
-            liveGpsPosRef.current = fix;
-            setBestGpsAccuracy((prev) => {
-              if (prev == null || accuracy < prev) {
-                bestGpsPosRef.current = fix;
-                return accRound;
-              }
-              return prev;
-            });
-            if (!bestGpsPosRef.current || accuracy < bestGpsPosRef.current.acc) {
-              bestGpsPosRef.current = fix;
-            }
+            applyFix(location.latitude, location.longitude, location.altitude ?? null, location.accuracy);
           }
         );
+        if (!alive) {
+          await BackgroundGeolocation.stop().catch(() => {});
+          return;
+        }
         warmUpWatchIdRef.current = "bg-active";
         pointGpsEngineRef.current = "bg";
       } catch (e) {
-        console.warn("Point-form GPS engine start failed:", e);
+        console.warn("Point BG GPS failed, Capacitor fallback:", e);
+        try {
+          const id = await Geolocation.watchPosition(
+            { enableHighAccuracy: true, timeout: 60000, maximumAge: 0 },
+            (position, err) => {
+              if (!alive || err || !position?.coords) return;
+              const { latitude, longitude, altitude, accuracy } = position.coords;
+              applyFix(latitude, longitude, altitude, accuracy);
+            }
+          );
+          warmUpWatchIdRef.current = id;
+          pointGpsEngineRef.current = "cap";
+        } catch (e2) {
+          console.warn("Point GPS watch failed:", e2);
+        }
       }
-    })();
+    };
+
+    startPointGps();
 
     return () => {
       alive = false;
+      stopPointGpsEngine();
     };
-  }, [activeTab, selectedCategory, isRoadType]);
+  }, [activeTab, selectedCategory, isRoadType, applyPointGpsFix, stopPointGpsEngine]);
 
   // ────────────────────────────────────────────────────────────────
   // Auto-Save: debounced write of all form state to localStorage
@@ -1065,7 +1016,7 @@ export default function App() {
   const handleCaptureGps = async () => {
     setIsCapturingGps(true);
 
-    // Prefer the best high-precision fix we already locked
+    // Prefer the best high-precision fix already locked from the live BG stream
     const best = bestGpsPosRef.current;
     if (best && best.acc <= gpsAccuracyLimit) {
       applyCapturedGps(best.lat, best.lng, best.alt, best.acc);
@@ -1074,6 +1025,31 @@ export default function App() {
     const live = liveGpsPosRef.current;
     if (live && live.acc <= gpsAccuracyLimit) {
       applyCapturedGps(live.lat, live.lng, live.alt, live.acc);
+      return;
+    }
+
+    // On native with BG engine running: wait briefly for a good fix instead of one-shot
+    // getCurrentPosition (which is slower / less accurate on many devices).
+    if (Capacitor.isNativePlatform() && pointGpsEngineRef.current === "bg") {
+      const deadline = Date.now() + 12000;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 400));
+        const b = bestGpsPosRef.current;
+        if (b && b.acc <= gpsAccuracyLimit) {
+          applyCapturedGps(b.lat, b.lng, b.alt, b.acc);
+          return;
+        }
+      }
+      const latest = bestGpsPosRef.current || liveGpsPosRef.current;
+      if (latest) {
+        showToast(
+          `❌ Best GPS so far ±${latest.acc}m (need ≤${gpsAccuracyLimit}m). Stay outdoors under clear sky.`,
+          "error"
+        );
+      } else {
+        showToast("❌ Still acquiring GPS. Keep the app open outdoors and try again.", "error");
+      }
+      setIsCapturingGps(false);
       return;
     }
 
@@ -1094,8 +1070,7 @@ export default function App() {
         const { latitude, longitude, altitude, accuracy } = position.coords;
         const alt = altitude ? Math.round(altitude) : 1200;
         const acc = Math.round(accuracy);
-        setLiveGpsAccuracy(accuracy);
-        liveGpsPosRef.current = { lat: latitude, lng: longitude, alt, acc };
+        applyPointGpsFix(latitude, longitude, altitude, accuracy);
         applyCapturedGps(latitude, longitude, alt, acc);
       } else {
         throw new Error("No coordinate data returned from GPS module.");
@@ -1108,15 +1083,14 @@ export default function App() {
             const { latitude, longitude, altitude, accuracy } = position.coords;
             const alt = altitude ? Math.round(altitude) : 1200;
             const acc = accuracy ? Math.round(accuracy) : 5;
-            setLiveGpsAccuracy(accuracy ?? acc);
-            liveGpsPosRef.current = { lat: latitude, lng: longitude, alt, acc };
+            applyPointGpsFix(latitude, longitude, altitude, accuracy ?? acc);
             applyCapturedGps(latitude, longitude, alt, acc);
           },
           (webErr) => {
             console.error("Web fallback Geolocation failed:", webErr);
             simulateZimbabweGps();
           },
-          { enableHighAccuracy: true, timeout: 8000 }
+          { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
         );
       } else {
         simulateZimbabweGps();
@@ -2809,6 +2783,7 @@ export default function App() {
                 onSegmentComplete={(geo) => {
                   setSegmentGeometry(geo);
                   persistPausedRoadContext(null);
+                  setAutoResumeSegment(false);
                 }}
                 onReset={() => {
                   setSegmentGeometry(null);
@@ -2816,7 +2791,13 @@ export default function App() {
                 }}
                 existingGeometry={segmentGeometry}
                 accuracyThreshold={gpsAccuracyLimit}
+                autoResume={autoResumeSegment}
+                onSessionCleared={() => {
+                  persistPausedRoadContext(null);
+                  setAutoResumeSegment(false);
+                }}
                 onSegmentPaused={(info) => {
+                  setAutoResumeSegment(false);
                   persistPausedRoadContext({
                     roadCategory: assetCategory as RoadCategory,
                     roadName,
@@ -2828,6 +2809,7 @@ export default function App() {
                   });
                 }}
                 onCollectPointAlongRoute={() => {
+                  setAutoResumeSegment(false);
                   setSelectedCategory(null);
                   setGps("");
                   setPhoto(null);

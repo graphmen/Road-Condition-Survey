@@ -2,11 +2,11 @@
     "available":  true,
     "minAndroid":  "7.0 (API 24)",
     "fileName":  "motid-road-survey.apk",
-    "releasedAt":  "2026-07-21T12:23:36.2081854Z",
+    "releasedAt":  "2026-07-21T20:12:22.4252332Z",
     "packageId":  "zw.gov.motid.roadsurvey",
-    "sizeBytes":  7163783,
-    "versionCode":  3,
-    "versionName":  "1.2",
-    "changelog":  "Faster high-precision GPS on point assets using the same background GPS engine as line surveys, with best-fix tracking and continuous refresh until ≤3 m.",
+    "sizeBytes":  7164210,
+    "versionCode":  4,
+    "versionName":  "1.3",
+    "changelog":  "Fix pause/resume line losing GPS points; exclusive GPS ownership so point and line sensors no longer fight; denser/more sensitive line tracking and faster point GPS lock.",
     "appName":  "MOTID Road Survey"
 }

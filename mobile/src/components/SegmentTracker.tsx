@@ -39,6 +39,10 @@ interface Props {
   onSegmentPaused?: (info: { pointCount: number; length_m: number }) => void;
   /** Fired when user wants to collect a point asset along the paused route. */
   onCollectPointAlongRoute?: () => void;
+  /** When true, automatically resume GPS after restoring a paused session. */
+  autoResume?: boolean;
+  /** Called when an in-progress session is cleared so App can drop pausedRoadContext. */
+  onSessionCleared?: () => void;
 }
 
 type Phase = "idle" | "tracking" | "paused" | "completed";
@@ -46,11 +50,58 @@ type Phase = "idle" | "tracking" | "paused" | "completed";
 export const SEGMENT_SESSION_KEY = "roads_active_segment";
 export const PAUSED_ROAD_CONTEXT_KEY = "roads_paused_road_context";
 
+function readInitialSegmentState(existingGeometry?: SegmentGeometry | null): {
+  phase: Phase;
+  points: SegmentPoint[];
+  trackingMode: "auto" | "manual";
+  startTime: string;
+  elapsed: number;
+} {
+  if (existingGeometry) {
+    return {
+      phase: "completed",
+      points: existingGeometry.points,
+      trackingMode: "auto",
+      startTime: existingGeometry.start_time || "",
+      elapsed: 0,
+    };
+  }
+  try {
+    const raw = localStorage.getItem(SEGMENT_SESSION_KEY);
+    if (!raw) return { phase: "idle", points: [], trackingMode: "auto", startTime: "", elapsed: 0 };
+    const session = JSON.parse(raw) as {
+      points?: SegmentPoint[];
+      startTime?: string;
+      trackingMode?: "auto" | "manual";
+      phase?: "tracking" | "paused";
+      savedAt?: number;
+    };
+    if (session.savedAt && Date.now() - session.savedAt > 24 * 60 * 60 * 1000) {
+      return { phase: "idle", points: [], trackingMode: "auto", startTime: "", elapsed: 0 };
+    }
+    if (!session.points || session.points.length === 0) {
+      return { phase: "idle", points: [], trackingMode: "auto", startTime: "", elapsed: 0 };
+    }
+    const elapsed = session.startTime
+      ? Math.round((Date.now() - new Date(session.startTime).getTime()) / 1000)
+      : 0;
+    return {
+      phase: session.phase === "paused" ? "paused" : "tracking",
+      points: session.points,
+      trackingMode: session.trackingMode || "auto",
+      startTime: session.startTime || "",
+      elapsed,
+    };
+  } catch {
+    return { phase: "idle", points: [], trackingMode: "auto", startTime: "", elapsed: 0 };
+  }
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const MIN_DISTANCE_M = 3;        // minimum metres between consecutive auto-points
-const AUTO_ADD_INTERVAL_MS = 3000; // auto-add interval in ms
-const SESSION_PERSIST_EVERY_N = 5; // persist to localStorage every N new points added
+const SESSION_PERSIST_EVERY_N = 2; // persist frequently so pause never loses recent points
+const MIN_DISTANCE_M = 2;        // denser sampling for better line fidelity
+const AUTO_ADD_INTERVAL_MS = 2500; // slightly more sensitive auto-sampling
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -206,24 +257,36 @@ export function SegmentTracker({
   accuracyThreshold = 3.0,
   onSegmentPaused,
   onCollectPointAlongRoute,
+  autoResume = false,
+  onSessionCleared,
 }: Props) {
-  const [phase, setPhase] = useState<Phase>(existingGeometry ? "completed" : "idle");
-  const [points, setPoints] = useState<SegmentPoint[]>(existingGeometry?.points ?? []);
-  const [currentPos, setCurrentPos] = useState<SegmentPoint | null>(null);
-  const [currentAcc, setCurrentAcc] = useState<number | null>(null);
-  const [elapsed, setElapsed] = useState(0);
-  const [statusMsg, setStatusMsg] = useState("");
-  const [autoAdded, setAutoAdded] = useState(0);
+  const initial = readInitialSegmentState(existingGeometry);
+  const [phase, setPhase] = useState<Phase>(initial.phase);
+  const [points, setPoints] = useState<SegmentPoint[]>(initial.points);
+  const [currentPos, setCurrentPos] = useState<SegmentPoint | null>(
+    initial.points.length > 0 ? initial.points[initial.points.length - 1] : null
+  );
+  const [currentAcc, setCurrentAcc] = useState<number | null>(
+    initial.points.length > 0 ? initial.points[initial.points.length - 1].acc : null
+  );
+  const [elapsed, setElapsed] = useState(initial.elapsed);
+  const [statusMsg, setStatusMsg] = useState(
+    initial.phase === "paused"
+      ? "⏸ Segment paused — GPS points kept. Resume anytime or collect a point asset."
+      : ""
+  );
+  const [autoAdded, setAutoAdded] = useState(initial.points.length);
   const [manualAdded, setManualAdded] = useState(0);
   const [completedGeo, setCompletedGeo] = useState<SegmentGeometry | null>(existingGeometry ?? null);
-  const [trackingMode, setTrackingMode] = useState<"auto" | "manual">("auto");
+  const [trackingMode, setTrackingMode] = useState<"auto" | "manual">(initial.trackingMode);
   const [isReconnecting, setIsReconnecting] = useState(false);
 
   const watchIdRef = useRef<string | null>(null);
-  const trackingModeRef = useRef<"auto" | "manual">("auto");
-  const startTimeRef = useRef<string>("");
+  const trackingModeRef = useRef<"auto" | "manual">(initial.trackingMode);
+  const startTimeRef = useRef<string>(initial.startTime);
   const pointsSinceLastPersistRef = useRef<number>(0);
-  const phaseRef = useRef<Phase>("idle");
+  const phaseRef = useRef<Phase>(initial.phase);
+  const sessionHydratedRef = useRef(initial.phase !== "idle" || !!existingGeometry);
   // Ref to reconnectTracking — allows early useEffects to call it before the function is declared
   const reconnectTrackingRef = useRef<((count: number) => Promise<void>) | null>(null);
 
@@ -243,7 +306,7 @@ export function SegmentTracker({
   const polylineRef = useRef<L.Polyline | null>(null);
   const currentMarkerRef = useRef<L.CircleMarker | null>(null);
   const startMarkerRef = useRef<L.CircleMarker | null>(null);
-  const pointsRef = useRef<SegmentPoint[]>([]);
+  const pointsRef = useRef<SegmentPoint[]>(initial.points);
   const offlineRoadsDataRef = useRef<any>(null);
   const offlineRoadsLayerRef = useRef<L.LayerGroup | null>(null);
   
@@ -282,10 +345,12 @@ export function SegmentTracker({
   const clearSession = useCallback(() => {
     try {
       localStorage.removeItem(SEGMENT_SESSION_KEY);
+      localStorage.removeItem(PAUSED_ROAD_CONTEXT_KEY);
     } catch (e) {
       console.warn("Failed to clear GPS session:", e);
     }
-  }, []);
+    onSessionCleared?.();
+  }, [onSessionCleared]);
 
   // Elapsed timer
   useEffect(() => {
@@ -299,66 +364,40 @@ export function SegmentTracker({
     };
   }, [phase]);
 
-  // ─── Restore session from localStorage on mount ────────────────────────────
-  // Runs once. If a GPS session was in progress when the app was killed or
-  // backgrounded, we restore all collected points and reconnect to the native
-  // BackgroundGeolocation service so recording continues seamlessly.
+  // ─── Restore / reconnect after mount ─────────────────────────────────────
+  // Initial phase/points already hydrated synchronously from localStorage.
+  // This effect only reconnects GPS (or auto-resumes) without flashing idle UI.
   useEffect(() => {
-    // Only restore if no existing geometry was passed in (not editing a draft)
     if (existingGeometry) return;
 
-    try {
-      const raw = localStorage.getItem(SEGMENT_SESSION_KEY);
-      if (!raw) return;
+    const restoredPhase = phaseRef.current;
+    const restoredPoints = pointsRef.current;
 
-      const session = JSON.parse(raw) as {
-        points: SegmentPoint[];
-        startTime: string;
-        trackingMode: "auto" | "manual";
-        savedAt: number;
-        phase?: "tracking" | "paused";
-      };
-
-      // Ignore stale sessions older than 24 hours
-      if (Date.now() - session.savedAt > 24 * 60 * 60 * 1000) {
-        clearSession();
-        return;
-      }
-
-      if (!session.points || session.points.length === 0) {
-        // Empty session (tracking started but no points yet) — still reconnect
-        clearSession();
-        return;
-      }
-
-      // Restore state
-      startTimeRef.current = session.startTime;
-      const restoredPoints = session.points;
-      pointsRef.current = restoredPoints;
-      setPoints(restoredPoints);
-      setAutoAdded(restoredPoints.length);
-      setTrackingMode(session.trackingMode || "auto");
-      trackingModeRef.current = session.trackingMode || "auto";
-
-      // Calculate elapsed from original start time
-      const elapsedSec = Math.round((Date.now() - new Date(session.startTime).getTime()) / 1000);
-      setElapsed(elapsedSec);
-
-      const restoredPhase = session.phase === "paused" ? "paused" : "tracking";
-      setPhase(restoredPhase);
-      phaseRef.current = restoredPhase;
-
-      // Only reconnect GPS when the session was actively tracking (not paused)
-      if (restoredPhase === "tracking") {
-        setTimeout(() => {
-          if (reconnectTrackingRef.current) reconnectTrackingRef.current(restoredPoints.length);
-        }, 800);
-      }
-
-    } catch (e) {
-      console.warn("Failed to restore GPS session:", e);
-      clearSession();
+    if (restoredPoints.length === 0) {
+      sessionHydratedRef.current = true;
+      return;
     }
+
+    // Seed live position from last recorded point so map continuity is immediate
+    const last = restoredPoints[restoredPoints.length - 1];
+    setCurrentPos(last);
+    setCurrentAcc(last.acc);
+
+    if (restoredPhase === "tracking") {
+      setTimeout(() => {
+        if (reconnectTrackingRef.current) reconnectTrackingRef.current(restoredPoints.length);
+      }, 400);
+    } else if (restoredPhase === "paused" && autoResume) {
+      setTimeout(() => {
+        // Auto-resume path after returning from point-asset collection
+        setPhase("tracking");
+        phaseRef.current = "tracking";
+        persistSession(restoredPoints, startTimeRef.current, trackingModeRef.current, "tracking");
+        if (reconnectTrackingRef.current) reconnectTrackingRef.current(restoredPoints.length);
+      }, 500);
+    }
+
+    sessionHydratedRef.current = true;
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Foreground resume reconnect via Capacitor App lifecycle ────────────────
@@ -748,18 +787,21 @@ export function SegmentTracker({
     lastAutoAddRef.current = 0;
     pointsSinceLastPersistRef.current = 0;
     setPhase("tracking");
+    phaseRef.current = "tracking";
 
     // Write initial empty session so recovery works even before first point
     persistSession([], startTimeRef.current, trackingModeRef.current);
 
     try {
+      // Always stop first — App point-GPS may own the shared BG engine
+      try { await BackgroundGeolocation.stop(); } catch { /* ignore */ }
       await BackgroundGeolocation.start(
         {
           backgroundTitle: "MOTID Survey in Progress",
           backgroundMessage: `Recording segment for ${roadLabel || "Road"} in background...`,
           requestPermissions: true,
           stale: false,
-          distanceFilter: 0
+          distanceFilter: 0,
         },
         buildGpsCallback()
       );
@@ -767,6 +809,7 @@ export function SegmentTracker({
     } catch (e: unknown) {
       setStatusMsg(`Failed to start GPS: ${(e as Error).message}`);
       setPhase("idle");
+      phaseRef.current = "idle";
       clearSession();
     }
   };
@@ -778,13 +821,15 @@ export function SegmentTracker({
     setIsReconnecting(true);
     setStatusMsg(`🔄 Reconnecting GPS — continuing from ${restoredPointCount} points…`);
     try {
+      // Stop App-owned (or stale) engine before claiming the callback
+      try { await BackgroundGeolocation.stop(); } catch { /* ignore */ }
       await BackgroundGeolocation.start(
         {
           backgroundTitle: "MOTID Survey in Progress",
           backgroundMessage: `Recording segment for ${roadLabel || "Road"} in background...`,
           requestPermissions: false,
           stale: false,
-          distanceFilter: 0
+          distanceFilter: 0,
         },
         buildGpsCallback()
       );
@@ -804,6 +849,19 @@ export function SegmentTracker({
   // ── Pause / resume segment (collect point assets mid-line) ─────────────────
 
   const pauseSegment = async (forPointCollect = false) => {
+    // Force-persist ALL current points before leaving (not just every N)
+    const pts = [...pointsRef.current];
+    if (currentPos) {
+      const already = pts.some(
+        (p) => Math.abs(p.lat - currentPos.lat) < 1e-7 && Math.abs(p.lng - currentPos.lng) < 1e-7
+      );
+      if (!already && currentPos.acc <= accuracyThreshold) {
+        pts.push({ ...currentPos, ts: Date.now() });
+        pointsRef.current = pts;
+        setPoints(pts);
+      }
+    }
+
     if (watchIdRef.current) {
       try {
         await BackgroundGeolocation.stop();
@@ -814,7 +872,6 @@ export function SegmentTracker({
     }
     if (timerRef.current) clearInterval(timerRef.current);
 
-    const pts = [...pointsRef.current];
     persistSession(pts, startTimeRef.current, trackingModeRef.current, "paused");
     setPhase("paused");
     phaseRef.current = "paused";
@@ -826,11 +883,18 @@ export function SegmentTracker({
   };
 
   const resumeSegment = async () => {
+    const pts = pointsRef.current;
+    const last = pts.length > 0 ? pts[pts.length - 1] : null;
+    if (last) {
+      setCurrentPos(last);
+      setCurrentAcc(last.acc);
+    }
+    lastAutoAddRef.current = 0;
     setPhase("tracking");
     phaseRef.current = "tracking";
-    persistSession(pointsRef.current, startTimeRef.current, trackingModeRef.current, "tracking");
-    setStatusMsg("▶ Resuming segment recording…");
-    await reconnectTracking(pointsRef.current.length);
+    persistSession(pts, startTimeRef.current, trackingModeRef.current, "tracking");
+    setStatusMsg("▶ Resuming segment recording from last point…");
+    await reconnectTracking(pts.length);
   };
 
   // ── Manual add point ───────────────────────────────────────────────────────
