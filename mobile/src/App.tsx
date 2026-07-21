@@ -5,6 +5,7 @@ import { SegmentTracker, PAUSED_ROAD_CONTEXT_KEY, SEGMENT_SESSION_KEY } from "./
 import type { SegmentGeometry } from "./components/SegmentTracker";
 import { Geolocation } from "@capacitor/geolocation";
 import { Capacitor } from "@capacitor/core";
+import { BackgroundGeolocation } from "@capgo/background-geolocation";
 import {
   Database,
   PlusCircle,
@@ -322,7 +323,10 @@ export default function App() {
   const [gps, setGps] = useState("");
   const [isCapturingGps, setIsCapturingGps] = useState(false);
   const [liveGpsAccuracy, setLiveGpsAccuracy] = useState<number | null>(null);
+  const [bestGpsAccuracy, setBestGpsAccuracy] = useState<number | null>(null);
   const liveGpsPosRef = React.useRef<{ lat: number; lng: number; alt: number; acc: number } | null>(null);
+  const bestGpsPosRef = React.useRef<{ lat: number; lng: number; alt: number; acc: number } | null>(null);
+  const pointGpsEngineRef = React.useRef<"bg" | "cap" | "web" | null>(null);
   const [imageSadcCompliant, setImageSadcCompliant] = useState<"yes" | "no">("yes");
   const [photo, setPhoto] = useState<string | null>(null);
 
@@ -518,19 +522,31 @@ export default function App() {
       setGpsAccuracyLimit(parseFloat(savedLimit));
     }
 
-    // Background GPS Warming + live accuracy for point surveys
+    // High-precision GPS warming for point surveys (same engine as linear segments on native)
     const startGpsWarming = async () => {
       const applyFix = (latitude: number, longitude: number, altitude: number | null, accuracy: number) => {
-        setLiveGpsAccuracy(accuracy);
-        liveGpsPosRef.current = {
-          lat: latitude,
-          lng: longitude,
-          alt: altitude ? Math.round(altitude) : 1200,
-          acc: Math.round(accuracy),
-        };
+        if (!Number.isFinite(accuracy) || accuracy <= 0) return;
+        const alt = altitude && Number.isFinite(altitude) ? Math.round(altitude) : 1200;
+        const accRound = Math.round(accuracy * 10) / 10;
+        const fix = { lat: latitude, lng: longitude, alt, acc: Math.round(accuracy) };
+
+        setLiveGpsAccuracy(accRound);
+        liveGpsPosRef.current = fix;
+
+        // Keep the best (lowest) accuracy fix for capture unlock
+        setBestGpsAccuracy((prev) => {
+          if (prev == null || accuracy < prev) {
+            bestGpsPosRef.current = fix;
+            return accRound;
+          }
+          return prev;
+        });
+        if (!bestGpsPosRef.current || accuracy < bestGpsPosRef.current.acc) {
+          bestGpsPosRef.current = fix;
+        }
       };
 
-      // Browser / Vite preview: Capacitor permissions are unimplemented — use navigator API
+      // Browser / Vite preview
       if (!Capacitor.isNativePlatform() && "geolocation" in navigator) {
         const webId = navigator.geolocation.watchPosition(
           (position) => {
@@ -538,20 +554,52 @@ export default function App() {
             applyFix(latitude, longitude, altitude, accuracy ?? 99);
           },
           (webErr) => console.warn("Browser GPS watch failed:", webErr),
-          { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 }
+          { enableHighAccuracy: true, maximumAge: 0, timeout: 60000 }
         );
         warmUpWatchIdRef.current = `web:${webId}`;
+        pointGpsEngineRef.current = "web";
         return;
       }
 
+      // Native: use BackgroundGeolocation (fused GPS, same as road segments) for sub-3m fixes
       try {
         try {
-          await Geolocation.requestPermissions();
+          await BackgroundGeolocation.requestPermissions({
+            permissions: ["location", "backgroundLocation", "notification"],
+          });
         } catch (permErr) {
-          console.warn("Silent permission request failed:", permErr);
+          console.warn("BG location permission request:", permErr);
+          try { await Geolocation.requestPermissions(); } catch (_) { /* ignore */ }
         }
+
+        await BackgroundGeolocation.start(
+          {
+            backgroundTitle: "MOTID GPS lock",
+            backgroundMessage: "Acquiring high-precision GPS for survey…",
+            requestPermissions: true,
+            stale: false,
+            distanceFilter: 0,
+          },
+          (location, err) => {
+            if (err) {
+              console.warn("BG GPS watch error:", err);
+              return;
+            }
+            if (location) {
+              applyFix(location.latitude, location.longitude, location.altitude ?? null, location.accuracy);
+            }
+          }
+        );
+        warmUpWatchIdRef.current = "bg-active";
+        pointGpsEngineRef.current = "bg";
+        return;
+      } catch (err) {
+        console.warn("BG GPS warm-up failed, falling back to Capacitor Geolocation:", err);
+      }
+
+      try {
         const id = await Geolocation.watchPosition(
-          { enableHighAccuracy: true, timeout: 30000, maximumAge: 0 },
+          { enableHighAccuracy: true, timeout: 60000, maximumAge: 0 },
           (position, err) => {
             if (err) {
               console.warn("GPS watch error:", err);
@@ -564,11 +612,44 @@ export default function App() {
           }
         );
         warmUpWatchIdRef.current = id;
-      } catch (err) {
-        console.warn("GPS warm-up watch failed to start:", err);
+        pointGpsEngineRef.current = "cap";
+      } catch (err2) {
+        console.warn("GPS warm-up watch failed to start:", err2);
       }
     };
     startGpsWarming();
+
+    // Extra: every 2s force a fresh high-accuracy reading while accuracy is still poor
+    const boostTimer = window.setInterval(async () => {
+      const best = bestGpsPosRef.current?.acc;
+      const limit = parseFloat(localStorage.getItem("roads_gps_accuracy_limit") || "3");
+      if (best != null && best <= limit) return;
+      if (!Capacitor.isNativePlatform()) return;
+      try {
+        const position = await Geolocation.getCurrentPosition({
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 0,
+        });
+        if (position?.coords) {
+          const { latitude, longitude, altitude, accuracy } = position.coords;
+          const alt = altitude ? Math.round(altitude) : 1200;
+          const accRound = Math.round(accuracy * 10) / 10;
+          const fix = { lat: latitude, lng: longitude, alt, acc: Math.round(accuracy) };
+          setLiveGpsAccuracy(accRound);
+          liveGpsPosRef.current = fix;
+          setBestGpsAccuracy((prev) => {
+            if (prev == null || accuracy < prev) {
+              bestGpsPosRef.current = fix;
+              return accRound;
+            }
+            return prev;
+          });
+        }
+      } catch (_) {
+        /* keep waiting */
+      }
+    }, 2000);
 
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
@@ -579,16 +660,75 @@ export default function App() {
     return () => {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
-      if (warmUpWatchIdRef.current) {
+      window.clearInterval(boostTimer);
+      if (warmUpWatchIdRef.current === "bg-active" || pointGpsEngineRef.current === "bg") {
+        BackgroundGeolocation.stop().catch(() => {});
+      } else if (warmUpWatchIdRef.current) {
         if (warmUpWatchIdRef.current.startsWith("web:")) {
           const webId = Number(warmUpWatchIdRef.current.slice(4));
           navigator.geolocation.clearWatch(webId);
         } else {
-          Geolocation.clearWatch({ id: warmUpWatchIdRef.current });
+          Geolocation.clearWatch({ id: warmUpWatchIdRef.current }).catch(() => {});
         }
       }
     };
   }, []);
+
+  // Re-engage high-precision GPS whenever a point-asset form is open
+  // (road SegmentTracker may have stopped the shared BG location engine)
+  useEffect(() => {
+    if (activeTab !== "form" || selectedCategory == null || isRoadType) return;
+    if (!Capacitor.isNativePlatform()) return;
+
+    let alive = true;
+    (async () => {
+      try {
+        await BackgroundGeolocation.start(
+          {
+            backgroundTitle: "MOTID GPS lock",
+            backgroundMessage: "Acquiring high-precision GPS for point survey…",
+            requestPermissions: true,
+            stale: false,
+            distanceFilter: 0,
+          },
+          (location, err) => {
+            if (!alive || err || !location) return;
+            const accuracy = location.accuracy;
+            if (!Number.isFinite(accuracy) || accuracy <= 0) return;
+            const alt = location.altitude && Number.isFinite(location.altitude)
+              ? Math.round(location.altitude) : 1200;
+            const accRound = Math.round(accuracy * 10) / 10;
+            const fix = {
+              lat: location.latitude,
+              lng: location.longitude,
+              alt,
+              acc: Math.round(accuracy),
+            };
+            setLiveGpsAccuracy(accRound);
+            liveGpsPosRef.current = fix;
+            setBestGpsAccuracy((prev) => {
+              if (prev == null || accuracy < prev) {
+                bestGpsPosRef.current = fix;
+                return accRound;
+              }
+              return prev;
+            });
+            if (!bestGpsPosRef.current || accuracy < bestGpsPosRef.current.acc) {
+              bestGpsPosRef.current = fix;
+            }
+          }
+        );
+        warmUpWatchIdRef.current = "bg-active";
+        pointGpsEngineRef.current = "bg";
+      } catch (e) {
+        console.warn("Point-form GPS engine start failed:", e);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [activeTab, selectedCategory, isRoadType]);
 
   // ────────────────────────────────────────────────────────────────
   // Auto-Save: debounced write of all form state to localStorage
@@ -925,7 +1065,12 @@ export default function App() {
   const handleCaptureGps = async () => {
     setIsCapturingGps(true);
 
-    // Prefer the live watched fix when it already meets the accuracy threshold
+    // Prefer the best high-precision fix we already locked
+    const best = bestGpsPosRef.current;
+    if (best && best.acc <= gpsAccuracyLimit) {
+      applyCapturedGps(best.lat, best.lng, best.alt, best.acc);
+      return;
+    }
     const live = liveGpsPosRef.current;
     if (live && live.acc <= gpsAccuracyLimit) {
       applyCapturedGps(live.lat, live.lng, live.alt, live.acc);
@@ -2490,16 +2635,18 @@ export default function App() {
 
             {/* Geolocation Input — hidden for road types (GPS is captured via segment tracker) */}
             {!isRoadType && (() => {
+              const displayAcc = liveGpsAccuracy ?? bestGpsAccuracy;
+              const unlockAcc = bestGpsAccuracy ?? liveGpsAccuracy;
               const pointAccColour =
-                liveGpsAccuracy == null ? "#6b7280"
-                  : liveGpsAccuracy <= gpsAccuracyLimit ? "#22c55e"
+                displayAcc == null ? "#6b7280"
+                  : (unlockAcc != null && unlockAcc <= gpsAccuracyLimit) ? "#22c55e"
                   : "#ef4444";
               const pointAccLabel =
-                liveGpsAccuracy == null ? "Waiting for GPS…"
-                  : liveGpsAccuracy <= gpsAccuracyLimit
-                    ? `±${liveGpsAccuracy.toFixed(1)} m — Excellent 🟢`
-                    : `±${liveGpsAccuracy.toFixed(1)} m — Poor 🔴 (locked: must be ≤${gpsAccuracyLimit.toFixed(1)}m)`;
-              const gpsReady = liveGpsAccuracy != null && liveGpsAccuracy <= gpsAccuracyLimit;
+                displayAcc == null ? "Acquiring GPS — stand outdoors, clear sky…"
+                  : (unlockAcc != null && unlockAcc <= gpsAccuracyLimit)
+                    ? `±${unlockAcc.toFixed(1)} m — Excellent 🟢`
+                    : `±${displayAcc.toFixed(1)} m — Improving… (need ≤${gpsAccuracyLimit.toFixed(1)}m)${bestGpsAccuracy != null && bestGpsAccuracy < displayAcc ? ` · best ±${bestGpsAccuracy.toFixed(1)}m` : ""}`;
+              const gpsReady = unlockAcc != null && unlockAcc <= gpsAccuracyLimit;
 
               return (
               <div className="mobile-form-group">
