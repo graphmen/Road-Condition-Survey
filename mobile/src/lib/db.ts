@@ -8,8 +8,11 @@ export interface SurveyDraft {
   vegetation: string;
   gps: string; // "lat lng alt acc"
   image_SADC_compliant: "yes" | "no" | "mixed";
-  photo?: string; // Optional Base64 data URL
-  
+  /** First / primary photo (legacy + sync thumbnail). Prefer `photos` when present. */
+  photo?: string;
+  /** Multiple Base64 data URLs — especially for linear (road) surveys along a segment. */
+  photos?: string[];
+ 
   // Bridge optional fields
   bridge?: string;
   bridge_crossing?: string;

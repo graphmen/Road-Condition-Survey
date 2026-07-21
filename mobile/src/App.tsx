@@ -4,6 +4,7 @@ import type { SurveyDraft } from "./lib/db";
 import { SegmentTracker, PAUSED_ROAD_CONTEXT_KEY, SEGMENT_SESSION_KEY } from "./components/SegmentTracker";
 import type { SegmentGeometry } from "./components/SegmentTracker";
 import { AutocompleteInput } from "./components/AutocompleteInput";
+import { PhotoCapture, capturePhotoNativeOrNull } from "./components/PhotoCapture";
 import {
   SelectWithOther,
   AUTHORITY_OPTIONS,
@@ -64,6 +65,43 @@ type PausedRoadContext = {
   pointCount: number;
   length_m: number;
 };
+
+const PAUSED_ROAD_PHOTOS_KEY = "roads_paused_road_photos";
+const MAX_ROAD_PHOTOS = 12;
+const MAX_POINT_PHOTOS = 5;
+
+function normalizePhotos(s: { photos?: string[]; photo?: string | null } | null | undefined): string[] {
+  if (!s) return [];
+  if (Array.isArray(s.photos) && s.photos.length > 0) return s.photos.filter(Boolean);
+  if (s.photo) return [s.photo];
+  return [];
+}
+
+function savePausedRoadPhotos(photos: string[]) {
+  try {
+    if (photos.length > 0) localStorage.setItem(PAUSED_ROAD_PHOTOS_KEY, JSON.stringify(photos));
+    else localStorage.removeItem(PAUSED_ROAD_PHOTOS_KEY);
+  } catch (e) {
+    console.warn("Could not stash road photos while pausing:", e);
+  }
+}
+
+function loadPausedRoadPhotos(): string[] {
+  try {
+    const raw = localStorage.getItem(PAUSED_ROAD_PHOTOS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((p) => typeof p === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function clearPausedRoadPhotos() {
+  try {
+    localStorage.removeItem(PAUSED_ROAD_PHOTOS_KEY);
+  } catch { /* ignore */ }
+}
 
 function loadPausedRoadContext(): PausedRoadContext | null {
   try {
@@ -307,6 +345,7 @@ export default function App() {
 
   const discardPausedRoadSession = () => {
     persistPausedRoadContext(null);
+    clearPausedRoadPhotos();
     setAutoResumeSegment(false);
     try {
       localStorage.removeItem(SEGMENT_SESSION_KEY);
@@ -335,7 +374,7 @@ export default function App() {
     setSurveyDate(ctx.surveyDate || new Date().toISOString().split("T")[0]);
     setSegmentGeometry(null);
     setGps("");
-    setPhoto(null);
+    setPhotos(loadPausedRoadPhotos());
     setEditingDraftId(null);
     showToast("Resuming line from last GPS point…", "info");
   };
@@ -360,7 +399,7 @@ export default function App() {
   const bestGpsPosRef = React.useRef<{ lat: number; lng: number; alt: number; acc: number } | null>(null);
   const pointGpsEngineRef = React.useRef<"bg" | "cap" | "web" | null>(null);
   const [imageSadcCompliant, setImageSadcCompliant] = useState<"yes" | "no" | "mixed">("yes");
-  const [photo, setPhoto] = useState<string | null>(null);
+  const [photos, setPhotos] = useState<string[]>([]);
 
   // Conditional Bridge Fields
   const [bridgeName, setBridgeName] = useState("");
@@ -711,7 +750,7 @@ export default function App() {
           savedAt: Date.now(),
           assetCategory,
           roadName, sectionName, surveyorName, surveyDate, vegetation, gps,
-          imageSadcCompliant, photo,
+          imageSadcCompliant, photos,
           // Bridge
           bridgeName, bridgeCrossing, bridgeType, bridgeBearing, bridgeJoints,
           bearingsState, parapet, chemicalEffect, vegetationGrowth, drainage, bridgeCondition,
@@ -776,7 +815,7 @@ export default function App() {
   }, [
     activeTab, selectedCategory, editingDraftId,
     assetCategory, roadName, sectionName, surveyorName, surveyDate, vegetation, gps,
-    imageSadcCompliant, photo,
+    imageSadcCompliant, photos,
     bridgeName, bridgeCrossing, bridgeType, bridgeBearing, bridgeJoints,
     bearingsState, parapet, chemicalEffect, vegetationGrowth, drainage, bridgeCondition,
     culvertClass, culvertType, culvertServiceability,
@@ -840,7 +879,7 @@ export default function App() {
       if (s.vegetation !== undefined) setVegetation(s.vegetation);
       if (s.gps !== undefined) setGps(s.gps);
       if (s.imageSadcCompliant !== undefined) setImageSadcCompliant(s.imageSadcCompliant);
-      if (s.photo !== undefined) setPhoto(s.photo);
+      if (s.photos !== undefined || s.photo !== undefined) setPhotos(normalizePhotos(s));
 
       // Bridge
       if (s.bridgeName !== undefined) setBridgeName(s.bridgeName);
@@ -1154,7 +1193,7 @@ export default function App() {
     setStreetlightCount("");
     setEditingDraftId(null);
     setSelectedCategory(null);
-    setPhoto(null);
+    setPhotos([]);
     // Clear auto-saved temp draft when form is deliberately abandoned
     localStorage.removeItem("roads_temp_draft");
     setAutoSaveStatus("idle");
@@ -1193,7 +1232,7 @@ export default function App() {
     setVegetation(draft.vegetation);
     setGps(draft.gps);
     setImageSadcCompliant(draft.image_SADC_compliant || "yes");
-    setPhoto(draft.photo || null);
+    setPhotos(normalizePhotos(draft));
 
     const category = getDraftCategory(draft);
     setAssetCategory(category);
@@ -1438,7 +1477,8 @@ export default function App() {
       vegetation,
       gps: gps || "",
       image_SADC_compliant: imageSadcCompliant,
-      photo: photo || undefined,
+      photo: photos[0] || undefined,
+      photos: photos.length > 0 ? photos : undefined,
       status: saveAsDraft ? ("draft" as const) : ("queued" as const),
       gps_accuracy_threshold: gpsAccuracyLimit
     };
@@ -1777,7 +1817,8 @@ export default function App() {
         survey_date:          draft.survey_date || null,
         gps_point:            draft.gps || null,
         image_sadc_compliant: draft.image_SADC_compliant || draft.image_sadc_compliant || "yes",
-        photo:                draft.photo || null,
+        // Keep first photo on dedicated column; full set lives in raw_data.photos
+        photo:                draft.photo || (Array.isArray(draft.photos) ? draft.photos[0] : null) || null,
         raw_data:             draft,
         source:               "mobile_app"
       };
@@ -2354,7 +2395,7 @@ export default function App() {
                           setSurveyDate(pausedRoadContext.surveyDate || surveyDate);
                           setSegmentGeometry(null);
                           setGps("");
-                          setPhoto(null);
+                          setPhotos([]);
                           setEditingDraftId(null);
                         } else {
                           setSegmentGeometry(null);
@@ -2744,67 +2785,18 @@ export default function App() {
               );
             })()}
 
-            {/* Optional Photo Capture */}
-            <div className="mobile-form-group">
-              <label className="mobile-label">Photo (Optional)</label>
-              {photo ? (
-                <div style={{ position: "relative", marginTop: "6px", borderRadius: "var(--radius-md)", overflow: "hidden", border: "1px solid var(--border-color)", width: "100%", height: "150px", boxShadow: "0 2px 8px rgba(0,0,0,0.1)" }}>
-                  <img src={photo} alt="Asset preview" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                  <button
-                    type="button"
-                    onClick={() => setPhoto(null)}
-                    style={{ position: "absolute", top: "8px", right: "8px", background: "rgba(220, 38, 38, 0.9)", border: "none", borderRadius: "50%", width: "28px", height: "28px", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#ffffff", boxShadow: "0 2px 4px rgba(0,0,0,0.2)" }}
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              ) : (
-                <div style={{ marginTop: "6px" }}>
-                  <label
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      height: "100px",
-                      border: "2px dashed var(--border-color)",
-                      borderRadius: "var(--radius-md)",
-                      background: "var(--bg-card)",
-                      cursor: "pointer",
-                      gap: "8px",
-                      transition: "all 0.2s"
-                    }}
-                    onMouseOver={(e) => {
-                      e.currentTarget.style.borderColor = "var(--accent-emerald)";
-                      e.currentTarget.style.background = "rgba(16, 185, 129, 0.04)";
-                    }}
-                    onMouseOut={(e) => {
-                      e.currentTarget.style.borderColor = "var(--border-color)";
-                      e.currentTarget.style.background = "var(--bg-card)";
-                    }}
-                  >
-                    <Camera size={20} color="var(--text-muted)" />
-                    <span style={{ fontSize: "11px", fontWeight: "600", color: "var(--text-secondary)" }}>Take Photo or Upload Image</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      capture="environment"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                          const reader = new FileReader();
-                          reader.onloadend = () => {
-                            setPhoto(reader.result as string);
-                          };
-                          reader.readAsDataURL(file);
-                        }
-                      }}
-                      style={{ display: "none" }}
-                    />
-                  </label>
-                </div>
-              )}
-            </div>
+            {/* Multi-photo capture — native Camera on APK; multiple for linear surveys */}
+            <PhotoCapture
+              photos={photos}
+              onChange={setPhotos}
+              maxPhotos={isRoadType ? MAX_ROAD_PHOTOS : MAX_POINT_PHOTOS}
+              label={isRoadType ? "Road Photos (Optional)" : "Photos (Optional)"}
+              hint={
+                isRoadType
+                  ? "Take several photos along the segment while recording (defects, surface, drainage). You can also use Snap Road Photo on the tracker below."
+                  : "Use the camera for a clear photo of the asset. You can add more than one if needed."
+              }
+            />
 
             {/* GPS Segment Tracker — Sealed / Gravel / Earth roads only */}
             {isRoadType && (
@@ -2817,6 +2809,7 @@ export default function App() {
                 onSegmentComplete={(geo) => {
                   setSegmentGeometry(geo);
                   persistPausedRoadContext(null);
+                  clearPausedRoadPhotos();
                   setAutoResumeSegment(false);
                 }}
                 onReset={() => {
@@ -2826,12 +2819,39 @@ export default function App() {
                 existingGeometry={segmentGeometry}
                 accuracyThreshold={gpsAccuracyLimit}
                 autoResume={autoResumeSegment}
+                photoCount={photos.length}
+                maxPhotos={MAX_ROAD_PHOTOS}
+                onAddPhoto={async () => {
+                  if (photos.length >= MAX_ROAD_PHOTOS) {
+                    showToast(`Maximum ${MAX_ROAD_PHOTOS} photos reached.`, "info");
+                    return;
+                  }
+                  try {
+                    const dataUrl = await capturePhotoNativeOrNull();
+                    if (dataUrl) {
+                      setPhotos((prev) => {
+                        const next = [...prev, dataUrl].slice(0, MAX_ROAD_PHOTOS);
+                        showToast(`Photo ${next.length} saved`, "success");
+                        return next;
+                      });
+                    } else {
+                      showToast("Camera unavailable — use Add Photo above.", "info");
+                    }
+                  } catch (e: unknown) {
+                    const msg = (e as Error)?.message || "";
+                    if (!/cancel|dismiss|User cancelled/i.test(msg)) {
+                      showToast("Camera failed — use Add Photo above.", "error");
+                    }
+                  }
+                }}
                 onSessionCleared={() => {
                   persistPausedRoadContext(null);
+                  clearPausedRoadPhotos();
                   setAutoResumeSegment(false);
                 }}
                 onSegmentPaused={(info) => {
                   setAutoResumeSegment(false);
+                  savePausedRoadPhotos(photos);
                   persistPausedRoadContext({
                     roadCategory: assetCategory as RoadCategory,
                     roadName,
@@ -2844,9 +2864,10 @@ export default function App() {
                 }}
                 onCollectPointAlongRoute={() => {
                   setAutoResumeSegment(false);
+                  savePausedRoadPhotos(photos);
                   setSelectedCategory(null);
                   setGps("");
-                  setPhoto(null);
+                  setPhotos([]);
                   setSegmentGeometry(null);
                   setEditingDraftId(null);
                   showToast("Line paused. Pick a point asset (bus stop, bridge…), then resume the same line.", "info");
@@ -4367,11 +4388,24 @@ export default function App() {
                       : `Sealed Road: ${draft.paved_road_name}`;
                   }
                   const upperTitle = String(title).replace(/\b\w/g, (c) => c.toUpperCase());
+                  const draftPhotos = normalizePhotos(draft);
                   
                   return (
                     <div key={draft.id} className="queue-item" style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-                      {draft.photo ? (
-                        <img src={draft.photo} alt="Thumbnail" style={{ width: "38px", height: "38px", borderRadius: "6px", objectFit: "cover", flexShrink: 0, border: "1px solid var(--border-color)" }} />
+                      {draftPhotos.length > 0 ? (
+                        <div style={{ position: "relative", flexShrink: 0 }}>
+                          <img src={draftPhotos[0]} alt="Thumbnail" style={{ width: "38px", height: "38px", borderRadius: "6px", objectFit: "cover", border: "1px solid var(--border-color)" }} />
+                          {draftPhotos.length > 1 && (
+                            <span style={{
+                              position: "absolute", bottom: -2, right: -2,
+                              background: "var(--accent-emerald)", color: "#fff",
+                              fontSize: 8, fontWeight: 800, borderRadius: 8,
+                              padding: "1px 4px", lineHeight: 1.2,
+                            }}>
+                              {draftPhotos.length}
+                            </span>
+                          )}
+                        </div>
                       ) : (
                         <div style={{ width: "38px", height: "38px", borderRadius: "6px", background: "rgba(0,0,0,0.04)", border: "1px dashed var(--border-color)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                           <Camera size={14} color="var(--text-muted)" />

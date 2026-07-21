@@ -5,7 +5,7 @@ import { App as CapApp } from "@capacitor/app";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "leaflet-textpath";
-import { MapPin, Navigation, Square, Plus, CheckCircle2, Activity, Gauge, Clock, Wifi, Pause, Play, MapPinned } from "lucide-react";
+import { MapPin, Navigation, Square, Plus, CheckCircle2, Activity, Gauge, Clock, Wifi, Pause, Play, MapPinned, Camera } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -43,6 +43,10 @@ interface Props {
   autoResume?: boolean;
   /** Called when an in-progress session is cleared so App can drop pausedRoadContext. */
   onSessionCleared?: () => void;
+  /** Snap a roadside photo while the segment is recording / paused. */
+  onAddPhoto?: () => void | Promise<void>;
+  photoCount?: number;
+  maxPhotos?: number;
 }
 
 type Phase = "idle" | "tracking" | "paused" | "completed";
@@ -259,6 +263,9 @@ export function SegmentTracker({
   onCollectPointAlongRoute,
   autoResume = false,
   onSessionCleared,
+  onAddPhoto,
+  photoCount = 0,
+  maxPhotos = 12,
 }: Props) {
   const initial = readInitialSegmentState(existingGeometry);
   const [phase, setPhase] = useState<Phase>(initial.phase);
@@ -1312,6 +1319,18 @@ export function SegmentTracker({
 
         {/* Action Buttons */}
         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+          {onAddPhoto && (
+            <button
+              type="button"
+              onClick={() => { void onAddPhoto(); }}
+              disabled={photoCount >= maxPhotos}
+              className="mobile-btn mobile-btn-outline"
+              style={{ width: "100%", height: "42px", fontSize: "12px", gap: "6px" }}
+            >
+              <Camera size={14} />
+              Snap Road Photo ({photoCount}/{maxPhotos})
+            </button>
+          )}
           <div style={{ display: "flex", gap: "8px" }}>
             <button
               type="button"
@@ -1437,6 +1456,19 @@ export function SegmentTracker({
           <Play size={16} />
           Resume Line Recording
         </button>
+
+        {onAddPhoto && (
+          <button
+            type="button"
+            onClick={() => { void onAddPhoto(); }}
+            disabled={photoCount >= maxPhotos}
+            className="mobile-btn mobile-btn-outline"
+            style={{ width: "100%", height: "42px", fontSize: "12px", gap: "6px" }}
+          >
+            <Camera size={14} />
+            Snap Road Photo ({photoCount}/{maxPhotos})
+          </button>
+        )}
 
         {onCollectPointAlongRoute && (
           <button
