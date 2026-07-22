@@ -826,7 +826,7 @@ const VIEW_COLUMNS = [
 const TABLE_COMMON_COLUMNS = [
   "survey_id", "asset_category", "road_name", "section_name",
   "surveyor_name", "survey_date", "gps_point", "image_sadc_compliant",
-  "source", "created_at"
+  "photo", "source", "created_at"
 ].join(",");
 
 // Extra columns only on linear road tables

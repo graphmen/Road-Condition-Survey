@@ -203,9 +203,8 @@ export default function Dashboard() {
       type: "success",
     });
 
-    // 2) Fire go-to immediately + after overlay/layout settles (direct Leaflet + event)
+    // 2) Fire go-to immediately (direct Leaflet + event)
     fireMapGoto(focus);
-    [120, 350, 700, 1200, 2000].forEach((ms) => window.setTimeout(() => fireMapGoto(focus), ms));
   };
 
   // Clicking a nav module:

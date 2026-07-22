@@ -405,7 +405,11 @@ function parseSegmentCoords(record: any): [number, number][] | null {
           ? geojson.coordinates
           : null;
     if (!Array.isArray(coords) || coords.length < 2) return null;
-    return coords.map((c: any) => [Number(c[1]), Number(c[0])] as [number, number]);
+    const pairs = coords
+      .map((c: any) => [Number(c[1]), Number(c[0])] as [number, number])
+      .filter((c) => Number.isFinite(c[0]) && Number.isFinite(c[1]));
+    if (pairs.length < 2) return null;
+    return pairs;
   } catch {
     return null;
   }

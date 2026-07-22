@@ -1,4 +1,5 @@
 "use client";
+import React from "react";
 import { ChevronRight } from "lucide-react";
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Legend,
@@ -74,6 +75,54 @@ const formatValue = (val: any): string => {
   return s.replace(/_/g, " ").toUpperCase();
 };
 
+
+// -- Photos Section Component -------------------------------------------------
+function PhotosSection({ photos }: { photos: string[] }) {
+  const [lightbox, setLightbox] = React.useState<number | null>(null);
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+        <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.6px", color: "var(--text-muted)" }}>
+          Photos Collected
+        </span>
+        <span style={{ fontSize: 10, fontWeight: 600, background: photos.length > 0 ? "rgba(0,102,51,0.12)" : "rgba(0,0,0,0.06)", color: photos.length > 0 ? "#006633" : "var(--text-muted)", borderRadius: 20, padding: "1px 8px" }}>
+          {photos.length} photo{photos.length !== 1 ? "s" : ""}
+        </span>
+      </div>
+      {photos.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "14px 0", color: "var(--text-muted)", fontSize: 10.5, background: "rgba(0,0,0,0.025)", borderRadius: 8, border: "1px dashed rgba(0,0,0,0.1)" }}>
+          No photos captured for this asset
+        </div>
+      ) : (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: photos.length === 1 ? "1fr" : "1fr 1fr", gap: 5 }}>
+            {photos.slice(0, 6).map((src, idx) => (
+              <div key={idx} onClick={() => setLightbox(idx)} style={{ borderRadius: 7, overflow: "hidden", border: "1px solid rgba(0,102,51,0.15)", aspectRatio: "4/3", cursor: "pointer", position: "relative", boxShadow: "0 2px 6px rgba(0,0,0,0.08)" }}>
+                <img src={src} alt={`Photo ${idx + 1}`} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                {idx === 5 && photos.length > 6 && (
+                  <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 14, fontWeight: 700 }}>
+                    +{photos.length - 5} more
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          {lightbox !== null && (
+            <div onClick={() => setLightbox(null)} style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.9)", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12 }}>
+              <img src={photos[lightbox]} alt={`Photo ${lightbox + 1}`} style={{ maxWidth: "90vw", maxHeight: "80vh", objectFit: "contain", borderRadius: 8, boxShadow: "0 8px 32px rgba(0,0,0,0.5)" }} />
+              <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                <button onClick={e => { e.stopPropagation(); setLightbox(i => i !== null && i > 0 ? i - 1 : i); }} style={{ background: "rgba(255,255,255,0.15)", border: "none", borderRadius: 6, color: "#fff", padding: "6px 14px", cursor: "pointer", fontSize: 13 }}>&#8592;</button>
+                <span style={{ color: "rgba(255,255,255,0.7)", fontSize: 12 }}>{lightbox + 1} / {photos.length}</span>
+                <button onClick={e => { e.stopPropagation(); setLightbox(i => i !== null && i < photos.length - 1 ? i + 1 : i); }} style={{ background: "rgba(255,255,255,0.15)", border: "none", borderRadius: 6, color: "#fff", padding: "6px 14px", cursor: "pointer", fontSize: 13 }}>&#8594;</button>
+                <button onClick={() => setLightbox(null)} style={{ background: "rgba(220,38,38,0.8)", border: "none", borderRadius: 6, color: "#fff", padding: "6px 14px", cursor: "pointer", fontSize: 12, marginLeft: 8 }}>Close</button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
 export default function RightPanel({ records, selectedRecord, onClose }: RightPanelProps) {
   const total = records.length;
   const good  = records.filter(r => getRecordStatus(r) === "good").length;
@@ -160,20 +209,9 @@ export default function RightPanel({ records, selectedRecord, onClose }: RightPa
                 </span>
               </div>
 
-              {selectedPhotos.length > 0 && (
-                <div style={{ marginBottom: 10, display: "grid", gridTemplateColumns: selectedPhotos.length > 1 ? "1fr 1fr" : "1fr", gap: 6 }}>
-                  {selectedPhotos.slice(0, 6).map((src, idx) => (
-                    <div key={idx} style={{ borderRadius: 8, overflow: "hidden", border: "1px solid rgba(0,0,0,0.1)", maxHeight: selectedPhotos.length > 1 ? 100 : 150, width: "100%", boxShadow: "0 2px 6px rgba(0,0,0,0.06)" }}>
-                      <img src={src} alt={`Asset ${idx + 1}`} style={{ width: "100%", height: "100%", maxHeight: selectedPhotos.length > 1 ? 100 : 150, objectFit: "cover" }} />
-                    </div>
-                  ))}
-                  {selectedPhotos.length > 6 && (
-                    <div style={{ fontSize: 10, color: "var(--text-muted)", gridColumn: "1 / -1" }}>
-                      +{selectedPhotos.length - 6} more photos
-                    </div>
-                  )}
-                </div>
-              )}
+              {/* ── Photos Section ──────────────────────────────────── */}
+              <PhotosSection photos={selectedPhotos} />
+
 
               <div className="detail-rows">
                 <div className="detail-row">

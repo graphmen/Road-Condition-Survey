@@ -159,8 +159,19 @@ def normalise_record(record):
                 pass
                 
     # Standardise names
-    if not out.get("road_name") and out.get("road"):
+    # Standardise names
+    raw_road_name = (
+        out.get("paved_road_name") or
+        out.get("gravel_road_name") or
+        out.get("earth_road_name") or
+        out.get("road_name_gravel") or
+        out.get("road")
+    )
+    if raw_road_name:
+        out["road_name"] = raw_road_name
+    elif not out.get("road_name") and out.get("road"):
         out["road_name"] = out["road"]
+        
     if not out.get("section_name") and out.get("section"):
         out["section_name"] = out["section"]
     if not out.get("surveyor_name") and out.get("surveyor"):
@@ -168,21 +179,19 @@ def normalise_record(record):
     if not out.get("survey_date") and out.get("date"):
         out["survey_date"] = out["date"]
         
-    # Classify province and district if not already set and geolocation is available
-    if not out.get("province") or not out.get("district"):
-        geo = out.get("_geolocation")
-        if geo and len(geo) >= 2 and geo[0] is not None and geo[1] is not None:
+    # Classify province and district if not already set or defaulted to Harare fallback
+    geo = out.get("_geolocation")
+    if geo and len(geo) >= 2 and geo[0] is not None and geo[1] is not None:
+        if not out.get("province") or not out.get("district") or out.get("province") == "Harare":
             prov_val, dist_val = classify_province_district(geo[0], geo[1])
-            if not out.get("province"):
-                out["province"] = prov_val
-            if not out.get("district"):
-                out["district"] = dist_val
-        else:
-            # Fallback if no geolocation available
-            if not out.get("province"):
-                out["province"] = "Harare"
-            if not out.get("district"):
-                out["district"] = "Harare"
+            out["province"] = prov_val
+            out["district"] = dist_val
+    else:
+        # Fallback if no geolocation available
+        if not out.get("province"):
+            out["province"] = "Harare"
+        if not out.get("district"):
+            out["district"] = "Harare"
                 
     return out
 
@@ -233,6 +242,14 @@ def flatten_and_normalise_records(raw_submissions):
                     gps_val = iv
                     break
             
+            # Find explicit road name first
+            explicit_road_name = None
+            for ik, iv in item.items():
+                if "Road_Name" in ik or "Road_Name_001" in ik or "Road_Name_002" in ik:
+                    if iv and str(iv).strip():
+                        explicit_road_name = iv
+                        break
+            
             if gps_val:
                 flat["gps"] = gps_val
                 parts = gps_val.split()
@@ -241,19 +258,16 @@ def flatten_and_normalise_records(raw_submissions):
                         lat = float(parts[0])
                         lng = float(parts[1])
                         flat["_geolocation"] = [lat, lng]
-                        # Classify nearest highway using GPS coordinates
-                        flat["road_name"] = classify_highway(lat, lng)
+                        # Only classify highway if we don't have an explicit surveyor road name
+                        if not explicit_road_name:
+                            flat["road_name"] = classify_highway(lat, lng)
                     except ValueError:
                         pass
             
-            # Fallback road name if no coordinates or classification succeeded
-            if "road_name" not in flat:
-                for ik, iv in item.items():
-                    if "Road_Name" in ik or "Road_Name_001" in ik or "Road_Name_002" in ik:
-                        flat["road_name"] = iv
-                        break
-                if "road_name" not in flat:
-                    flat["road_name"] = "A4 Highway (Harare - Masvingo - Beitbridge)"
+            if explicit_road_name:
+                flat["road_name"] = explicit_road_name
+            elif "road_name" not in flat:
+                flat["road_name"] = "A4 Highway (Harare - Masvingo - Beitbridge)"
                     
             # Copy all fields from the repeat item, shortening key names
             for ik, iv in item.items():
