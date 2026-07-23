@@ -1,3 +1,5 @@
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 "use client";
 import { useState, useEffect, useCallback } from "react";
 import { LayoutDashboard, TrendingUp, BarChart2, ClipboardCheck, Database, Download, ArrowUpDown, Search, X, ChevronDown, ChevronUp, Camera, FileText, Trash2, Compass } from "lucide-react";
@@ -4013,6 +4015,124 @@ function GalleryPage({ records, onSelectRecord }: { records: any[]; onSelectReco
 /* ═══════════════════════════════════════════════════════════════════════════
    REPORTS PAGE (NATIONAL, PROVINCIAL & DISTRICT REPORT GENERATOR)
  ════════════════════════════════════════════════════════════════════════════ */
+
+/* ─── PDF Report Generator Helper ────────────────────────────────────────── */
+function generateWrittenPDFReport(filteredRecords: any[], reportLevel: string, province: string, district: string) {
+  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  
+  // Header Banner
+  doc.setFillColor(0, 102, 51);
+  doc.rect(0, 0, 210, 24, "F");
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(13);
+  doc.setFont("helvetica", "bold");
+  doc.text("REPUBLIC OF ZIMBABWE", 14, 10);
+  
+  doc.setFontSize(8.5);
+  doc.setFont("helvetica", "normal");
+  doc.text("MINISTRY OF TRANSPORT & INFRASTRUCTURAL DEVELOPMENT · DEPARTMENT OF ROADS", 14, 17);
+
+  // Date & Scope Badges
+  doc.setFontSize(8.5);
+  doc.text(`DATE: ${new Date().toLocaleDateString("en-GB")}`, 155, 10);
+  doc.text(`SCOPE: ${reportLevel.toUpperCase()}`, 155, 17);
+
+  // Document Title
+  doc.setTextColor(0, 102, 51);
+  doc.setFontSize(14);
+  doc.setFont("helvetica", "bold");
+  const titleText = reportLevel === "national"
+    ? "ZIMBABWE NATIONAL ROAD NETWORK INFRASTRUCTURE AUDIT REPORT"
+    : reportLevel === "provincial"
+    ? `${province.toUpperCase()} PROVINCIAL ROAD CONDITION EVALUATION REPORT`
+    : `${district.toUpperCase()} DISTRICT ROAD INFRASTRUCTURE REPORT`;
+
+  doc.text(titleText, 14, 34);
+
+  doc.setLineWidth(0.5);
+  doc.setDrawColor(217, 119, 6); // Gold accent line
+  doc.line(14, 37, 196, 37);
+
+  // Executive Summary Written Narrative
+  doc.setTextColor(30, 41, 59);
+  doc.setFontSize(10);
+  doc.setFont("helvetica", "bold");
+  doc.text("1. EXECUTIVE WRITTEN SYNTHESIS & NARRATIVE", 14, 45);
+
+  const total = filteredRecords.length;
+  const good = filteredRecords.filter(r => getRecordStatus(r) === "good").length;
+  const fair = filteredRecords.filter(r => getRecordStatus(r) === "fair").length;
+  const poor = filteredRecords.filter(r => getRecordStatus(r) === "poor").length;
+  const goodPct = total > 0 ? Math.round((good / total) * 100) : 0;
+  const poorPct = total > 0 ? Math.round((poor / total) * 100) : 0;
+  const sadcCount = filteredRecords.filter(r => getSadcValue(r) === "yes").length;
+  const sadcPct = total > 0 ? Math.round((sadcCount / total) * 100) : 0;
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+
+  const narrativeText = `This formal executive infrastructure report provides a technical evaluation of ${total} surveyed road assets within the ${reportLevel.toUpperCase()} scope (${reportLevel === "national" ? "Zimbabwe National Road Network" : province + " Province"}). Based on field survey telemetry, ${goodPct}% (${good} assets) are operating in Optimal/Good condition, while ${fair} assets are rated Fair. Critical pavement and structural defects requiring priority emergency rehabilitation comprise ${poorPct}% (${poor} assets). Visual inspection evidence compliance under SADC guidelines stands at ${sadcPct}%.`;
+
+  const splitNarrative = doc.splitTextToSize(narrativeText, 182);
+  doc.text(splitNarrative, 14, 51);
+
+  // Condition Metric Table
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.text("2. NETWORK CONDITION & COMPLIANCE SCORECARD", 14, 75);
+
+  autoTable(doc, {
+    startY: 79,
+    head: [["Metric Parameter", "Asset Count", "Share %", "Assessment Status"]],
+    body: [
+      ["Total Evaluated Assets", total.toString(), "100%", "Complete Network Audit"],
+      ["Good / Optimal Assets", good.toString(), `${goodPct}%`, "Passable & Satisfactory"],
+      ["Fair Condition Assets", fair.toString(), `${total > 0 ? Math.round((fair/total)*100) : 0}%`, "Scheduled Routine Maintenance"],
+      ["Poor / Defective Assets", poor.toString(), `${poorPct}%`, "Urgent Intervention Required"],
+      ["SADC Compliant Media Evidence", sadcCount.toString(), `${sadcPct}%`, "Standardized Compliance"],
+    ],
+    headStyles: { fillColor: [0, 102, 51], textColor: [255, 255, 255], fontStyle: "bold" },
+    styles: { fontSize: 8.5, cellPadding: 2.5 },
+    theme: "striped"
+  });
+
+  // Detailed Asset Table
+  const finalY = (doc as any).lastAutoTable.finalY + 8;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.text("3. DETAILED ASSET AUDIT REGISTER", 14, finalY);
+
+  const tableData = filteredRecords.slice(0, 50).map(r => [
+    (r.asset_category || "other").replace("_", " ").toUpperCase(),
+    getAssetName(r),
+    `${r.province || "Harare"} - ${r.district || "Central"}`,
+    formatStatusLabel(getRecordStatus(r)).toUpperCase(),
+    r.surveyor_name || "N/A",
+    r.survey_date || "N/A"
+  ]);
+
+  autoTable(doc, {
+    startY: finalY + 4,
+    head: [["Category", "Asset Name / Route", "Location", "Condition", "Surveyor", "Date"]],
+    body: tableData,
+    headStyles: { fillColor: [30, 41, 59], textColor: [255, 255, 255], fontStyle: "bold" },
+    styles: { fontSize: 7.5, cellPadding: 2 },
+    theme: "grid"
+  });
+
+  // Footer Signoff & Page Numbers
+  const pageCount = (doc as any).internal.getNumberOfPages();
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+    doc.setFontSize(8);
+    doc.setTextColor(100, 116, 139);
+    doc.text(`Roads Department · Ministry of Transport & Infrastructural Development · Page ${i} of ${pageCount}`, 14, 287);
+  }
+
+  doc.save(`Executive_Road_Condition_Report_${reportLevel}_${Date.now()}.pdf`);
+}
+
 function ReportsPage({ records, onSelectRecord }: { records: any[]; onSelectRecord?: (r: any) => void }) {
   // Report scope & filter state
   const [reportLevel, setReportLevel] = useState<"national" | "provincial" | "district">("national");
@@ -4130,6 +4250,26 @@ function ReportsPage({ records, onSelectRecord }: { records: any[]; onSelectReco
           </div>
 
           <div style={{ display: "flex", gap: 8 }}>
+            <button
+              onClick={() => generateWrittenPDFReport(filtered, reportLevel, selectedProvince, selectedDistrict)}
+              style={{
+                padding: "8px 16px",
+                borderRadius: 8,
+                border: "none",
+                background: "#006633",
+                color: "#fff",
+                fontSize: 11.5,
+                fontWeight: 700,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                boxShadow: "0 2px 6px rgba(0,102,51,0.25)"
+              }}
+            >
+              <span>📄</span> Download Written PDF Report
+            </button>
+
             <button
               onClick={handlePrint}
               style={{
