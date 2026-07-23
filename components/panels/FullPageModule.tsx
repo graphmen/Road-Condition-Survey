@@ -4884,8 +4884,8 @@ interface DocItem {
   id: string;
   title: string;
   filename: string;
-  format: "DOCX" | "PPTX" | "PDF";
-  category: "User Manuals" | "Training Guidelines" | "Contracts & Proposals" | "Equipment Specs";
+  format: "PDF" | "XLS" | "DOCX" | "PPTX";
+  category: "User Manuals" | "Training Guidelines" | "Contracts & Proposals" | "Equipment Specs" | "Technical Specifications";
   size: string;
   date: string;
   description: string;
@@ -4894,73 +4894,23 @@ interface DocItem {
 const DOCUMENT_REPOSITORY: DocItem[] = [
   {
     id: "doc-1",
-    title: "MOTID Roads Dashboard User Manual v1.0",
-    filename: "MOTID_Roads_User_Manual_v1.0.docx",
-    format: "DOCX",
+    title: "Operational Manual - Visual Road Condition & Inventory F1",
+    filename: "Operational_Manual_Visual_Road_Condition_Inventory_F1.pdf",
+    format: "PDF",
     category: "User Manuals",
-    size: "1.4 MB",
-    date: "2026-06-15",
-    description: "Official user operational manual covering dashboard navigation, asset inspection procedures, map telemetry overlays, and data sync workflows for field operations."
+    size: "865 KB",
+    date: "2026-09-30",
+    description: "Official operational field manual for visual road condition assessment, defect scoring guidelines, and asset inventory recording."
   },
   {
     id: "doc-2",
-    title: "Field Surveyors Training Programme & Guidelines",
-    filename: "MOTID_Roads_Training_Programme.docx",
-    format: "DOCX",
-    category: "Training Guidelines",
-    size: "820 KB",
-    date: "2026-06-10",
-    description: "Standardized training curriculum and field guidelines for mobile data collection, GPS accuracy protocols, and asset defect classification."
-  },
-  {
-    id: "doc-3",
-    title: "Roads Survey Technical Training Presentation v1.0",
-    filename: "MOTID_Roads_Training_Presentation_v1.0.pptx",
-    format: "PPTX",
-    category: "Training Guidelines",
-    size: "4.8 MB",
-    date: "2026-06-12",
-    description: "Executive presentation deck for training engineers and field surveyors on mobile app operations, offline database syncing, and SADC image capture compliance."
-  },
-  {
-    id: "doc-4",
-    title: "National Road Survey Contract Agreement (ZINGSA - MOTID)",
-    filename: "ZINGSA_MOTID_Road_Survey_Contract.docx",
-    format: "DOCX",
-    category: "Contracts & Proposals",
-    size: "1.1 MB",
-    date: "2026-05-20",
-    description: "Official contract agreement outlining project terms, deliverable milestones, provincial survey targets, and technical service specifications."
-  },
-  {
-    id: "doc-5",
-    title: "National Infrastructure Database Proposal",
-    filename: "ZINGSA_NationalIrrigationDB_Proposal.docx",
-    format: "DOCX",
-    category: "Contracts & Proposals",
-    size: "2.3 MB",
-    date: "2026-04-18",
-    description: "Technical proposal for expanding national infrastructure GIS telemetry, database architecture, and integration with satellite telemetry systems."
-  },
-  {
-    id: "doc-6",
-    title: "ACE Scanner Equipment Operational Manual",
-    filename: "ACE_Scanner_Operational_Manual.pdf",
-    format: "PDF",
-    category: "Equipment Specs",
-    size: "3.5 MB",
-    date: "2026-06-16",
-    description: "Operational and calibration manual for high-precision ACE LiDAR/optical pavement scanning hardware used during mobile highway road surveys."
-  },
-  {
-    id: "doc-7",
-    title: "Field Telemetry Sample Audit Report",
-    filename: "Field_Telemetry_Audit_Sample_Report.pdf",
-    format: "PDF",
-    category: "User Manuals",
-    size: "1.8 MB",
-    date: "2026-07-01",
-    description: "Sample technical audit report demonstrating field telemetry output, road condition scoring indices, and spatial location summaries."
+    title: "Data Dictionary for ZimRoads v11",
+    filename: "Data_Dictionary_for_ZimRoads_v11.xls",
+    format: "XLS",
+    category: "Technical Specifications",
+    size: "124 KB",
+    date: "2026-09-30",
+    description: "Official data dictionary specification defining attribute schemas, asset field parameters, condition codes, and database validation structures for ZimRoads."
   }
 ];
 
@@ -5049,6 +4999,7 @@ function DocumentsPage() {
             <option value="Training Guidelines">🎓 Training Guidelines</option>
             <option value="Contracts & Proposals">📝 Contracts &amp; Proposals</option>
             <option value="Equipment Specs">🔬 Equipment Specs</option>
+            <option value="Technical Specifications">⚙️ Technical Specifications</option>
           </select>
 
           {/* Format Filter */}
