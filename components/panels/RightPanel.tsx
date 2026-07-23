@@ -68,7 +68,7 @@ const formatKey = (key: string): string => {
 };
 
 const formatValue = (val: any): string => {
-  if (val === null || val === undefined) return "—";
+  if (val === null || val === undefined) return "â€”";
   if (typeof val === "boolean") return val ? "YES" : "NO";
   const s = String(val);
   if (s.toLowerCase() === "yes" || s.toLowerCase() === "no") return s.toUpperCase();
@@ -149,7 +149,34 @@ export default function RightPanel({ records, selectedRecord, onClose }: RightPa
   const sadcMixed    = records.filter(r => getSadcValue(r) === "mixed").length;
 
   const topPoor = records.filter(r => getRecordStatus(r) === "poor").slice(0, 5);
-  const selectedPhotos = selectedRecord ? normalizePhotos(selectedRecord) : [];
+  const [fetchedPhotos, setFetchedPhotos] = React.useState<string[]>([]);
+  const [loadingPhotos, setLoadingPhotos] = React.useState<boolean>(false);
+
+  const initialPhotos = selectedRecord ? normalizePhotos(selectedRecord) : [];
+  const selectedPhotos = initialPhotos.length > 0 ? initialPhotos : fetchedPhotos;
+
+  React.useEffect(() => {
+    setFetchedPhotos([]);
+    if (!selectedRecord) return;
+    const initial = normalizePhotos(selectedRecord);
+    if (initial.length > 0) return;
+
+    const id = selectedRecord.id || selectedRecord._id || selectedRecord.survey_id;
+    if (!id) return;
+
+    setLoadingPhotos(true);
+    fetch(`/api/roads?photoFor=${encodeURIComponent(id)}`)
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data.photos) && data.photos.length > 0) {
+          setFetchedPhotos(data.photos);
+        } else if (data.photo) {
+          setFetchedPhotos([data.photo]);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoadingPhotos(false));
+  }, [selectedRecord]);
   const selectedStatus = selectedRecord ? getRecordStatus(selectedRecord) : "good";
 
   const dynamicRows = selectedRecord
@@ -194,7 +221,7 @@ export default function RightPanel({ records, selectedRecord, onClose }: RightPa
 
       <div className="right-panel-body">
 
-        {/* ── Asset Inspector ──────────────────────────────────────────── */}
+        {/* â”€â”€ Asset Inspector â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
         {selectedRecord ? (
           <div>
             <div className="section-label">Asset Inspector</div>
@@ -209,18 +236,18 @@ export default function RightPanel({ records, selectedRecord, onClose }: RightPa
                 </span>
               </div>
 
-              {/* ── Photos Section ──────────────────────────────────── */}
+              {/* â”€â”€ Photos Section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
               <PhotosSection photos={selectedPhotos} />
 
 
               <div className="detail-rows">
                 <div className="detail-row">
                   <span className="detail-row-label">Road Route</span>
-                  <span className="detail-row-val">{(selectedRecord.road_name ?? "—").split(" (")[0]}</span>
+                  <span className="detail-row-val">{(selectedRecord.road_name ?? "â€”").split(" (")[0]}</span>
                 </div>
                 <div className="detail-row">
                   <span className="detail-row-label">Section</span>
-                  <span className="detail-row-val">{selectedRecord.section_name ?? "—"}</span>
+                  <span className="detail-row-val">{selectedRecord.section_name ?? "â€”"}</span>
                 </div>
                 {selectedRecord.province && (
                   <div className="detail-row">
@@ -236,11 +263,11 @@ export default function RightPanel({ records, selectedRecord, onClose }: RightPa
                 )}
                 <div className="detail-row">
                   <span className="detail-row-label">Surveyor</span>
-                  <span className="detail-row-val">{selectedRecord.surveyor_name ?? "—"}</span>
+                  <span className="detail-row-val">{selectedRecord.surveyor_name ?? "â€”"}</span>
                 </div>
                 <div className="detail-row">
                   <span className="detail-row-label">Date</span>
-                  <span className="detail-row-val">{selectedRecord.survey_date ?? "—"}</span>
+                  <span className="detail-row-val">{selectedRecord.survey_date ?? "â€”"}</span>
                 </div>
 
                 {/* Coordinates */}
@@ -257,7 +284,7 @@ export default function RightPanel({ records, selectedRecord, onClose }: RightPa
                 {(selectedRecord.image_SADC_compliant || selectedRecord.image_sadc_compliant || selectedRecord.sadc_compliant || selectedRecord.sign_sadc_compliant) && (
                   <div className="detail-row">
                     <span className="detail-row-label">SADC Compliant</span>
-                    <span className="detail-row-val">{(getSadcValue(selectedRecord) || "—").toUpperCase()}</span>
+                    <span className="detail-row-val">{(getSadcValue(selectedRecord) || "â€”").toUpperCase()}</span>
                   </div>
                 )}
 
@@ -284,7 +311,7 @@ export default function RightPanel({ records, selectedRecord, onClose }: RightPa
           </div>
         )}
 
-        {/* ── Condition Donut ──────────────────────────────────────────── */}
+        {/* â”€â”€ Condition Donut â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
         <div>
           <div className="section-label">Condition Distribution</div>
           <div className="analytics-card" style={{ marginTop: 8 }}>
@@ -312,7 +339,7 @@ export default function RightPanel({ records, selectedRecord, onClose }: RightPa
           </div>
         </div>
 
-        {/* ── Highway Breakdown ────────────────────────────────────────── */}
+        {/* â”€â”€ Highway Breakdown â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
         {hwData.length > 0 && (
           <div>
             <div className="section-label">Highway Asset Count</div>
@@ -331,7 +358,7 @@ export default function RightPanel({ records, selectedRecord, onClose }: RightPa
           </div>
         )}
 
-        {/* ── SADC Compliance ──────────────────────────────────────────── */}
+        {/* â”€â”€ SADC Compliance â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
         <div>
           <div className="section-label">SADC Sign Compliance</div>
           <div className="analytics-card" style={{ marginTop: 8 }}>
@@ -346,16 +373,16 @@ export default function RightPanel({ records, selectedRecord, onClose }: RightPa
           </div>
         </div>
 
-        {/* ── Top Poor Assets ──────────────────────────────────────────── */}
+        {/* â”€â”€ Top Poor Assets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
         {topPoor.length > 0 && (
           <div>
-            <div className="section-label">⚠ Poor Condition Assets</div>
+            <div className="section-label">âš  Poor Condition Assets</div>
             <div className="analytics-card" style={{ marginTop: 8, padding: "8px 10px" }}>
               {topPoor.map((r, i) => (
                 <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: i < topPoor.length - 1 ? "1px solid var(--border)" : "none", fontSize: 11 }}>
                   <div>
                     <div style={{ fontWeight: 600, color: "var(--text-primary)" }}>{getAssetName(r)}</div>
-                    <div style={{ fontSize: 9.5, color: "var(--text-muted)" }}>{(r.road_name ?? "—").split(" (")[0]}</div>
+                    <div style={{ fontSize: 9.5, color: "var(--text-muted)" }}>{(r.road_name ?? "â€”").split(" (")[0]}</div>
                   </div>
                   <ChevronRight size={13} color="var(--text-muted)" />
                 </div>
@@ -364,7 +391,7 @@ export default function RightPanel({ records, selectedRecord, onClose }: RightPa
           </div>
         )}
 
-        {/* ── System Actions ───────────────────────────────────────────── */}
+        {/* â”€â”€ System Actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
         <div>
           <div className="section-label">System Actions</div>
           <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 7 }}>
