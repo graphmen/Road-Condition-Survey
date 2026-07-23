@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { Search, Download, Map, TrendingUp, BarChart2, ClipboardCheck, Database, Camera, FileText, LayoutDashboard, Smartphone, ExternalLink } from "lucide-react";
+import { Search, Download, Map, TrendingUp, BarChart2, ClipboardCheck, Database, Camera, FileText, BookOpen, LayoutDashboard, Smartphone, ExternalLink } from "lucide-react";
 import {
   getAssetType, getAssetName, getRecordStatus, getCategoryKey, formatStatusLabel, getSadcValue, getStatusColor,
   formatGpsLabel,
@@ -377,6 +377,7 @@ export default function InnerPanel({ module, records, selectedRecord, onSelectRe
       database:  { icon: <Database size={15} className="inner-panel-title-icon" />, label: "Database Explorer" },
       gallery:   { icon: <Camera size={15} className="inner-panel-title-icon" />, label: "Photo Gallery" },
       reports:   { icon: <FileText size={15} className="inner-panel-title-icon" />, label: "Reports Generator" },
+      documents: { icon: <BookOpen size={15} className="inner-panel-title-icon" />, label: "Manuals & Documents" },
       export:    { icon: <Download size={15} className="inner-panel-title-icon" />, label: "Export Data" },
       settings:  { icon: null, label: "Settings" },
     };

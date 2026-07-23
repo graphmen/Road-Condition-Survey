@@ -3,7 +3,7 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
 import { useState, useEffect, useCallback } from "react";
-import { LayoutDashboard, TrendingUp, BarChart2, ClipboardCheck, Database, Download, ArrowUpDown, Search, X, ChevronDown, ChevronUp, Camera, FileText, Trash2, Compass } from "lucide-react";
+import { LayoutDashboard, TrendingUp, BarChart2, ClipboardCheck, Database, Download, ArrowUpDown, Search, X, ChevronDown, ChevronUp, Camera, FileText, BookOpen, Trash2, Compass } from "lucide-react";
 
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Legend, Tooltip as ChartTooltip,
@@ -3527,6 +3527,7 @@ const MODULE_TITLES: Partial<Record<NavModule, string>> = {
   database:  "Database Explorer",
   gallery:   "Photo Gallery",
   reports:   "Executive Reports Platform",
+  documents: "Manuals & Guidelines Library",
   export:    "Export Data",
 };
 
@@ -3538,6 +3539,7 @@ const MODULE_ICONS: Partial<Record<NavModule, React.ReactNode>> = {
   database:  <Database size={16} />,
   gallery:   <Camera size={16} />,
   reports:   <FileText size={16} />,
+  documents: <BookOpen size={16} />,
   export:    <Download size={16} />,
 };
 
@@ -3581,6 +3583,7 @@ export default function FullPageModule({ module, records, onSelectRecord, onClos
         {module === "database"  && <DatabasePage  records={records} onSelectRecord={onSelectRecord} onRefresh={onRefresh} onToast={onToast} />}
         {module === "gallery"   && <GalleryPage   records={records} onSelectRecord={onSelectRecord} />}
         {module === "reports"   && <ReportsPage   records={records} onSelectRecord={onSelectRecord} />}
+        {module === "documents" && <DocumentsPage />}
         {module === "export"    && <ExportPage    records={records} onSelectRecord={onSelectRecord} />}
       </div>
     </div>
@@ -4867,6 +4870,398 @@ function ReportsPage({ records, onSelectRecord }: { records: any[]; onSelectReco
         </div>
 
       </div>
+
+    </div>
+  );
+}
+
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   DOCUMENTS PAGE (MANUALS, GUIDELINES & TECHNICAL DOCUMENTATION LIBRARY)
+ ════════════════════════════════════════════════════════════════════════════ */
+interface DocItem {
+  id: string;
+  title: string;
+  filename: string;
+  format: "DOCX" | "PPTX" | "PDF";
+  category: "User Manuals" | "Training Guidelines" | "Contracts & Proposals" | "Equipment Specs";
+  size: string;
+  date: string;
+  description: string;
+}
+
+const DOCUMENT_REPOSITORY: DocItem[] = [
+  {
+    id: "doc-1",
+    title: "MOTID Roads Dashboard User Manual v1.0",
+    filename: "MOTID_Roads_User_Manual_v1.0.docx",
+    format: "DOCX",
+    category: "User Manuals",
+    size: "1.4 MB",
+    date: "2026-06-15",
+    description: "Official user operational manual covering dashboard navigation, asset inspection procedures, map telemetry overlays, and data sync workflows for field operations."
+  },
+  {
+    id: "doc-2",
+    title: "Field Surveyors Training Programme & Guidelines",
+    filename: "MOTID_Roads_Training_Programme.docx",
+    format: "DOCX",
+    category: "Training Guidelines",
+    size: "820 KB",
+    date: "2026-06-10",
+    description: "Standardized training curriculum and field guidelines for mobile data collection, GPS accuracy protocols, and asset defect classification."
+  },
+  {
+    id: "doc-3",
+    title: "Roads Survey Technical Training Presentation v1.0",
+    filename: "MOTID_Roads_Training_Presentation_v1.0.pptx",
+    format: "PPTX",
+    category: "Training Guidelines",
+    size: "4.8 MB",
+    date: "2026-06-12",
+    description: "Executive presentation deck for training engineers and field surveyors on mobile app operations, offline database syncing, and SADC image capture compliance."
+  },
+  {
+    id: "doc-4",
+    title: "National Road Survey Contract Agreement (ZINGSA - MOTID)",
+    filename: "ZINGSA_MOTID_Road_Survey_Contract.docx",
+    format: "DOCX",
+    category: "Contracts & Proposals",
+    size: "1.1 MB",
+    date: "2026-05-20",
+    description: "Official contract agreement outlining project terms, deliverable milestones, provincial survey targets, and technical service specifications."
+  },
+  {
+    id: "doc-5",
+    title: "National Infrastructure Database Proposal",
+    filename: "ZINGSA_NationalIrrigationDB_Proposal.docx",
+    format: "DOCX",
+    category: "Contracts & Proposals",
+    size: "2.3 MB",
+    date: "2026-04-18",
+    description: "Technical proposal for expanding national infrastructure GIS telemetry, database architecture, and integration with satellite telemetry systems."
+  },
+  {
+    id: "doc-6",
+    title: "ACE Scanner Equipment Operational Manual",
+    filename: "ACE_Scanner_Operational_Manual.pdf",
+    format: "PDF",
+    category: "Equipment Specs",
+    size: "3.5 MB",
+    date: "2026-06-16",
+    description: "Operational and calibration manual for high-precision ACE LiDAR/optical pavement scanning hardware used during mobile highway road surveys."
+  },
+  {
+    id: "doc-7",
+    title: "Field Telemetry Sample Audit Report",
+    filename: "Field_Telemetry_Audit_Sample_Report.pdf",
+    format: "PDF",
+    category: "User Manuals",
+    size: "1.8 MB",
+    date: "2026-07-01",
+    description: "Sample technical audit report demonstrating field telemetry output, road condition scoring indices, and spatial location summaries."
+  }
+];
+
+function DocumentsPage() {
+  const [search, setSearch] = useState("");
+  const [catFilter, setCatFilter] = useState("all");
+  const [formatFilter, setFormatFilter] = useState("all");
+  const [previewDoc, setPreviewDoc] = useState<DocItem | null>(null);
+
+  const filtered = DOCUMENT_REPOSITORY.filter(d => {
+    if (catFilter !== "all" && d.category !== catFilter) return false;
+    if (formatFilter !== "all" && d.format !== formatFilter) return false;
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      if (!d.title.toLowerCase().includes(q) && !d.description.toLowerCase().includes(q) && !d.filename.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  const getFormatBadgeStyle = (fmt: string) => {
+    if (fmt === "PDF") return { bg: "rgba(220,38,38,0.1)", color: "#dc2626", border: "1px solid rgba(220,38,38,0.2)" };
+    if (fmt === "DOCX") return { bg: "rgba(37,99,235,0.1)", color: "#2563eb", border: "1px solid rgba(37,99,235,0.2)" };
+    if (fmt === "PPTX") return { bg: "rgba(217,119,6,0.1)", color: "#d97706", border: "1px solid rgba(217,119,6,0.2)" };
+    return { bg: "rgba(0,0,0,0.06)", color: "var(--text-secondary)", border: "1px solid var(--border)" };
+  };
+
+  return (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--bg-app)", overflow: "hidden" }}>
+      
+      {/* Header Controls */}
+      <div style={{ background: "#fff", borderBottom: "1px solid var(--border)", padding: "14px 24px", flexShrink: 0, display: "flex", flexDirection: "column", gap: 12 }}>
+        
+        {/* Title & Stats */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+          <div>
+            <h2 style={{ fontSize: 16, fontWeight: 800, color: "var(--text-primary)", margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
+              <span>📚</span> Ministry Manuals, Guidelines &amp; Policy Document Library
+            </h2>
+            <p style={{ fontSize: 11, color: "var(--text-secondary)", margin: "2px 0 0 0" }}>
+              Official technical manuals, training curricula, equipment specifications, and project contract documentation
+            </p>
+          </div>
+
+          <div style={{ display: "flex", gap: 10 }}>
+            <div style={{ background: "rgba(0,102,51,0.08)", border: "1px solid rgba(0,102,51,0.15)", borderRadius: 8, padding: "6px 14px", textAlign: "center" }}>
+              <div style={{ fontSize: 14, fontWeight: 800, color: "#006633" }}>{DOCUMENT_REPOSITORY.length}</div>
+              <div style={{ fontSize: 9.5, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase" }}>Total Documents</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Filter Controls Row */}
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          
+          {/* Search */}
+          <div style={{ position: "relative", flex: "1 1 240px", minWidth: 220 }}>
+            <input
+              type="text"
+              placeholder="Search by title, keyword, description..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              style={{
+                width: "100%",
+                padding: "7px 12px 7px 32px",
+                borderRadius: 8,
+                border: "1px solid var(--border)",
+                fontSize: 11.5,
+                background: "var(--bg-app)",
+                outline: "none"
+              }}
+            />
+            <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", fontSize: 12, opacity: 0.5 }}>🔍</span>
+            {search && (
+              <button onClick={() => setSearch("")} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", border: "none", background: "none", cursor: "pointer", fontSize: 12, color: "var(--text-muted)" }}>✕</button>
+            )}
+          </div>
+
+          {/* Category Filter */}
+          <select
+            value={catFilter}
+            onChange={e => setCatFilter(e.target.value)}
+            style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 11.5, background: "#fff", fontWeight: 600, color: "var(--text-primary)", outline: "none" }}
+          >
+            <option value="all">All Document Categories</option>
+            <option value="User Manuals">📖 User Manuals</option>
+            <option value="Training Guidelines">🎓 Training Guidelines</option>
+            <option value="Contracts & Proposals">📝 Contracts &amp; Proposals</option>
+            <option value="Equipment Specs">🔬 Equipment Specs</option>
+          </select>
+
+          {/* Format Filter */}
+          <select
+            value={formatFilter}
+            onChange={e => setFormatFilter(e.target.value)}
+            style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 11.5, background: "#fff", fontWeight: 600, color: "var(--text-primary)", outline: "none" }}
+          >
+            <option value="all">All File Formats</option>
+            <option value="DOCX">📄 DOCX Word Documents</option>
+            <option value="PDF">📕 PDF Documents</option>
+            <option value="PPTX">📊 PPTX Presentations</option>
+          </select>
+
+          {(catFilter !== "all" || formatFilter !== "all" || search) && (
+            <button
+              onClick={() => { setCatFilter("all"); setFormatFilter("all"); setSearch(""); }}
+              style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "#fff", fontSize: 11.5, fontWeight: 700, color: "#dc2626", cursor: "pointer" }}
+            >
+              Reset Filters
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Document Grid Workspace */}
+      <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
+        {filtered.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "60px 20px", color: "var(--text-muted)" }}>
+            <BookOpen size={48} style={{ opacity: 0.2, marginBottom: 12 }} />
+            <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text-primary)" }}>No documents found</div>
+            <div style={{ fontSize: 12, marginTop: 4 }}>Try adjusting your search terms or filters above</div>
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 18 }}>
+            {filtered.map(d => {
+              const fmtStyle = getFormatBadgeStyle(d.format);
+              return (
+                <div
+                  key={d.id}
+                  style={{
+                    background: "#fff",
+                    borderRadius: 12,
+                    border: "1px solid var(--border)",
+                    padding: 18,
+                    display: "flex",
+                    flexDirection: "column",
+                    justifyContent: "space-between",
+                    boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
+                    transition: "transform 0.2s, box-shadow 0.2s"
+                  }}
+                  onMouseOver={e => {
+                    e.currentTarget.style.transform = "translateY(-3px)";
+                    e.currentTarget.style.boxShadow = "0 8px 20px rgba(0,0,0,0.08)";
+                  }}
+                  onMouseOut={e => {
+                    e.currentTarget.style.transform = "translateY(0)";
+                    e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.04)";
+                  }}
+                >
+                  <div>
+                    {/* Format Badge & Category Header */}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                      <span style={{ background: fmtStyle.bg, color: fmtStyle.color, border: fmtStyle.border, fontSize: 10, fontWeight: 800, padding: "2px 8px", borderRadius: 6, letterSpacing: "0.5px" }}>
+                        {d.format}
+                      </span>
+                      <span style={{ background: "rgba(0,0,0,0.04)", color: "var(--text-secondary)", fontSize: 9.5, fontWeight: 700, padding: "2px 8px", borderRadius: 12 }}>
+                        {d.category}
+                      </span>
+                    </div>
+
+                    {/* Title */}
+                    <h3 style={{ fontSize: 14, fontWeight: 800, color: "var(--text-primary)", margin: "0 0 8px 0", lineHeight: 1.35 }}>
+                      {d.title}
+                    </h3>
+
+                    {/* Description */}
+                    <p style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.45, margin: "0 0 14px 0" }}>
+                      {d.description}
+                    </p>
+                  </div>
+
+                  <div>
+                    {/* Metadata Line */}
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-muted)", background: "var(--bg-app)", padding: "6px 10px", borderRadius: 6, marginBottom: 12 }}>
+                      <span><strong>Size:</strong> {d.size}</span>
+                      <span><strong>Date:</strong> {d.date}</span>
+                    </div>
+
+                    {/* Actions */}
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <a
+                        href={`/documents/${d.filename}`}
+                        download={d.filename}
+                        style={{
+                          flex: 1,
+                          padding: "8px 12px",
+                          borderRadius: 8,
+                          border: "none",
+                          background: "#006633",
+                          color: "#fff",
+                          fontSize: 11,
+                          fontWeight: 700,
+                          cursor: "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: 6,
+                          textDecoration: "none"
+                        }}
+                      >
+                        <span>📥</span> Download File
+                      </a>
+                      <button
+                        onClick={() => setPreviewDoc(d)}
+                        style={{
+                          padding: "8px 12px",
+                          borderRadius: 8,
+                          border: "1px solid var(--border)",
+                          background: "#fff",
+                          color: "var(--text-primary)",
+                          fontSize: 11,
+                          fontWeight: 700,
+                          cursor: "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 4
+                        }}
+                      >
+                        <span>👁️</span> Details
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Document Details Modal */}
+      {previewDoc && (
+        <div
+          onClick={() => setPreviewDoc(null)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 9999,
+            background: "rgba(0,0,0,0.6)",
+            backdropFilter: "blur(4px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 24
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: "#fff",
+              borderRadius: 14,
+              maxWidth: 550,
+              width: "100%",
+              padding: 24,
+              boxShadow: "0 20px 50px rgba(0,0,0,0.3)"
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+              <div>
+                <span style={{ background: "rgba(0,102,51,0.1)", color: "#006633", fontSize: 10, fontWeight: 800, padding: "3px 8px", borderRadius: 6, textTransform: "uppercase" }}>
+                  {previewDoc.category}
+                </span>
+                <h2 style={{ fontSize: 16, fontWeight: 800, color: "var(--text-primary)", margin: "8px 0 0 0" }}>
+                  {previewDoc.title}
+                </h2>
+              </div>
+              <button
+                onClick={() => setPreviewDoc(null)}
+                style={{ border: "none", background: "rgba(0,0,0,0.05)", borderRadius: "50%", width: 30, height: 30, cursor: "pointer", fontSize: 14, color: "var(--text-secondary)" }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <p style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.5, marginBottom: 18 }}>
+              {previewDoc.description}
+            </p>
+
+            <div style={{ background: "var(--bg-app)", padding: 12, borderRadius: 8, fontSize: 11, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 20 }}>
+              <div><strong>Filename:</strong> {previewDoc.filename}</div>
+              <div><strong>Format:</strong> {previewDoc.format}</div>
+              <div><strong>File Size:</strong> {previewDoc.size}</div>
+              <div><strong>Date Uploaded:</strong> {previewDoc.date}</div>
+            </div>
+
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button
+                onClick={() => setPreviewDoc(null)}
+                style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid var(--border)", background: "#fff", fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}
+              >
+                Close
+              </button>
+              <a
+                href={`/documents/${previewDoc.filename}`}
+                download={previewDoc.filename}
+                style={{ padding: "8px 18px", borderRadius: 8, border: "none", background: "#006633", color: "#fff", fontSize: 11.5, fontWeight: 700, cursor: "pointer", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 6 }}
+              >
+                <span>📥</span> Download Document
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
