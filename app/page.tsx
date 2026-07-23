@@ -29,7 +29,7 @@ const MapView = dynamic(() => import("@/components/MapView"), {
 });
 
 // These modules open as a full-page overlay over the map
-const FULLPAGE_MODULES: NavModule[] = ["dashboard", "highways", "analytics", "survey", "database", "gallery", "export"];
+const FULLPAGE_MODULES: NavModule[] = ["dashboard", "highways", "analytics", "survey", "database", "gallery", "reports", "export"];
 
 export default function Dashboard() {
   const [records, setRecords]       = useState<any[]>([]);
