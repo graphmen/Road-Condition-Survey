@@ -18,7 +18,6 @@ const NAV_ITEMS: { id: NavModule; icon: React.ReactNode; label: string }[] = [
   { id: "survey",     icon: <ClipboardCheck size={18} />,  label: "Survey" },
   { id: "database",   icon: <Database size={18} />,        label: "Database" },
   { id: "gallery",    icon: <Camera size={18} />,          label: "Gallery" },
-  { id: "gallery",    icon: <Camera size={18} />,          label: "Gallery" },
   { id: "export",     icon: <Download size={18} />,        label: "Export" },
 ];
 
