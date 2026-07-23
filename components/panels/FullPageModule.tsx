@@ -1,6 +1,7 @@
+"use client";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-"use client";
+
 import { useState, useEffect, useCallback } from "react";
 import { LayoutDashboard, TrendingUp, BarChart2, ClipboardCheck, Database, Download, ArrowUpDown, Search, X, ChevronDown, ChevronUp, Camera, FileText, Trash2, Compass } from "lucide-react";
 
