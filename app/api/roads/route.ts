@@ -922,7 +922,8 @@ async function fetchAllCategoryTables(signal: AbortSignal): Promise<any[]> {
 function rowToRecord(row: any, cat: string): any {
   const cond = row.road_condition || "good";
   const raw = row.raw_data && typeof row.raw_data === "object" ? row.raw_data : null;
-  const photosFromRaw = raw && Array.isArray(raw.photos) ? raw.photos.filter((p: unknown) => typeof p === "string") : [];
+  const rowPhotos = Array.isArray(row.photos) ? row.photos.filter((p: unknown) => typeof p === "string" && p.length > 0) : [];
+  const photosFromRaw = rowPhotos.length > 0 ? rowPhotos : (raw && Array.isArray(raw.photos) ? raw.photos.filter((p: unknown) => typeof p === "string") : []);
   const photo =
     row.photo ||
     photosFromRaw[0] ||
@@ -940,6 +941,7 @@ function rowToRecord(row: any, cat: string): any {
     gps:            row.gps_point,
     photo,
     photos:         photosFromRaw.length > 0 ? photosFromRaw : (photo ? [photo] : undefined),
+    _allPhotos:     photosFromRaw,
     image_sadc_compliant: row.image_sadc_compliant || raw?.image_SADC_compliant || raw?.image_sadc_compliant || undefined,
     image_SADC_compliant: row.image_sadc_compliant || raw?.image_SADC_compliant || raw?.image_sadc_compliant || undefined,
     raw_data:       raw || undefined,
