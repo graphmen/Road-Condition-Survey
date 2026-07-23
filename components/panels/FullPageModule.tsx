@@ -3522,6 +3522,7 @@ const MODULE_TITLES: Partial<Record<NavModule, string>> = {
   analytics: "Analytics Workspace",
   survey:    "Survey Records",
   database:  "Database Explorer",
+  gallery:   "Photo Gallery",
   export:    "Export Data",
 };
 
@@ -3531,6 +3532,7 @@ const MODULE_ICONS: Partial<Record<NavModule, React.ReactNode>> = {
   analytics: <BarChart2 size={16} />,
   survey:    <ClipboardCheck size={16} />,
   database:  <Database size={16} />,
+  gallery:   <Camera size={16} />,
   export:    <Download size={16} />,
 };
 
@@ -3572,8 +3574,434 @@ export default function FullPageModule({ module, records, onSelectRecord, onClos
         {module === "analytics" && <AnalyticsPage records={records} />}
         {module === "survey"    && <SurveyPage    records={records} onSelectRecord={onSelectRecord} />}
         {module === "database"  && <DatabasePage  records={records} onSelectRecord={onSelectRecord} onRefresh={onRefresh} onToast={onToast} />}
+        {module === "gallery"   && <GalleryPage   records={records} onSelectRecord={onSelectRecord} />}
         {module === "export"    && <ExportPage    records={records} onSelectRecord={onSelectRecord} />}
       </div>
     </div>
   );
 }
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   GALLERY PAGE (NATIONAL PHOTO GALLERY)
+ ════════════════════════════════════════════════════════════════════════════ */
+function GalleryCard({ record, onSelectRecord, onOpenLightbox }: { record: any; onSelectRecord: (r: any) => void; onOpenLightbox: (record: any, photos: string[]) => void }) {
+  const [photos, setPhotos] = useState<string[]>(() => normalizePhotos(record));
+  const [loading, setLoading] = useState<boolean>(false);
+
+  useEffect(() => {
+    const init = normalizePhotos(record);
+    if (init.length > 0) {
+      setPhotos(init);
+      return;
+    }
+    const id = record.id || record._id || record.survey_id;
+    if (!id) return;
+
+    setLoading(true);
+    fetch(`/api/roads?photoFor=${encodeURIComponent(id)}`)
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data.photos) && data.photos.length > 0) {
+          setPhotos(data.photos);
+        } else if (data.photo) {
+          setPhotos([data.photo]);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [record]);
+
+  const cat = record.asset_category || "unknown";
+  const name = getAssetName(record);
+  const status = getRecordStatus(record);
+  const statusColor = getStatusColor(status);
+  const sadc = getSadcValue(record);
+
+  const mainPhoto = photos[0];
+
+  return (
+    <div style={{
+      background: "#fff",
+      borderRadius: 12,
+      border: "1px solid var(--border)",
+      overflow: "hidden",
+      display: "flex",
+      flexDirection: "column",
+      boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
+      transition: "transform 0.2s, box-shadow 0.2s",
+    }}
+    onMouseOver={e => {
+      e.currentTarget.style.transform = "translateY(-3px)";
+      e.currentTarget.style.boxShadow = "0 8px 20px rgba(0,0,0,0.1)";
+    }}
+    onMouseOut={e => {
+      e.currentTarget.style.transform = "translateY(0)";
+      e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.04)";
+    }}>
+      {/* Image Container */}
+      <div 
+        onClick={() => photos.length > 0 && onOpenLightbox(record, photos)}
+        style={{
+          position: "relative",
+          height: 180,
+          background: "rgba(0,0,0,0.04)",
+          cursor: photos.length > 0 ? "pointer" : "default",
+          overflow: "hidden"
+        }}
+      >
+        {mainPhoto ? (
+          <img 
+            src={mainPhoto} 
+            alt={name} 
+            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} 
+          />
+        ) : loading ? (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--text-muted)", fontSize: 11, gap: 8 }}>
+            <div style={{ width: 18, height: 18, border: "2px solid rgba(0,102,51,0.2)", borderTop: "2px solid #006633", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+            Loading photo…
+          </div>
+        ) : (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--text-muted)", fontSize: 11, flexDirection: "column", gap: 4 }}>
+            <Camera size={24} style={{ opacity: 0.3 }} />
+            <span>No Image Available</span>
+          </div>
+        )}
+
+        {/* Top Overlay Badges */}
+        <div style={{ position: "absolute", top: 10, left: 10, right: 10, display: "flex", justifyContent: "space-between", pointerEvents: "none" }}>
+          <span style={{ background: "rgba(0,0,0,0.65)", backdropFilter: "blur(4px)", color: "#fff", fontSize: 9.5, fontWeight: 700, padding: "3px 8px", borderRadius: 20, textTransform: "uppercase", letterSpacing: "0.5px" }}>
+            {cat.replace("_", " ")}
+          </span>
+          <span style={{ background: statusColor, color: "#fff", fontSize: 9.5, fontWeight: 700, padding: "3px 8px", borderRadius: 20, textTransform: "uppercase" }}>
+            {formatStatusLabel(status)}
+          </span>
+        </div>
+
+        {/* Bottom Overlay Badges */}
+        <div style={{ position: "absolute", bottom: 10, left: 10, right: 10, display: "flex", justifyContent: "space-between", alignItems: "center", pointerEvents: "none" }}>
+          {sadc === "yes" ? (
+            <span style={{ background: "rgba(0,102,51,0.85)", backdropFilter: "blur(4px)", color: "#fff", fontSize: 9, fontWeight: 700, padding: "2px 7px", borderRadius: 12, display: "flex", alignItems: "center", gap: 3 }}>
+              ✓ SADC Compliant
+            </span>
+          ) : <span />}
+
+          {photos.length > 0 && (
+            <span style={{ background: "rgba(0,0,0,0.75)", backdropFilter: "blur(4px)", color: "#fff", fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 12, display: "flex", alignItems: "center", gap: 4 }}>
+              📷 {photos.length} {photos.length === 1 ? "Photo" : "Photos"}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Card Content */}
+      <div style={{ padding: "12px 14px", flex: 1, display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 13, color: "var(--text-primary)", marginBottom: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={name}>
+            {name}
+          </div>
+          <div style={{ fontSize: 10.5, color: "var(--text-secondary)", marginBottom: 8, display: "flex", alignItems: "center", gap: 4 }}>
+            <span>📍</span>
+            <span>{record.province || "Harare"} · {record.district || "District"}</span>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, fontSize: 9.5, color: "var(--text-muted)", background: "rgba(0,0,0,0.02)", padding: "6px 8px", borderRadius: 6, marginBottom: 10 }}>
+            <div><strong style={{ color: "var(--text-secondary)" }}>Surveyor:</strong> {record.surveyor_name || "N/A"}</div>
+            <div><strong style={{ color: "var(--text-secondary)" }}>Date:</strong> {record.survey_date || "N/A"}</div>
+          </div>
+        </div>
+
+        {/* Action Buttons */}
+        <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+          <button
+            onClick={() => photos.length > 0 ? onOpenLightbox(record, photos) : null}
+            disabled={photos.length === 0}
+            style={{
+              flex: 1,
+              padding: "6px 10px",
+              borderRadius: 6,
+              border: "1px solid var(--border)",
+              background: photos.length > 0 ? "rgba(0,102,51,0.08)" : "#f3f4f6",
+              color: photos.length > 0 ? "#006633" : "#9ca3af",
+              fontSize: 10.5,
+              fontWeight: 700,
+              cursor: photos.length > 0 ? "pointer" : "default",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 4
+            }}
+          >
+            <span>🔍</span> View Photos ({photos.length})
+          </button>
+          <button
+            onClick={() => onSelectRecord(record)}
+            style={{
+              padding: "6px 10px",
+              borderRadius: 6,
+              border: "none",
+              background: "#006633",
+              color: "#fff",
+              fontSize: 10.5,
+              fontWeight: 700,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 4
+            }}
+            title="Inspect asset on map"
+          >
+            <span>📍</span> Map View
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GalleryPage({ records, onSelectRecord }: { records: any[]; onSelectRecord: (r: any) => void }) {
+  const [search, setSearch] = useState("");
+  const [catFilter, setCatFilter] = useState("all");
+  const [condFilter, setCondFilter] = useState("all");
+  const [sadcFilter, setSadcFilter] = useState("all");
+  const [lightbox, setLightbox] = useState<{ record: any; photos: string[]; index: number } | null>(null);
+
+  // Filter records
+  const filtered = records.filter(r => {
+    // Category match
+    if (catFilter !== "all" && r.asset_category !== catFilter) return false;
+    // Condition match
+    if (condFilter !== "all" && getRecordStatus(r) !== condFilter) return false;
+    // SADC match
+    if (sadcFilter !== "all" && getSadcValue(r) !== sadcFilter) return false;
+    // Search query
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      const name = (getAssetName(r) || "").toLowerCase();
+      const road = (r.road_name || "").toLowerCase();
+      const surveyor = (r.surveyor_name || "").toLowerCase();
+      const province = (r.province || "").toLowerCase();
+      const district = (r.district || "").toLowerCase();
+      if (!name.includes(q) && !road.includes(q) && !surveyor.includes(q) && !province.includes(q) && !district.includes(q)) return false;
+    }
+    return true;
+  });
+
+  // Photo stats
+  const totalWithPhoto = records.filter(r => r.photo || (r.photos && r.photos.length > 0) || (r.raw_data && (r.raw_data.photo || r.raw_data.photos))).length;
+
+  return (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--bg-app)", overflow: "hidden" }}>
+      
+      {/* Gallery Header Controls */}
+      <div style={{ background: "#fff", borderBottom: "1px solid var(--border)", padding: "14px 24px", flexShrink: 0, display: "flex", flexDirection: "column", gap: 12 }}>
+        
+        {/* Top Banner Stats */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+          <div>
+            <h2 style={{ fontSize: 16, fontWeight: 800, color: "var(--text-primary)", margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
+              <span>📷</span> National Photo Gallery &amp; Inspection Evidence
+            </h2>
+            <p style={{ fontSize: 11, color: "var(--text-secondary)", margin: "2px 0 0 0" }}>
+              Visual inspection photos collected by field survey teams across Zimbabwe's road network
+            </p>
+          </div>
+
+          <div style={{ display: "flex", gap: 10 }}>
+            <div style={{ background: "rgba(0,102,51,0.08)", border: "1px solid rgba(0,102,51,0.15)", borderRadius: 8, padding: "6px 14px", textAlign: "center" }}>
+              <div style={{ fontSize: 14, fontWeight: 800, color: "#006633" }}>{filtered.length}</div>
+              <div style={{ fontSize: 9.5, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase" }}>Assets in View</div>
+            </div>
+            <div style={{ background: "rgba(0,0,0,0.04)", border: "1px solid var(--border)", borderRadius: 8, padding: "6px 14px", textAlign: "center" }}>
+              <div style={{ fontSize: 14, fontWeight: 800, color: "var(--text-primary)" }}>{totalWithPhoto}</div>
+              <div style={{ fontSize: 9.5, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase" }}>Media Records</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Filter Controls Row */}
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          
+          {/* Search */}
+          <div style={{ position: "relative", flex: "1 1 200px", minWidth: 200 }}>
+            <input
+              type="text"
+              placeholder="Search by road, surveyor, province..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              style={{
+                width: "100%",
+                padding: "7px 12px 7px 32px",
+                borderRadius: 8,
+                border: "1px solid var(--border)",
+                fontSize: 11.5,
+                background: "var(--bg-app)",
+                outline: "none"
+              }}
+            />
+            <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", fontSize: 12, opacity: 0.5 }}>🔍</span>
+            {search && (
+              <button onClick={() => setSearch("")} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", border: "none", background: "none", cursor: "pointer", fontSize: 12, color: "var(--text-muted)" }}>✕</button>
+            )}
+          </div>
+
+          {/* Category Filter */}
+          <select
+            value={catFilter}
+            onChange={e => setCatFilter(e.target.value)}
+            style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 11.5, background: "#fff", fontWeight: 600, color: "var(--text-primary)", outline: "none", cursor: "pointer" }}
+          >
+            <option value="all">All Asset Types</option>
+            <option value="sealed">🛣️ Sealed Roads</option>
+            <option value="gravel">🪨 Gravel Roads</option>
+            <option value="earth">🚜 Earth Roads</option>
+            <option value="bridge">🌉 Bridges</option>
+            <option value="culvert">🕳️ Culverts</option>
+            <option value="busstop">🚌 Bus Stops</option>
+            <option value="junction">🔀 Junctions</option>
+            <option value="sign">⚠️ Road Signs</option>
+            <option value="streetlight">💡 Streetlights</option>
+            <option value="traffic_lights">🚦 Traffic Lights</option>
+          </select>
+
+          {/* Condition Filter */}
+          <select
+            value={condFilter}
+            onChange={e => setCondFilter(e.target.value)}
+            style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 11.5, background: "#fff", fontWeight: 600, color: "var(--text-primary)", outline: "none", cursor: "pointer" }}
+          >
+            <option value="all">All Conditions</option>
+            <option value="good">🟢 Good</option>
+            <option value="fair">🟡 Fair</option>
+            <option value="poor">🔴 Poor</option>
+            <option value="bad">🔴 Bad / Severely Damaged</option>
+            <option value="under_construction">🔵 Under Construction</option>
+          </select>
+
+          {/* SADC Filter */}
+          <select
+            value={sadcFilter}
+            onChange={e => setSadcFilter(e.target.value)}
+            style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 11.5, background: "#fff", fontWeight: 600, color: "var(--text-primary)", outline: "none", cursor: "pointer" }}
+          >
+            <option value="all">SADC Compliance (All)</option>
+            <option value="yes">✓ SADC Compliant</option>
+            <option value="no">✕ Non-Compliant</option>
+          </select>
+
+          {/* Reset Filters */}
+          {(catFilter !== "all" || condFilter !== "all" || sadcFilter !== "all" || search) && (
+            <button
+              onClick={() => { setCatFilter("all"); setCondFilter("all"); setSadcFilter("all"); setSearch(""); }}
+              style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "#fff", fontSize: 11.5, fontWeight: 700, color: "#dc2626", cursor: "pointer" }}
+            >
+              Reset Filters
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Gallery Grid */}
+      <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
+        {filtered.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "60px 20px", color: "var(--text-muted)" }}>
+            <Camera size={48} style={{ opacity: 0.2, marginBottom: 12 }} />
+            <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text-primary)" }}>No photo assets found</div>
+            <div style={{ fontSize: 12, marginTop: 4 }}>Try adjusting your search terms or filters above</div>
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 18 }}>
+            {filtered.map(r => (
+              <GalleryCard 
+                key={r.id || r._id || r.survey_id || Math.random()} 
+                record={r} 
+                onSelectRecord={onSelectRecord} 
+                onOpenLightbox={(record, photos) => setLightbox({ record, photos, index: 0 })}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Fullscreen Lightbox Modal */}
+      {lightbox && (
+        <div 
+          onClick={() => setLightbox(null)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 9999,
+            background: "rgba(0,0,0,0.9)",
+            backdropFilter: "blur(8px)",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: 24
+          }}
+        >
+          {/* Lightbox Top Header */}
+          <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 1000, display: "flex", justifyContent: "space-between", alignItems: "center", color: "#fff" }}>
+            <div>
+              <div style={{ fontSize: 16, fontWeight: 800 }}>{getAssetName(lightbox.record)}</div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.6)" }}>
+                {lightbox.record.asset_category?.replace("_", " ")} · {lightbox.record.province || "Harare"} · {lightbox.record.surveyor_name ? `Surveyor: ${lightbox.record.surveyor_name}` : ""}
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+              <button
+                onClick={() => {
+                  const rec = lightbox.record;
+                  setLightbox(null);
+                  onSelectRecord(rec);
+                }}
+                style={{ background: "#006633", border: "none", borderRadius: 8, color: "#fff", padding: "8px 16px", fontWeight: 700, fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}
+              >
+                📍 Inspect on Map
+              </button>
+              <button
+                onClick={() => setLightbox(null)}
+                style={{ background: "rgba(255,255,255,0.15)", border: "none", borderRadius: "50%", color: "#fff", width: 36, height: 36, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+
+          {/* Lightbox Main Image */}
+          <div onClick={e => e.stopPropagation()} style={{ position: "relative", width: "100%", maxWidth: 1000, flex: 1, display: "flex", alignItems: "center", justifyContent: "center", margin: "16px 0" }}>
+            <img 
+              src={lightbox.photos[lightbox.index]} 
+              alt="Full inspection photo"
+              style={{ maxWidth: "100%", maxHeight: "75vh", objectFit: "contain", borderRadius: 10, boxShadow: "0 12px 40px rgba(0,0,0,0.6)" }} 
+            />
+
+            {lightbox.photos.length > 1 && (
+              <>
+                <button
+                  onClick={() => setLightbox(prev => prev ? { ...prev, index: (prev.index - 1 + prev.photos.length) % prev.photos.length } : null)}
+                  style={{ position: "absolute", left: 10, background: "rgba(0,0,0,0.6)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: "50%", color: "#fff", width: 44, height: 44, fontSize: 18, cursor: "pointer" }}
+                >
+                  ←
+                </button>
+                <button
+                  onClick={() => setLightbox(prev => prev ? { ...prev, index: (prev.index + 1) % prev.photos.length } : null)}
+                  style={{ position: "absolute", right: 10, background: "rgba(0,0,0,0.6)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: "50%", color: "#fff", width: 44, height: 44, fontSize: 18, cursor: "pointer" }}
+                >
+                  →
+                </button>
+              </>
+            )}
+          </div>
+
+          {/* Lightbox Footer Counter */}
+          <div onClick={e => e.stopPropagation()} style={{ color: "rgba(255,255,255,0.8)", fontSize: 12, fontWeight: 700, background: "rgba(255,255,255,0.1)", padding: "4px 14px", borderRadius: 20 }}>
+            Photo {lightbox.index + 1} of {lightbox.photos.length}
+          </div>
+        </div>
+      )}
+
+    </div>
+  );
+}
+
