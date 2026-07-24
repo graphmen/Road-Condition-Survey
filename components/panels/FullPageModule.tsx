@@ -3,7 +3,7 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
 import { useState, useEffect, useCallback } from "react";
-import { LayoutDashboard, TrendingUp, BarChart2, ClipboardCheck, Database, Download, ArrowUpDown, Search, X, ChevronDown, ChevronUp, Camera, FileText, BookOpen, Trash2, Compass } from "lucide-react";
+import { LayoutDashboard, TrendingUp, BarChart2, ClipboardCheck, Database, Download, ArrowUpDown, Search, X, ChevronDown, ChevronUp, Camera, FileText, BookOpen, Trash2, Compass, Users, ShieldAlert } from "lucide-react";
 
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Legend, Tooltip as ChartTooltip,
@@ -3519,31 +3519,60 @@ interface FullPageModuleProps {
   lastSynced?: Date | null;
 }
 
-const MODULE_TITLES: Partial<Record<NavModule, string>> = {
-  dashboard: "Dashboard Overview",
-  highways:  "Highway Network",
-  analytics: "Analytics Workspace",
-  survey:    "Survey Records",
-  database:  "Database Explorer",
-  gallery:   "Photo Gallery",
-  reports:   "Executive Reports Platform",
-  documents: "Manuals & Guidelines Library",
-  export:    "Export Data",
+
+
+import UserManagementPanel from "./UserManagementPanel";
+import DeletionApprovalsPanel from "./DeletionApprovalsPanel";
+import { UserProfile } from "@/components/helpers";
+
+const MODULE_TITLES: Record<string, string> = {
+  dashboard: "National Telemetry Overview & Executive KPI Summary",
+  highways: "Highway Corridor Performance & Asset Analysis",
+  analytics: "Road Condition & Defect Analytics Engine",
+  survey: "Field Survey Form & Live Asset Data Collection",
+  database: "Central Road & Infrastructure Survey Database",
+  gallery: "SADC Compliant Asset Photo & Evidence Gallery",
+  reports: "Executive Infrastructure Audit & Condition Reports",
+  documents: "Ministry Manuals, Guidelines & Policy Document Library",
+  export: "Data Export & Geographic Exchange Center",
+  users: "Hierarchical User Provisioning & Access Control System",
+  approvals: "Cascading Soft-Delete Approvals & Audit Trail"
 };
 
-const MODULE_ICONS: Partial<Record<NavModule, React.ReactNode>> = {
-  dashboard: <LayoutDashboard size={16} />,
-  highways:  <TrendingUp size={16} />,
-  analytics: <BarChart2 size={16} />,
-  survey:    <ClipboardCheck size={16} />,
-  database:  <Database size={16} />,
-  gallery:   <Camera size={16} />,
-  reports:   <FileText size={16} />,
-  documents: <BookOpen size={16} />,
-  export:    <Download size={16} />,
+const MODULE_ICONS: Record<string, React.ReactNode> = {
+  dashboard: <LayoutDashboard size={18} />,
+  highways: <TrendingUp size={18} />,
+  analytics: <BarChart2 size={18} />,
+  survey: <ClipboardCheck size={18} />,
+  database: <Database size={18} />,
+  gallery: <Camera size={18} />,
+  reports: <FileText size={18} />,
+  documents: <BookOpen size={18} />,
+  export: <Download size={18} />,
+  users: <Users size={18} />,
+  approvals: <ShieldAlert size={18} />
 };
 
-export default function FullPageModule({ module, records, onSelectRecord, onClose, onRefresh, onToast, lastSynced }: FullPageModuleProps) {
+interface FullPageModuleProps {
+  module: NavModule;
+  records: any[];
+  onSelectRecord?: (r: any) => void;
+  onClose: () => void;
+  onRefresh?: () => void;
+  onToast: (msg: string, type: "success" | "error" | "info") => void;
+  lastSynced?: Date | null;
+  currentUser?: UserProfile;
+}
+
+export default function FullPageModule({ module, records, onSelectRecord, onClose, onRefresh, onToast, lastSynced, currentUser }: FullPageModuleProps) {
+  const activeUser: UserProfile = currentUser || {
+    id: "usr-master-1",
+    email: "ict.admin@transport.gov.zw",
+    full_name: "Eng. T. Masango (Master Admin)",
+    role: "master_admin",
+    is_active: true
+  };
+
   return (
     <div style={{ position: "absolute", inset: 0, background: "var(--bg-app)", display: "flex", flexDirection: "column", zIndex: 1000 }}>
       {/* Module header bar */}
@@ -3585,6 +3614,8 @@ export default function FullPageModule({ module, records, onSelectRecord, onClos
         {module === "reports"   && <ReportsPage   records={records} onSelectRecord={onSelectRecord} />}
         {module === "documents" && <DocumentsPage />}
         {module === "export"    && <ExportPage    records={records} onSelectRecord={onSelectRecord} />}
+        {module === "users"     && <UserManagementPanel currentUser={activeUser} onToast={onToast} />}
+        {module === "approvals" && <DeletionApprovalsPanel currentUser={activeUser} onToast={onToast} onRefreshRecords={onRefresh} />}
       </div>
     </div>
   );

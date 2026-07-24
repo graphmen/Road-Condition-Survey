@@ -14,6 +14,10 @@ import {
   fireMapGoto,
   getAssetName,
   type MapGotoDetail,
+  type UserProfile,
+  type UserRole,
+  ROLE_LABELS,
+  filterRecordsByRoleScope,
 } from "@/components/helpers";
 
 const MapView = dynamic(() => import("@/components/MapView"), {
@@ -29,13 +33,60 @@ const MapView = dynamic(() => import("@/components/MapView"), {
 });
 
 // These modules open as a full-page overlay over the map
-const FULLPAGE_MODULES: NavModule[] = ["dashboard", "highways", "analytics", "survey", "database", "gallery", "reports", "documents", "export"];
+const FULLPAGE_MODULES: NavModule[] = ["dashboard", "highways", "analytics", "survey", "database", "gallery", "reports", "documents", "export", "users", "approvals"];
+
+// Pre-configured simulation personas for live RBAC testing
+const SIMULATION_USERS: Record<UserRole, UserProfile> = {
+  master_admin: {
+    id: "usr-master-1",
+    email: "ict.admin@transport.gov.zw",
+    full_name: "Eng. T. Masango",
+    role: "master_admin",
+    is_active: true
+  },
+  national_coordinator: {
+    id: "usr-national-1",
+    email: "national.coord@transport.gov.zw",
+    full_name: "Eng. C. Moyo",
+    role: "national_coordinator",
+    is_active: true
+  },
+  provincial_coordinator: {
+    id: "usr-provincial-harare",
+    email: "harare.coord@transport.gov.zw",
+    full_name: "Eng. R. Ndlovu",
+    role: "provincial_coordinator",
+    province: "Harare",
+    is_active: true
+  },
+  district_coordinator: {
+    id: "usr-district-harare",
+    email: "harare.district@transport.gov.zw",
+    full_name: "Eng. S. Sibanda",
+    role: "district_coordinator",
+    province: "Harare",
+    district: "Harare",
+    is_active: true
+  },
+  data_collector: {
+    id: "usr-collector-1",
+    email: "field.surveyor1@transport.gov.zw",
+    full_name: "Eng. Z. Chitate",
+    role: "data_collector",
+    province: "Harare",
+    district: "Harare",
+    is_active: true
+  }
+};
 
 export default function Dashboard() {
   const [records, setRecords]       = useState<any[]>([]);
   const [isLoading, setIsLoading]   = useState(true);
   const [isSyncing, setIsSyncing]   = useState(false);
   const [sourceInfo, setSourceInfo] = useState("Loading...");
+
+  // RBAC User Session state
+  const [currentUser, setCurrentUser] = useState<UserProfile>(SIMULATION_USERS.master_admin);
 
   const [activeModule, setActiveModule]       = useState<NavModule>("assets");
   const [fullPageModule, setFullPageModule]   = useState<NavModule | null>(null);
@@ -227,9 +278,11 @@ export default function Dashboard() {
     setInnerOpen(true);
   };
 
+  const roleScopedRecords = filterRecordsByRoleScope(records, currentUser);
+
   const visibleRecords = selectedRoad === "all"
-    ? records
-    : records.filter(r => r.road_name === selectedRoad);
+    ? roleScopedRecords
+    : roleScopedRecords.filter(r => r.road_name === selectedRoad);
 
   return (
     <div className="app-shell">
@@ -268,12 +321,33 @@ export default function Dashboard() {
             <RefreshCw size={13} className={isSyncing ? "spin-icon" : ""} />
             {isSyncing ? "Refreshing..." : "Refresh Data"}
           </button>
-          <div className="user-chip">
+          
+          {/* Unified Authentication & Role Simulator Chip */}
+          <div className="user-chip" style={{ display: "flex", alignItems: "center", gap: 10, background: "rgba(0,0,0,0.25)", padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)" }}>
             <div style={{ textAlign: "right" }}>
-              <div style={{ fontWeight: 600, fontSize: 11, color: "#fff" }}>Admin User</div>
-              <div style={{ fontSize: 9, color: "rgba(255,255,255,0.5)", textTransform: "uppercase" }}>Field Operator</div>
+              <div style={{ fontWeight: 700, fontSize: 11, color: "#fff" }}>{currentUser.full_name}</div>
+              <select
+                value={currentUser.role}
+                onChange={e => {
+                  const r = e.target.value as UserRole;
+                  setCurrentUser(SIMULATION_USERS[r]);
+                  setToast({ message: `Active Role Context: ${ROLE_LABELS[r]}`, type: "info" });
+                }}
+                style={{
+                  background: "rgba(255,255,255,0.15)", color: "#FFD100", border: "1px solid rgba(255,255,255,0.25)",
+                  borderRadius: 4, padding: "2px 6px", fontSize: 9.5, fontWeight: 700, cursor: "pointer", outline: "none", marginTop: 2
+                }}
+              >
+                <option value="master_admin" style={{ color: "#000" }}>🔑 Master Admin (Global Scope)</option>
+                <option value="national_coordinator" style={{ color: "#000" }}>🇿🇼 National Coordinator (Global Scope)</option>
+                <option value="provincial_coordinator" style={{ color: "#000" }}>📍 Provincial Coord (Harare)</option>
+                <option value="district_coordinator" style={{ color: "#000" }}>🏢 District Coord (Harare Central)</option>
+                <option value="data_collector" style={{ color: "#000" }}>📱 Data Collector (Personal Scope)</option>
+              </select>
             </div>
-            <div className="user-avatar">A</div>
+            <div className="user-avatar" style={{ background: "#FFD100", color: "#003d1f", fontWeight: 800 }}>
+              {currentUser.full_name.charAt(5) || "A"}
+            </div>
           </div>
         </div>
       </header>
@@ -303,7 +377,7 @@ export default function Dashboard() {
             ) : (
               <InnerPanel
                 module={activeModule}
-                records={records}
+                records={roleScopedRecords}
                 selectedRecord={selectedRecord}
                 onSelectRecord={handleSelectRecord}
                 selectedRoad={selectedRoad}
@@ -347,12 +421,13 @@ export default function Dashboard() {
           {fullPageModule && (
             <FullPageModule
               module={fullPageModule}
-              records={records}
+              records={roleScopedRecords}
               onSelectRecord={handleSelectRecord}
               onClose={handleCloseFull}
               onRefresh={() => fetchRecords(true)}
               onToast={(msg, type) => setToast({ message: msg, type })}
               lastSynced={lastSynced}
+              currentUser={currentUser}
             />
           )}
         </div>

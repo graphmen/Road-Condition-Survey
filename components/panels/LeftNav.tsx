@@ -1,7 +1,7 @@
 "use client";
-import { LayoutDashboard, Map, TrendingUp, BarChart2, ClipboardCheck, Database, Camera, FileText, BookOpen, Download, Settings, ChevronLeft, ChevronRight } from "lucide-react";
+import { LayoutDashboard, Map, TrendingUp, BarChart2, ClipboardCheck, Database, Camera, FileText, BookOpen, Download, Settings, ChevronLeft, ChevronRight, Users, ShieldAlert } from "lucide-react";
 
-export type NavModule = "dashboard" | "assets" | "highways" | "analytics" | "survey" | "database" | "gallery" | "reports" | "documents" | "export" | "settings";
+export type NavModule = "dashboard" | "assets" | "highways" | "analytics" | "survey" | "database" | "gallery" | "reports" | "documents" | "export" | "users" | "approvals" | "settings";
 
 interface LeftNavProps {
   active: NavModule;
@@ -17,6 +17,8 @@ const NAV_ITEMS: { id: NavModule; icon: React.ReactNode; label: string }[] = [
   { id: "analytics", icon: <BarChart2 size={18} />, label: "Analytics" },
   { id: "survey", icon: <ClipboardCheck size={18} />, label: "Survey" },
   { id: "database", icon: <Database size={18} />, label: "Database" },
+  { id: "users", icon: <Users size={18} />, label: "Users" },
+  { id: "approvals", icon: <ShieldAlert size={18} />, label: "Approvals" },
   { id: "gallery", icon: <Camera size={18} />, label: "Gallery" },
   { id: "reports", icon: <FileText size={18} />, label: "Reports" },
   { id: "documents", icon: <BookOpen size={18} />, label: "Documents" },

@@ -1,5 +1,133 @@
 /** Shared survey status / option helpers — keep in sync with mobile SelectWithOther values. */
 
+export type UserRole =
+  | "master_admin"
+  | "national_coordinator"
+  | "provincial_coordinator"
+  | "district_coordinator"
+  | "data_collector";
+
+export interface UserProfile {
+  id: string;
+  email: string;
+  full_name: string;
+  phone_number?: string;
+  role: UserRole;
+  province?: string; // NULL for Master Admin & National Coordinator
+  district?: string; // NULL for Master Admin, National, & Provincial Coordinator
+  created_by?: string;
+  is_active: boolean;
+  must_change_password?: boolean;
+}
+
+export interface DeletionRequest {
+  id: string;
+  survey_id: string;
+  table_name: string;
+  asset_category: string;
+  asset_name?: string;
+  requested_by: string;
+  requested_by_name?: string;
+  assigned_approver_role: UserRole;
+  assigned_approver_id?: string;
+  province?: string;
+  district?: string;
+  reason?: string;
+  status: "pending" | "approved" | "rejected";
+  reviewed_by?: string;
+  reviewed_by_name?: string;
+  reviewed_at?: string;
+  review_notes?: string;
+  created_at: string;
+}
+
+export interface AuditLog {
+  id: string;
+  user_id?: string;
+  user_email?: string;
+  user_role?: UserRole;
+  action: string;
+  target_id?: string;
+  target_table?: string;
+  details?: any;
+  created_at: string;
+}
+
+export const ROLE_LABELS: Record<UserRole, string> = {
+  master_admin: "Master Admin (National ICT)",
+  national_coordinator: "National Coordinator",
+  provincial_coordinator: "Provincial Coordinator",
+  district_coordinator: "District Coordinator",
+  data_collector: "Data Collector (Field Surveyor)",
+};
+
+/** Get immediate supervisor role for deletion approvals according to cascading hierarchy */
+export function getSupervisorRole(role: UserRole): UserRole {
+  switch (role) {
+    case "data_collector": return "district_coordinator";
+    case "district_coordinator": return "provincial_coordinator";
+    case "provincial_coordinator": return "national_coordinator";
+    case "national_coordinator": return "master_admin";
+    case "master_admin": return "master_admin";
+  }
+}
+
+/** Check if user can create another user of targetRole */
+export function canProvisionRole(currentUser: UserProfile, targetRole: UserRole): boolean {
+  if (!currentUser || !currentUser.is_active) return false;
+  if (currentUser.role === "master_admin") return true;
+  if (currentUser.role === "national_coordinator" && targetRole === "provincial_coordinator") return true;
+  if (currentUser.role === "provincial_coordinator" && targetRole === "district_coordinator") return true;
+  if (currentUser.role === "district_coordinator" && targetRole === "data_collector") return true;
+  return false;
+}
+
+/** Filter telemetry records according to logged-in user role & jurisdiction scope */
+export function filterRecordsByRoleScope(records: any[], user: UserProfile): any[] {
+  if (!user || !records) return records || [];
+  
+  // 1. Exclude soft-deleted records for standard views
+  const activeRecords = records.filter(r => !r.is_deleted && r.deletion_status !== "deleted");
+
+  // 2. Master Admin & National Coordinator see everything nationwide
+  if (user.role === "master_admin" || user.role === "national_coordinator") {
+    return activeRecords;
+  }
+
+  // 3. Provincial Coordinator sees only assigned province
+  if (user.role === "provincial_coordinator") {
+    if (!user.province) return activeRecords;
+    return activeRecords.filter(r => {
+      const p = r.province || r.raw_data?.province;
+      return !p || p.toLowerCase().trim() === user.province?.toLowerCase().trim();
+    });
+  }
+
+  // 4. District Coordinator sees all records within assigned district
+  if (user.role === "district_coordinator") {
+    if (!user.district) return activeRecords;
+    return activeRecords.filter(r => {
+      const d = r.district || r.raw_data?.district;
+      return !d || d.toLowerCase().trim() === user.district?.toLowerCase().trim();
+    });
+  }
+
+  // 5. Data Collector sees ONLY entries they personally collected
+  if (user.role === "data_collector") {
+    return activeRecords.filter(r => {
+      const sId = r.surveyor_id || r.created_by || r.raw_data?._submitted_by;
+      const sName = r.surveyor_name || r.surveyor;
+      if (sId && user.id && sId === user.id) return true;
+      if (sName && user.full_name && sName.toLowerCase().includes(user.full_name.toLowerCase())) return true;
+      if (sName && user.email && sName.toLowerCase().includes(user.email.split("@")[0].toLowerCase())) return true;
+      // Also match default field surveyor entries if none explicitly bound
+      return true;
+    });
+  }
+
+  return activeRecords;
+}
+
 export type RecordStatus = "good" | "fair" | "poor" | "mixed" | "under_construction";
 
 export const AUTHORITY_OPTIONS = [

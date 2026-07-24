@@ -780,3 +780,78 @@ UNION ALL
 SELECT survey_id, asset_category, road_name, section_name, surveyor_name, survey_date, gps_point, photo, NULL AS segment_geojson, NULL::DOUBLE PRECISION AS segment_length_m, NULL::INTEGER AS segment_point_count, NULL::DOUBLE PRECISION AS segment_avg_accuracy, NULL AS segment_start_time, NULL AS segment_end_time, traffic_lights_condition AS road_condition, NULL AS road_class, raw_data, source, created_at, geom_point, NULL::GEOMETRY(LineString, 4326) AS geom_segment FROM survey_traffic_lights
 UNION ALL
 SELECT survey_id, asset_category, road_name, section_name, surveyor_name, survey_date, gps_point, photo, NULL AS segment_geojson, NULL::DOUBLE PRECISION AS segment_length_m, NULL::INTEGER AS segment_point_count, NULL::DOUBLE PRECISION AS segment_avg_accuracy, NULL AS segment_start_time, NULL AS segment_end_time, streetlight_condition AS road_condition, NULL AS road_class, raw_data, source, created_at, geom_point, NULL::GEOMETRY(LineString, 4326) AS geom_segment FROM survey_streetlights;
+
+-- ---------------------------------------------------------
+-- RBAC, User Profiles, Soft Deletes & Audit Logs
+-- ---------------------------------------------------------
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'user_role') THEN
+        CREATE TYPE user_role AS ENUM (
+            'master_admin',
+            'national_coordinator',
+            'provincial_coordinator',
+            'district_coordinator',
+            'data_collector'
+        );
+    END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS profiles (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  email VARCHAR(255) UNIQUE NOT NULL,
+  full_name VARCHAR(255) NOT NULL,
+  phone_number VARCHAR(50),
+  role user_role NOT NULL DEFAULT 'data_collector',
+  province VARCHAR(100),
+  district VARCHAR(100),
+  created_by UUID REFERENCES profiles(id),
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  must_change_password BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS deletion_requests (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  survey_id VARCHAR(255) NOT NULL,
+  table_name VARCHAR(100) NOT NULL,
+  asset_category VARCHAR(50) NOT NULL,
+  asset_name VARCHAR(255),
+  requested_by UUID NOT NULL REFERENCES profiles(id),
+  requested_by_name VARCHAR(255),
+  assigned_approver_role user_role NOT NULL,
+  assigned_approver_id UUID REFERENCES profiles(id),
+  province VARCHAR(100),
+  district VARCHAR(100),
+  reason TEXT,
+  status VARCHAR(50) NOT NULL DEFAULT 'pending', -- 'pending', 'approved', 'rejected'
+  reviewed_by UUID REFERENCES profiles(id),
+  reviewed_by_name VARCHAR(255),
+  reviewed_at TIMESTAMPTZ,
+  review_notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES profiles(id),
+  user_email VARCHAR(255),
+  user_role user_role,
+  action VARCHAR(100) NOT NULL,
+  target_id VARCHAR(255),
+  target_table VARCHAR(100),
+  details JSONB,
+  ip_address VARCHAR(45),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Index for RBAC & Scope Lookups
+CREATE INDEX IF NOT EXISTS idx_profiles_role ON profiles(role);
+CREATE INDEX IF NOT EXISTS idx_profiles_province ON profiles(province);
+CREATE INDEX IF NOT EXISTS idx_profiles_district ON profiles(district);
+CREATE INDEX IF NOT EXISTS idx_deletion_requests_status ON deletion_requests(status);
+CREATE INDEX IF NOT EXISTS idx_deletion_requests_approver ON deletion_requests(assigned_approver_role);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);
+

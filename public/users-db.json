@@ -1,0 +1,62 @@
+[
+  {
+    "id": "usr-master-1",
+    "email": "ict.admin@transport.gov.zw",
+    "full_name": "Eng. T. Masango (Master Admin)",
+    "phone_number": "+263 77 100 0001",
+    "role": "master_admin",
+    "is_active": true,
+    "must_change_password": false
+  },
+  {
+    "id": "usr-national-1",
+    "email": "national.coordinator@transport.gov.zw",
+    "full_name": "Eng. C. Moyo (National Coordinator)",
+    "phone_number": "+263 77 200 0002",
+    "role": "national_coordinator",
+    "is_active": true,
+    "must_change_password": false
+  },
+  {
+    "id": "usr-provincial-harare",
+    "email": "harare.coord@transport.gov.zw",
+    "full_name": "Eng. R. Ndlovu (Harare Provincial Coordinator)",
+    "phone_number": "+263 77 300 0003",
+    "role": "provincial_coordinator",
+    "province": "Harare",
+    "is_active": true,
+    "must_change_password": false
+  },
+  {
+    "id": "usr-district-harare",
+    "email": "harare.district@transport.gov.zw",
+    "full_name": "Eng. S. Sibanda (Harare Central District Coordinator)",
+    "phone_number": "+263 77 400 0004",
+    "role": "district_coordinator",
+    "province": "Harare",
+    "district": "Harare",
+    "is_active": true,
+    "must_change_password": false
+  },
+  {
+    "id": "usr-collector-1",
+    "email": "field.surveyor1@transport.gov.zw",
+    "full_name": "Eng. Z. Chitate (Field Surveyor)",
+    "phone_number": "+263 77 500 0005",
+    "role": "data_collector",
+    "province": "Harare",
+    "district": "Harare",
+    "is_active": true,
+    "must_change_password": false
+  },
+  {
+    "id": "usr-1784874021555",
+    "email": "hurungwetrees@gmail.com",
+    "full_name": "Manuel Ndebele",
+    "phone_number": "+263773807928",
+    "role": "provincial_coordinator",
+    "province": "Harare",
+    "is_active": true,
+    "must_change_password": true
+  }
+]
