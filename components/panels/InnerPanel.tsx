@@ -1,6 +1,5 @@
-"use client";
 import { useState } from "react";
-import { Search, Download, Map, TrendingUp, BarChart2, ClipboardCheck, Database, Camera, FileText, BookOpen, LayoutDashboard, Smartphone, ExternalLink } from "lucide-react";
+import { Search, Download, Map, TrendingUp, BarChart2, ClipboardCheck, Database, Camera, FileText, BookOpen, LayoutDashboard, Smartphone, ExternalLink, Users, ShieldAlert, ChevronRight, Settings as SettingsIcon } from "lucide-react";
 import {
   getAssetType, getAssetName, getRecordStatus, getCategoryKey, formatStatusLabel, getSadcValue, getStatusColor,
   formatGpsLabel,
@@ -20,6 +19,7 @@ interface InnerPanelProps {
   onSelectRecord: (r: any) => void;
   selectedRoad: string;
   onRoadFilter: (road: string) => void;
+  onNavSelect?: (m: NavModule) => void;
 }
 
 const HIGHWAYS = [
@@ -485,23 +485,102 @@ export default function InnerPanel({ module, records, selectedRecord, onSelectRe
     return (
       <>
         <div className="inner-panel-header">
-          <div className="inner-panel-title">{icon}{label}</div>
+          <div className="inner-panel-title">
+            <SettingsIcon size={16} color="#006633" />
+            <span>System Settings &amp; Administration</span>
+          </div>
         </div>
-        <div className="inner-panel-body" style={{ padding: 14 }}>
+        <div className="inner-panel-body" style={{ padding: 14, display: "flex", flexDirection: "column", gap: 14 }}>
+          
+          {/* User Provisioning & Access Control Card */}
           <div style={{
-            background: "var(--bg-hover)",
+            background: "#fff",
             border: "1px solid var(--border)",
             borderRadius: 12,
             padding: 14,
+            boxShadow: "0 2px 6px rgba(0,0,0,0.03)"
           }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-              <Smartphone size={16} color="var(--green)" />
-              <div style={{ fontFamily: "var(--font-title)", fontWeight: 700, fontSize: 14, color: "var(--green-dark)" }}>
-                Mobile collector app
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+              <Users size={18} color="#006633" />
+              <div style={{ fontFamily: "var(--font-title)", fontWeight: 800, fontSize: 13.5, color: "var(--text-primary)" }}>
+                User Management &amp; Access Controls
               </div>
             </div>
-            <p style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.5, marginBottom: 12 }}>
-              Share this link with field collectors so they can download and install the Android APK on their phones.
+            <p style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.45, marginBottom: 12 }}>
+              Provision team accounts, assign jurisdiction scopes (Province/District), and manage unified web &amp; mobile user credentials.
+            </p>
+            <button
+              onClick={() => onNavSelect?.("users")}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                background: "#006633",
+                color: "#fff",
+                border: "none",
+                borderRadius: 8,
+                padding: "8px 14px",
+                fontSize: 11.5,
+                fontWeight: 700,
+                cursor: "pointer"
+              }}
+            >
+              <Users size={14} /> Open User Provisioning <ChevronRight size={14} />
+            </button>
+          </div>
+
+          {/* Soft-Delete Approvals & Audit Trail Card */}
+          <div style={{
+            background: "#fff",
+            border: "1px solid var(--border)",
+            borderRadius: 12,
+            padding: 14,
+            boxShadow: "0 2px 6px rgba(0,0,0,0.03)"
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+              <ShieldAlert size={18} color="#dc2626" />
+              <div style={{ fontFamily: "var(--font-title)", fontWeight: 800, fontSize: 13.5, color: "var(--text-primary)" }}>
+                Soft-Delete Approvals &amp; Audit Log
+              </div>
+            </div>
+            <p style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.45, marginBottom: 12 }}>
+              Review, approve, or reject pending deletion requests escalated up the supervisor chain and audit past soft-deletions.
+            </p>
+            <button
+              onClick={() => onNavSelect?.("approvals")}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                background: "#dc2626",
+                color: "#fff",
+                border: "none",
+                borderRadius: 8,
+                padding: "8px 14px",
+                fontSize: 11.5,
+                fontWeight: 700,
+                cursor: "pointer"
+              }}
+            >
+              <ShieldAlert size={14} /> Open Pending Approvals Queue <ChevronRight size={14} />
+            </button>
+          </div>
+
+          {/* Mobile Collector App Card */}
+          <div style={{
+            background: "rgba(0,102,51,0.04)",
+            border: "1px solid rgba(0,102,51,0.12)",
+            borderRadius: 12,
+            padding: 14,
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+              <Smartphone size={17} color="#006633" />
+              <div style={{ fontFamily: "var(--font-title)", fontWeight: 800, fontSize: 13.5, color: "#006633" }}>
+                Mobile Collector App Download
+              </div>
+            </div>
+            <p style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.45, marginBottom: 12 }}>
+              Share this download link with field collectors to install the offline-ready Android APK surveyor application.
             </p>
             <a
               href="/download"
@@ -511,18 +590,19 @@ export default function InnerPanel({ module, records, selectedRecord, onSelectRe
                 display: "inline-flex",
                 alignItems: "center",
                 gap: 6,
-                background: "var(--green)",
+                background: "#006633",
                 color: "#fff",
                 textDecoration: "none",
                 borderRadius: 8,
-                padding: "10px 12px",
-                fontSize: 12,
+                padding: "8px 14px",
+                fontSize: 11.5,
                 fontWeight: 700,
               }}
             >
-              <ExternalLink size={13} /> Open download page
+              <ExternalLink size={13} /> Open Download Page
             </a>
           </div>
+
         </div>
       </>
     );

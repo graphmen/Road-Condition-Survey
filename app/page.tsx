@@ -382,6 +382,7 @@ export default function Dashboard() {
                 onSelectRecord={handleSelectRecord}
                 selectedRoad={selectedRoad}
                 onRoadFilter={setSelectedRoad}
+                onNavSelect={handleNavSelect}
               />
             )}
           </div>
