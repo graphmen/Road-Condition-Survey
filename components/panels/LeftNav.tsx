@@ -11,16 +11,16 @@ interface LeftNavProps {
 }
 
 const NAV_ITEMS: { id: NavModule; icon: React.ReactNode; label: string }[] = [
-  { id: "dashboard",  icon: <LayoutDashboard size={18} />, label: "Dashboard" },
-  { id: "assets",     icon: <Map size={18} />,             label: "Assets" },
-  { id: "highways",   icon: <TrendingUp size={18} />,      label: "Highways" },
-  { id: "analytics",  icon: <BarChart2 size={18} />,       label: "Analytics" },
-  { id: "survey",     icon: <ClipboardCheck size={18} />,  label: "Survey" },
-  { id: "database",   icon: <Database size={18} />,        label: "Database" },
-  { id: "gallery",    icon: <Camera size={18} />,          label: "Gallery" },
-  { id: "reports",    icon: <FileText size={18} />,        label: "Reports" },
-  { id: "documents",  icon: <BookOpen size={18} />,        label: "Documents" },
-  { id: "export",     icon: <Download size={18} />,        label: "Export" },
+  { id: "dashboard", icon: <LayoutDashboard size={18} />, label: "Dashboard" },
+  { id: "assets", icon: <Map size={18} />, label: "Assets" },
+  { id: "highways", icon: <TrendingUp size={18} />, label: "Highways" },
+  { id: "analytics", icon: <BarChart2 size={18} />, label: "Analytics" },
+  { id: "survey", icon: <ClipboardCheck size={18} />, label: "Survey" },
+  { id: "database", icon: <Database size={18} />, label: "Database" },
+  { id: "gallery", icon: <Camera size={18} />, label: "Gallery" },
+  { id: "reports", icon: <FileText size={18} />, label: "Reports" },
+  { id: "documents", icon: <BookOpen size={18} />, label: "Documents" },
+  { id: "export", icon: <Download size={18} />, label: "Export" },
 ];
 
 export default function LeftNav({ active, onSelect, innerOpen, onToggleInner }: LeftNavProps) {

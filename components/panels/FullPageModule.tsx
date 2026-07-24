@@ -4891,6 +4891,35 @@ interface DocItem {
   description: string;
 }
 
+interface VideoItem {
+  id: string;
+  title: string;
+  description: string;
+  src: string;
+  duration: string;
+  thumbnail?: string;
+  chapters: { time: string; label: string }[];
+}
+
+const VIDEO_TUTORIALS: VideoItem[] = [
+  {
+    id: "vid-1",
+    title: "Complete Dashboard Walkthrough",
+    description: "A full end-to-end tour of the Zimbabwe Roads Condition Dashboard — covering the interactive map, asset browsing, analytics, reporting, and the document library.",
+    src: "/videos/dashboard-walkthrough.webp",
+    duration: "~5 min",
+    chapters: [
+      { time: "0:00", label: "Introduction & Overview" },
+      { time: "0:30", label: "Assets & Interactive Map" },
+      { time: "1:15", label: "Highways Module" },
+      { time: "2:00", label: "Analytics & Charts" },
+      { time: "2:45", label: "Survey & Database" },
+      { time: "3:30", label: "Reports & Export" },
+      { time: "4:15", label: "Documents Library" },
+    ]
+  }
+];
+
 const DOCUMENT_REPOSITORY: DocItem[] = [
   {
     id: "doc-1",
@@ -4919,6 +4948,8 @@ function DocumentsPage() {
   const [catFilter, setCatFilter] = useState("all");
   const [formatFilter, setFormatFilter] = useState("all");
   const [previewDoc, setPreviewDoc] = useState<DocItem | null>(null);
+  const [activeVideo, setActiveVideo] = useState<VideoItem>(VIDEO_TUTORIALS[0]);
+  const [videoTab, setVideoTab] = useState<"tutorials" | "docs">("tutorials");
 
   const filtered = DOCUMENT_REPOSITORY.filter(d => {
     if (catFilter !== "all" && d.category !== catFilter) return false;
@@ -4940,93 +4971,233 @@ function DocumentsPage() {
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--bg-app)", overflow: "hidden" }}>
       
-      {/* Header Controls */}
-      <div style={{ background: "#fff", borderBottom: "1px solid var(--border)", padding: "14px 24px", flexShrink: 0, display: "flex", flexDirection: "column", gap: 12 }}>
-        
-        {/* Title & Stats */}
+      {/* Header */}
+      <div style={{ background: "linear-gradient(135deg, #003d1f 0%, #006633 100%)", padding: "18px 24px", flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
           <div>
-            <h2 style={{ fontSize: 16, fontWeight: 800, color: "var(--text-primary)", margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
-              <span>📚</span> Ministry Manuals, Guidelines &amp; Policy Document Library
+            <h2 style={{ fontSize: 18, fontWeight: 900, color: "#fff", margin: 0, display: "flex", alignItems: "center", gap: 10, letterSpacing: "-0.3px" }}>
+              <span style={{ fontSize: 22 }}>📚</span> Ministry Documentation Hub
             </h2>
-            <p style={{ fontSize: 11, color: "var(--text-secondary)", margin: "2px 0 0 0" }}>
-              Official technical manuals, training curricula, equipment specifications, and project contract documentation
+            <p style={{ fontSize: 11, color: "rgba(255,255,255,0.65)", margin: "3px 0 0 0" }}>
+              Tutorial videos, operational manuals, training guidelines and technical documentation
             </p>
           </div>
-
           <div style={{ display: "flex", gap: 10 }}>
-            <div style={{ background: "rgba(0,102,51,0.08)", border: "1px solid rgba(0,102,51,0.15)", borderRadius: 8, padding: "6px 14px", textAlign: "center" }}>
-              <div style={{ fontSize: 14, fontWeight: 800, color: "#006633" }}>{DOCUMENT_REPOSITORY.length}</div>
-              <div style={{ fontSize: 9.5, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase" }}>Total Documents</div>
+            <div style={{ background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 10, padding: "8px 16px", textAlign: "center" }}>
+              <div style={{ fontSize: 16, fontWeight: 900, color: "#FFD100" }}>{VIDEO_TUTORIALS.length}</div>
+              <div style={{ fontSize: 9, fontWeight: 700, color: "rgba(255,255,255,0.65)", textTransform: "uppercase", letterSpacing: "0.5px" }}>Video Tutorials</div>
+            </div>
+            <div style={{ background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 10, padding: "8px 16px", textAlign: "center" }}>
+              <div style={{ fontSize: 16, fontWeight: 900, color: "#FFD100" }}>{DOCUMENT_REPOSITORY.length}</div>
+              <div style={{ fontSize: 9, fontWeight: 700, color: "rgba(255,255,255,0.65)", textTransform: "uppercase", letterSpacing: "0.5px" }}>Documents</div>
             </div>
           </div>
         </div>
 
-        {/* Filter Controls Row */}
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-          
-          {/* Search */}
-          <div style={{ position: "relative", flex: "1 1 240px", minWidth: 220 }}>
-            <input
-              type="text"
-              placeholder="Search by title, keyword, description..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              style={{
-                width: "100%",
-                padding: "7px 12px 7px 32px",
-                borderRadius: 8,
-                border: "1px solid var(--border)",
-                fontSize: 11.5,
-                background: "var(--bg-app)",
-                outline: "none"
-              }}
-            />
-            <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", fontSize: 12, opacity: 0.5 }}>🔍</span>
-            {search && (
-              <button onClick={() => setSearch("")} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", border: "none", background: "none", cursor: "pointer", fontSize: 12, color: "var(--text-muted)" }}>✕</button>
-            )}
-          </div>
-
-          {/* Category Filter */}
-          <select
-            value={catFilter}
-            onChange={e => setCatFilter(e.target.value)}
-            style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 11.5, background: "#fff", fontWeight: 600, color: "var(--text-primary)", outline: "none" }}
+        {/* Tab Switcher */}
+        <div style={{ display: "flex", gap: 4, marginTop: 16 }}>
+          <button
+            onClick={() => setVideoTab("tutorials")}
+            style={{
+              padding: "7px 18px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 700,
+              background: videoTab === "tutorials" ? "#fff" : "rgba(255,255,255,0.12)",
+              color: videoTab === "tutorials" ? "#006633" : "rgba(255,255,255,0.8)",
+              transition: "all 0.2s"
+            }}
           >
-            <option value="all">All Document Categories</option>
-            <option value="User Manuals">📖 User Manuals</option>
-            <option value="Training Guidelines">🎓 Training Guidelines</option>
-            <option value="Contracts & Proposals">📝 Contracts &amp; Proposals</option>
-            <option value="Equipment Specs">🔬 Equipment Specs</option>
-            <option value="Technical Specifications">⚙️ Technical Specifications</option>
-          </select>
-
-          {/* Format Filter */}
-          <select
-            value={formatFilter}
-            onChange={e => setFormatFilter(e.target.value)}
-            style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 11.5, background: "#fff", fontWeight: 600, color: "var(--text-primary)", outline: "none" }}
+            🎬 Tutorial Videos
+          </button>
+          <button
+            onClick={() => setVideoTab("docs")}
+            style={{
+              padding: "7px 18px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 700,
+              background: videoTab === "docs" ? "#fff" : "rgba(255,255,255,0.12)",
+              color: videoTab === "docs" ? "#006633" : "rgba(255,255,255,0.8)",
+              transition: "all 0.2s"
+            }}
           >
-            <option value="all">All File Formats</option>
-            <option value="DOCX">📄 DOCX Word Documents</option>
-            <option value="PDF">📕 PDF Documents</option>
-            <option value="PPTX">📊 PPTX Presentations</option>
-          </select>
-
-          {(catFilter !== "all" || formatFilter !== "all" || search) && (
-            <button
-              onClick={() => { setCatFilter("all"); setFormatFilter("all"); setSearch(""); }}
-              style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "#fff", fontSize: 11.5, fontWeight: 700, color: "#dc2626", cursor: "pointer" }}
-            >
-              Reset Filters
-            </button>
-          )}
+            📄 Document Library
+          </button>
         </div>
       </div>
 
-      {/* Document Grid Workspace */}
-      <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
+
+
+      {/* Tab Content */}
+      <div style={{ flex: 1, overflowY: "auto" }}>
+
+        {/* ═══════════ TUTORIAL VIDEOS TAB ═══════════ */}
+        {videoTab === "tutorials" && (
+          <div style={{ padding: 24 }}>
+
+            {/* Section intro */}
+            <div style={{ marginBottom: 20 }}>
+              <h3 style={{ fontSize: 14, fontWeight: 800, color: "var(--text-primary)", margin: "0 0 4px 0" }}>🎬 System Tutorial Videos</h3>
+              <p style={{ fontSize: 11, color: "var(--text-secondary)", margin: 0 }}>Watch step-by-step walkthroughs of the Roads Condition Dashboard to get up to speed quickly.</p>
+            </div>
+
+            {/* Video layout: player left, chapters right */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: 20, marginBottom: 28 }}>
+
+              {/* Main Video / Animated Player */}
+              <div style={{ background: "#0c140e", borderRadius: 14, overflow: "hidden", boxShadow: "0 12px 40px rgba(0,0,0,0.3)", display: "flex", flexDirection: "column" }}>
+                {activeVideo.src.endsWith(".webp") || activeVideo.src.endsWith(".gif") ? (
+                  <div style={{ position: "relative" }}>
+                    <div style={{ minHeight: 360, display: "flex", alignItems: "center", justifyContent: "center", background: "#000" }}>
+                      <img
+                        key={activeVideo.src}
+                        src={activeVideo.src}
+                        alt={activeVideo.title}
+                        style={{ width: "100%", height: "auto", display: "block", maxHeight: 520, objectFit: "contain" }}
+                      />
+                    </div>
+                    {/* Control Bar Overlay */}
+                    <div style={{
+                      background: "rgba(0,0,0,0.9)", backdropFilter: "blur(6px)", padding: "10px 18px",
+                      display: "flex", alignItems: "center", justifyContent: "space-between", color: "#fff"
+                    }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <span style={{
+                          background: "#006633", color: "#FFD100", padding: "4px 12px", borderRadius: 6,
+                          fontSize: 11, fontWeight: 800, letterSpacing: "0.5px", display: "flex", alignItems: "center", gap: 6
+                        }}>
+                          <span>▶</span> WALKTHROUGH PLAYING
+                        </span>
+                        <button
+                          onClick={(e) => {
+                            const img = e.currentTarget.parentElement?.parentElement?.previousElementSibling?.querySelector("img");
+                            if (img) {
+                              const currentSrc = img.src.split("?")[0];
+                              img.src = `${currentSrc}?t=${Date.now()}`;
+                            }
+                          }}
+                          style={{
+                            background: "rgba(255,255,255,0.15)", color: "#fff", border: "1px solid rgba(255,255,255,0.25)",
+                            borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer"
+                          }}
+                        >
+                          🔄 Restart Video
+                        </button>
+                      </div>
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.75)", fontWeight: 600 }}>
+                        ⏱ Duration: {activeVideo.duration} · High Quality Telemetry Recording
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <video
+                    key={activeVideo.src}
+                    src={activeVideo.src}
+                    controls
+                    autoPlay={false}
+                    style={{ width: "100%", display: "block", borderRadius: 14 }}
+                  >
+                    Your browser does not support HTML5 video.
+                  </video>
+                )}
+              </div>
+
+              {/* Right: video info + chapters */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+
+                {/* Video info card */}
+                <div style={{ background: "#fff", borderRadius: 12, border: "1px solid var(--border)", padding: 16 }}>
+                  <span style={{ background: "rgba(0,102,51,0.1)", color: "#006633", fontSize: 10, fontWeight: 800, padding: "2px 8px", borderRadius: 6, textTransform: "uppercase" }}>Tutorial</span>
+                  <h3 style={{ fontSize: 14, fontWeight: 800, color: "var(--text-primary)", margin: "8px 0 6px 0", lineHeight: 1.3 }}>{activeVideo.title}</h3>
+                  <p style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.5, margin: "0 0 10px 0" }}>{activeVideo.description}</p>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <span style={{ background: "var(--bg-app)", fontSize: 10, fontWeight: 700, color: "var(--text-secondary)", padding: "3px 8px", borderRadius: 6 }}>⏱ {activeVideo.duration}</span>
+                    <span style={{ background: "var(--bg-app)", fontSize: 10, fontWeight: 700, color: "var(--text-secondary)", padding: "3px 8px", borderRadius: 6 }}>📑 {activeVideo.chapters.length} chapters</span>
+                  </div>
+                </div>
+
+                {/* Chapters list */}
+                <div style={{ background: "#fff", borderRadius: 12, border: "1px solid var(--border)", padding: 14, flex: 1 }}>
+                  <div style={{ fontSize: 10, fontWeight: 800, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.6px", marginBottom: 10 }}>📋 Chapters</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    {activeVideo.chapters.map((ch, i) => (
+                      <div
+                        key={i}
+                        style={{
+                          display: "flex", alignItems: "center", gap: 10, padding: "7px 10px", borderRadius: 8,
+                          background: "var(--bg-app)", fontSize: 11, color: "var(--text-primary)", fontWeight: 600,
+                          cursor: "default"
+                        }}
+                      >
+                        <span style={{ fontSize: 10, fontWeight: 800, color: "#006633", minWidth: 30 }}>{ch.time}</span>
+                        <span style={{ flex: 1 }}>{ch.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Video selector thumbnails (for multiple videos) */}
+            {VIDEO_TUTORIALS.length > 1 && (
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 800, color: "var(--text-primary)", marginBottom: 12 }}>More Tutorial Videos</div>
+                <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+                  {VIDEO_TUTORIALS.map(v => (
+                    <div
+                      key={v.id}
+                      onClick={() => setActiveVideo(v)}
+                      style={{
+                        background: activeVideo.id === v.id ? "#006633" : "#fff",
+                        color: activeVideo.id === v.id ? "#fff" : "var(--text-primary)",
+                        border: activeVideo.id === v.id ? "2px solid #006633" : "1px solid var(--border)",
+                        borderRadius: 10, padding: "10px 16px", cursor: "pointer", maxWidth: 220,
+                        fontSize: 11, fontWeight: 700, transition: "all 0.2s"
+                      }}
+                    >
+                      <div style={{ fontSize: 20, marginBottom: 6 }}>🎬</div>
+                      <div>{v.title}</div>
+                      <div style={{ fontSize: 10, opacity: 0.7, marginTop: 3 }}>⏱ {v.duration}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ═══════════ DOCUMENTS TAB ═══════════ */}
+        {videoTab === "docs" && (
+          <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+            {/* Filter Controls */}
+            <div style={{ background: "#fff", borderBottom: "1px solid var(--border)", padding: "12px 24px", flexShrink: 0, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+              <div style={{ position: "relative", flex: "1 1 240px", minWidth: 220 }}>
+                <input
+                  type="text"
+                  placeholder="Search by title, keyword, description..."
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  style={{ width: "100%", padding: "7px 12px 7px 32px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 11.5, background: "var(--bg-app)", outline: "none", boxSizing: "border-box" }}
+                />
+                <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", fontSize: 12, opacity: 0.5 }}>🔍</span>
+                {search && <button onClick={() => setSearch("")} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", border: "none", background: "none", cursor: "pointer", fontSize: 12, color: "var(--text-muted)" }}>✕</button>}
+              </div>
+              <select value={catFilter} onChange={e => setCatFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 11.5, background: "#fff", fontWeight: 600, color: "var(--text-primary)", outline: "none" }}>
+                <option value="all">All Categories</option>
+                <option value="User Manuals">📖 User Manuals</option>
+                <option value="Training Guidelines">🎓 Training Guidelines</option>
+                <option value="Contracts & Proposals">📝 Contracts &amp; Proposals</option>
+                <option value="Equipment Specs">🔬 Equipment Specs</option>
+                <option value="Technical Specifications">⚙️ Technical Specifications</option>
+              </select>
+              <select value={formatFilter} onChange={e => setFormatFilter(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 11.5, background: "#fff", fontWeight: 600, color: "var(--text-primary)", outline: "none" }}>
+                <option value="all">All Formats</option>
+                <option value="DOCX">📄 DOCX</option>
+                <option value="PDF">📕 PDF</option>
+                <option value="PPTX">📊 PPTX</option>
+              </select>
+              {(catFilter !== "all" || formatFilter !== "all" || search) && (
+                <button onClick={() => { setCatFilter("all"); setFormatFilter("all"); setSearch(""); }} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "#fff", fontSize: 11.5, fontWeight: 700, color: "#dc2626", cursor: "pointer" }}>Reset</button>
+              )}
+            </div>
+
+            {/* Document Grid */}
+            <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
         {filtered.length === 0 ? (
           <div style={{ textAlign: "center", padding: "60px 20px", color: "var(--text-muted)" }}>
             <BookOpen size={48} style={{ opacity: 0.2, marginBottom: 12 }} />
@@ -5136,6 +5307,9 @@ function DocumentsPage() {
                 </div>
               );
             })}
+          </div>
+        )}
+            </div>
           </div>
         )}
       </div>

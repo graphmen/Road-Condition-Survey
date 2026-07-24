@@ -22,7 +22,7 @@ const MapView = dynamic(() => import("@/components/MapView"), {
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "100%", height: "100%", background: "#f0f2f1" }}>
       <div style={{ textAlign: "center" }}>
         <div style={{ width: 36, height: 36, border: "3px solid rgba(0,102,51,0.15)", borderTop: "3px solid #006633", borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 8px" }} />
-        <div style={{ fontSize: 11, color: "#6b8072" }}>Loading mapâ€¦</div>
+        <div style={{ fontSize: 11, color: "#6b8072" }}>Loading map...</div>
       </div>
     </div>
   ),
@@ -35,7 +35,7 @@ export default function Dashboard() {
   const [records, setRecords]       = useState<any[]>([]);
   const [isLoading, setIsLoading]   = useState(true);
   const [isSyncing, setIsSyncing]   = useState(false);
-  const [sourceInfo, setSourceInfo] = useState("Loadingâ€¦");
+  const [sourceInfo, setSourceInfo] = useState("Loading...");
 
   const [activeModule, setActiveModule]       = useState<NavModule>("assets");
   const [fullPageModule, setFullPageModule]   = useState<NavModule | null>(null);
@@ -76,7 +76,7 @@ export default function Dashboard() {
       if (data.source === "server")   src = data.cached ? "Server (Cached)" : "Server Live";
       if (data.source === "supabase") src = "Server Live";
       if (data.fallback)              src = "Offline Cache";
-      setSourceInfo(src);
+      setSourceInfo(`${src} · ${data.records?.length || 0} records`);
     } catch (e: any) {
       setToast({ message: e.message, type: "error" });
     } finally {
@@ -91,7 +91,7 @@ export default function Dashboard() {
     let localRecords: any[] = [];
 
     const load = async () => {
-      // Phase 1 â€” instant local render
+      // Phase 1 — instant local render
       try {
         const localRes = await fetch("/api/roads?fallback=1");
         if (localRes.ok) {
@@ -124,7 +124,7 @@ export default function Dashboard() {
             let src = "Server Live";
             if (data.cached) src = "Server (Cached)";
             if (data.fallback) src = "Offline Cache";
-            setSourceInfo(`${src} Â· ${merged.length} records`);
+            setSourceInfo(`${src} · ${merged.length} records`);
           }
         }
       } catch (_) {}
@@ -138,7 +138,7 @@ export default function Dashboard() {
   useEffect(() => {
     if (typeof window !== "undefined" && "serviceWorker" in navigator) {
       if (process.env.NODE_ENV === "development") {
-        // Unregister stale SW without reloading â€” reload was resetting map state mid-click
+        // Unregister stale SW without reloading — reload was resetting map state mid-click
         navigator.serviceWorker.getRegistrations().then((registrations) => {
           for (const registration of registrations) {
             registration.unregister();
@@ -157,7 +157,7 @@ export default function Dashboard() {
     setIsSyncing(true);
     setToast({ message: "Refreshing data from server...", type: "info" });
     try {
-      await fetchRecords(true, true); // silent=true, force=true â€” bypass server cache
+      await fetchRecords(true, true); // silent=true, force=true — bypass server cache
       setToast({ message: "Data refreshed successfully!", type: "success" });
     } catch (e: any) {
       setToast({ message: e.message, type: "error" });
@@ -234,7 +234,7 @@ export default function Dashboard() {
   return (
     <div className="app-shell">
 
-      {/* â”€â”€ Toast â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* --- Toast ------------------------------------------------------------- */}
       {toast && (
         <div className="toast-container">
           <div className="toast-item" style={{ borderColor: toast.type === "success" ? "#006633" : toast.type === "error" ? "#dc2626" : "#1d6fa4" }}>
@@ -249,24 +249,24 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* â”€â”€ Header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* --- Header ------------------------------------------------------------ */}
       <header className="app-header">
         <div className="header-logo-zone">
           <img src="/coat_of_arms.png" alt="Zimbabwe Coat of Arms" className="header-coat" />
         </div>
         <div className="header-title-zone">
-          <div className="header-title-main">ROADS DEPARTMENT â€” ROADS CONDITION DASHBOARD</div>
-          <div className="header-title-sub">Ministry of Transport &amp; Infrastructural Development Â· Republic of Zimbabwe</div>
+          <div className="header-title-main">ROADS DEPARTMENT — ROADS CONDITION DASHBOARD</div>
+          <div className="header-title-sub">Ministry of Transport &amp; Infrastructural Development · Republic of Zimbabwe</div>
         </div>
         <div className="header-actions">
           <div style={{ fontSize: 10, color: "rgba(255,255,255,0.65)", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 1 }}>
             <span style={{ color: "rgba(255,255,255,0.5)", textTransform: "uppercase", fontSize: 8.5, letterSpacing: "0.6px" }}>Data Source</span>
-            <span style={{ fontWeight: 600, color: "#fff" }}>{isLoading ? "Loadingâ€¦" : sourceInfo}</span>
+            <span style={{ fontWeight: 600, color: "#fff" }}>{isLoading ? "Loading..." : sourceInfo}</span>
             {lastSynced && <span style={{ color: "rgba(255,255,255,0.4)", fontSize: 8 }}>Last update: {lastSynced.toLocaleTimeString()}</span>}
           </div>
           <button className="btn-sync" onClick={handleSync} disabled={isSyncing}>
             <RefreshCw size={13} className={isSyncing ? "spin-icon" : ""} />
-            {isSyncing ? "Refreshingâ€¦" : "Refresh Data"}
+            {isSyncing ? "Refreshing..." : "Refresh Data"}
           </button>
           <div className="user-chip">
             <div style={{ textAlign: "right" }}>
@@ -278,7 +278,7 @@ export default function Dashboard() {
         </div>
       </header>
 
-      {/* â”€â”€ Body â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* --- Body -------------------------------------------------------------- */}
       <div className={`app-body${fullPageModule ? " fullpage-active" : ""}`}>
 
         {/* Left icon nav rail */}
@@ -292,13 +292,13 @@ export default function Dashboard() {
           }}
         />
 
-        {/* Inner panel â€” only shown for assets/settings, not during full-page */}
+        {/* Inner panel — only shown for assets/settings, not during full-page */}
         {!fullPageModule && (
           <div className={`inner-panel${innerOpen ? "" : " collapsed"}`}>
             {isLoading ? (
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--text-muted)", fontSize: 12, flexDirection: "column", gap: 10 }}>
                 <div style={{ width: 28, height: 28, border: "3px solid rgba(0,102,51,0.15)", borderTop: "3px solid #006633", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
-                Loading dataâ€¦
+                Loading data...
               </div>
             ) : (
               <InnerPanel
@@ -330,7 +330,7 @@ export default function Dashboard() {
           {!mapUnlocked ? (
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "100%", height: "100%", background: "#f0f2f1", flexDirection: "column", gap: 10 }}>
               <div style={{ width: 36, height: 36, border: "3px solid rgba(0,102,51,0.15)", borderTop: "3px solid #006633", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
-              <div style={{ fontSize: 11, color: "#6b8072" }}>Loading telemetry dataâ€¦</div>
+              <div style={{ fontSize: 11, color: "#6b8072" }}>Loading telemetry data...</div>
             </div>
           ) : (
             <MapErrorBoundary>
@@ -378,13 +378,13 @@ export default function Dashboard() {
 
       </div>
 
-      {/* â”€â”€ Footer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* --- Footer ------------------------------------------------------------ */}
       <footer className="app-footer">
         <div className="footer-left">
           <img src="/coat_of_arms.png" alt="Zimbabwe Coat of Arms" className="footer-logo" />
           <div>
-            <div className="footer-brand-name">Roads Department â€” Roads Condition Dashboard</div>
-            <div className="footer-brand-sub">Ministry of Transport &amp; Infrastructural Development Â· Republic of Zimbabwe</div>
+            <div className="footer-brand-name">Roads Department — Roads Condition Dashboard</div>
+            <div className="footer-brand-sub">Ministry of Transport &amp; Infrastructural Development · Republic of Zimbabwe</div>
           </div>
         </div>
         <div className="footer-center">
@@ -392,7 +392,7 @@ export default function Dashboard() {
           <div className="footer-divider" />
           <span>Survey Year: 2026</span>
           <div className="footer-divider" />
-          <span>Highways: A1 Â· A2 Â· A3 Â· A4 Â· A5</span>
+          <span>Highways: A1 · A2 · A3 · A4 · A5</span>
           <div className="footer-divider" />
           <span>{records.length} Records</span>
         </div>

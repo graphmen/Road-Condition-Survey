@@ -68,7 +68,7 @@ const formatKey = (key: string): string => {
 };
 
 const formatValue = (val: any): string => {
-  if (val === null || val === undefined) return "â€”";
+  if (val === null || val === undefined) return "—";
   if (typeof val === "boolean") return val ? "YES" : "NO";
   const s = String(val);
   if (s.toLowerCase() === "yes" || s.toLowerCase() === "no") return s.toUpperCase();
@@ -221,7 +221,7 @@ export default function RightPanel({ records, selectedRecord, onClose }: RightPa
 
       <div className="right-panel-body">
 
-        {/* â”€â”€ Asset Inspector â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+        {/* --- Asset Inspector ----------------------------------- */}
         {selectedRecord ? (
           <div>
             <div className="section-label">Asset Inspector</div>
@@ -236,18 +236,18 @@ export default function RightPanel({ records, selectedRecord, onClose }: RightPa
                 </span>
               </div>
 
-              {/* â”€â”€ Photos Section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+              {/* --- Photos Section --------------------------------- */}
               <PhotosSection photos={selectedPhotos} />
 
 
               <div className="detail-rows">
                 <div className="detail-row">
                   <span className="detail-row-label">Road Route</span>
-                  <span className="detail-row-val">{(selectedRecord.road_name ?? "â€”").split(" (")[0]}</span>
+                  <span className="detail-row-val">{(selectedRecord.road_name ?? "—").split(" (")[0]}</span>
                 </div>
                 <div className="detail-row">
                   <span className="detail-row-label">Section</span>
-                  <span className="detail-row-val">{selectedRecord.section_name ?? "â€”"}</span>
+                  <span className="detail-row-val">{selectedRecord.section_name ?? "—"}</span>
                 </div>
                 {selectedRecord.province && (
                   <div className="detail-row">
@@ -263,11 +263,11 @@ export default function RightPanel({ records, selectedRecord, onClose }: RightPa
                 )}
                 <div className="detail-row">
                   <span className="detail-row-label">Surveyor</span>
-                  <span className="detail-row-val">{selectedRecord.surveyor_name ?? "â€”"}</span>
+                  <span className="detail-row-val">{selectedRecord.surveyor_name ?? "—"}</span>
                 </div>
                 <div className="detail-row">
                   <span className="detail-row-label">Date</span>
-                  <span className="detail-row-val">{selectedRecord.survey_date ?? "â€”"}</span>
+                  <span className="detail-row-val">{selectedRecord.survey_date ?? "—"}</span>
                 </div>
 
                 {/* Coordinates */}
@@ -284,7 +284,7 @@ export default function RightPanel({ records, selectedRecord, onClose }: RightPa
                 {(selectedRecord.image_SADC_compliant || selectedRecord.image_sadc_compliant || selectedRecord.sadc_compliant || selectedRecord.sign_sadc_compliant) && (
                   <div className="detail-row">
                     <span className="detail-row-label">SADC Compliant</span>
-                    <span className="detail-row-val">{(getSadcValue(selectedRecord) || "â€”").toUpperCase()}</span>
+                    <span className="detail-row-val">{(getSadcValue(selectedRecord) || "—").toUpperCase()}</span>
                   </div>
                 )}
 
@@ -311,7 +311,7 @@ export default function RightPanel({ records, selectedRecord, onClose }: RightPa
           </div>
         )}
 
-        {/* â”€â”€ Condition Donut â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+        {/* --- Condition Distribution ---------------------------- */}
         <div>
           <div className="section-label">Condition Distribution</div>
           <div className="analytics-card" style={{ marginTop: 8 }}>
@@ -339,7 +339,7 @@ export default function RightPanel({ records, selectedRecord, onClose }: RightPa
           </div>
         </div>
 
-        {/* â”€â”€ Highway Breakdown â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+        {/* --- Highway Breakdown --------------------------------- */}
         {hwData.length > 0 && (
           <div>
             <div className="section-label">Highway Asset Count</div>
@@ -358,7 +358,7 @@ export default function RightPanel({ records, selectedRecord, onClose }: RightPa
           </div>
         )}
 
-        {/* â”€â”€ SADC Compliance â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+        {/* --- SADC Compliance ----------------------------------- */}
         <div>
           <div className="section-label">SADC Sign Compliance</div>
           <div className="analytics-card" style={{ marginTop: 8 }}>
@@ -373,16 +373,16 @@ export default function RightPanel({ records, selectedRecord, onClose }: RightPa
           </div>
         </div>
 
-        {/* â”€â”€ Top Poor Assets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+        {/* --- Top Poor Assets ----------------------------------- */}
         {topPoor.length > 0 && (
           <div>
-            <div className="section-label">âš  Poor Condition Assets</div>
+            <div className="section-label">⚠️ Poor Condition Assets</div>
             <div className="analytics-card" style={{ marginTop: 8, padding: "8px 10px" }}>
               {topPoor.map((r, i) => (
                 <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: i < topPoor.length - 1 ? "1px solid var(--border)" : "none", fontSize: 11 }}>
                   <div>
                     <div style={{ fontWeight: 600, color: "var(--text-primary)" }}>{getAssetName(r)}</div>
-                    <div style={{ fontSize: 9.5, color: "var(--text-muted)" }}>{(r.road_name ?? "â€”").split(" (")[0]}</div>
+                    <div style={{ fontSize: 9.5, color: "var(--text-muted)" }}>{(r.road_name ?? "—").split(" (")[0]}</div>
                   </div>
                   <ChevronRight size={13} color="var(--text-muted)" />
                 </div>
@@ -391,7 +391,7 @@ export default function RightPanel({ records, selectedRecord, onClose }: RightPa
           </div>
         )}
 
-        {/* â”€â”€ System Actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+        {/* --- System Actions ------------------------------------ */}
         <div>
           <div className="section-label">System Actions</div>
           <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 7 }}>

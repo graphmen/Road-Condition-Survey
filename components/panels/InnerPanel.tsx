@@ -23,11 +23,11 @@ interface InnerPanelProps {
 }
 
 const HIGHWAYS = [
-  { id: "A1", name: "A1 Highway", route: "Harare â€“ Chirundu", color: "#006633" },
-  { id: "A2", name: "A2 Highway", route: "Harare â€“ Mutare",   color: "#007a3d" },
-  { id: "A3", name: "A3 Highway", route: "Harare â€“ Bulawayo", color: "#004d26" },
-  { id: "A4", name: "A4 Highway", route: "Bulawayo â€“ Beitbridge", color: "#FFD100" },
-  { id: "A5", name: "A5 Highway", route: "Bulawayo â€“ Plumtree", color: "#e0b800" },
+  { id: "A1", name: "A1 Highway", route: "Harare - Chirundu", color: "#006633" },
+  { id: "A2", name: "A2 Highway", route: "Harare - Mutare",   color: "#007a3d" },
+  { id: "A3", name: "A3 Highway", route: "Harare - Bulawayo", color: "#004d26" },
+  { id: "A4", name: "A4 Highway", route: "Bulawayo - Beitbridge", color: "#FFD100" },
+  { id: "A5", name: "A5 Highway", route: "Bulawayo - Plumtree", color: "#e0b800" },
 ];
 
 function highwayCount(records: any[], id: string) {
@@ -40,7 +40,7 @@ function highwayGood(records: any[], id: string) {
   return Math.round((hw.filter(r => getRecordStatus(r) === "good").length / hw.length) * 100);
 }
 
-// â”€â”€â”€ Analytics sub-tabs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// --- Analytics sub-tabs ------------------------------------
 type AnalyticsTab = "condition" | "types" | "highways" | "compliance";
 
 function AnalyticsInner({ records }: { records: any[] }) {
@@ -181,7 +181,7 @@ function AnalyticsInner({ records }: { records: any[] }) {
   );
 }
 
-// â”€â”€â”€ Dashboard overview â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// --- Dashboard overview ------------------------------------
 function DashboardInner({ records }: { records: any[] }) {
   const total  = records.length;
   const good   = records.filter(r => getRecordStatus(r) === "good").length;
@@ -226,7 +226,7 @@ function DashboardInner({ records }: { records: any[] }) {
 
       {worstAssets.length > 0 && (
         <>
-          <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.7px", color: "var(--text-muted)", marginBottom: 4 }}>âš  Poor Condition Assets</div>
+          <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.7px", color: "var(--text-muted)", marginBottom: 4 }}>⚠️ Poor Condition Assets</div>
           {worstAssets.map((r, i) => (
             <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, padding: "6px 0", borderBottom: "1px solid var(--border)", color: "var(--text-secondary)" }}>
               <span style={{ fontWeight: 600 }}>{getAssetName(r)}</span>
@@ -239,7 +239,7 @@ function DashboardInner({ records }: { records: any[] }) {
   );
 }
 
-// â”€â”€â”€ Database table â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// --- Database table ----------------------------------------
 function DatabaseInner({ records, onSelectRecord, selectedRecord }: { records: any[]; onSelectRecord:(r:any)=>void; selectedRecord:any|null; }) {
   const [page, setPage] = useState(0);
   const pages = Math.ceil(records.length / PAGE_SIZE);
@@ -269,12 +269,12 @@ function DatabaseInner({ records, onSelectRecord, selectedRecord }: { records: a
                   <td style={{ color: "var(--text-muted)" }}>{page * PAGE_SIZE + i + 1}</td>
                   <td style={{ fontWeight: 600 }}>{getAssetName(r)}</td>
                   <td>{getAssetType(r)}</td>
-                  <td>{(r.road_name ?? "â€”").split(" (")[0]}</td>
+                  <td>{(r.road_name ?? "—").split(" (")[0]}</td>
                   <td style={{ fontFamily: "ui-monospace, monospace", fontSize: 10 }}>
-                    {gpsLabel ?? "â€”"}
+                    {gpsLabel ?? "—"}
                   </td>
                   <td><span className={`badge ${cond}`}>{formatStatusLabel(cond)}</span></td>
-                  <td>{r.survey_date ?? "â€”"}</td>
+                  <td>{r.survey_date ?? "—"}</td>
                 </tr>
               );
             })}
@@ -282,15 +282,17 @@ function DatabaseInner({ records, onSelectRecord, selectedRecord }: { records: a
         </table>
       </div>
       <div className="pagination-row">
-        <button className="page-btn" onClick={() => setPage(p => Math.max(0, p-1))} disabled={page === 0}>â† Prev</button>
+        <button className="page-btn" onClick={() => setPage(p => Math.max(0, p-1))} disabled={page === 0}>← Prev</button>
         <span>Page {page+1} of {Math.max(1, pages)}</span>
-        <button className="page-btn" onClick={() => setPage(p => Math.min(pages-1, p+1))} disabled={page >= pages-1}>Next â†’</button>
+        <button className="page-btn" onClick={() => setPage(p => Math.min(pages-1, p+1))} disabled={page >= pages-1}>Next →</button>
       </div>
     </>
   );
 }
 
-// â”€â”€â”€ Export panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// -----------------------------------------------------------
+// --- Export panel ------------------------------------------
+// -----------------------------------------------------------
 function ExportInner({ records }: { records: any[] }) {
   const [fmt, setFmt] = useState("csv");
   const [road, setRoad] = useState("all");
@@ -344,7 +346,9 @@ function ExportInner({ records }: { records: any[] }) {
   );
 }
 
-// â”€â”€â”€ Main InnerPanel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// -----------------------------------------------------------
+// --- Main InnerPanel ---------------------------------------
+// -----------------------------------------------------------
 export default function InnerPanel({ module, records, selectedRecord, onSelectRecord, selectedRoad, onRoadFilter }: InnerPanelProps) {
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
@@ -386,7 +390,7 @@ export default function InnerPanel({ module, records, selectedRecord, onSelectRe
 
   const { icon, label } = getTitle();
 
-  // â”€â”€â”€ Highways module â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // --- Highways module --------------------------------------
   if (module === "highways") {
     return (
       <>
@@ -419,7 +423,7 @@ export default function InnerPanel({ module, records, selectedRecord, onSelectRe
     );
   }
 
-  // â”€â”€â”€ Analytics module â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // --- Analytics module -------------------------------------
   if (module === "analytics") {
     return (
       <>
@@ -433,7 +437,7 @@ export default function InnerPanel({ module, records, selectedRecord, onSelectRe
     );
   }
 
-  // â”€â”€â”€ Dashboard module â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // --- Dashboard module -------------------------------------
   if (module === "dashboard") {
     return (
       <>
@@ -447,7 +451,7 @@ export default function InnerPanel({ module, records, selectedRecord, onSelectRe
     );
   }
 
-  // â”€â”€â”€ Database Explorer module â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // --- Database Explorer module -----------------------------
   if (module === "database") {
     return (
       <>
@@ -462,7 +466,7 @@ export default function InnerPanel({ module, records, selectedRecord, onSelectRe
     );
   }
 
-  // â”€â”€â”€ Export module â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // --- Export module ----------------------------------------
   if (module === "export") {
     return (
       <>
@@ -476,7 +480,7 @@ export default function InnerPanel({ module, records, selectedRecord, onSelectRe
     );
   }
 
-  // â”€â”€â”€ Settings module â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // --- Settings module --------------------------------------
   if (module === "settings") {
     return (
       <>
@@ -524,7 +528,7 @@ export default function InnerPanel({ module, records, selectedRecord, onSelectRe
     );
   }
 
-  // â”€â”€â”€ Default: Assets / Survey list â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // --- Default: Assets / Survey list ------------------------
   return (
     <>
       <div className="inner-panel-header">
@@ -534,29 +538,29 @@ export default function InnerPanel({ module, records, selectedRecord, onSelectRe
       <div className="panel-search-zone">
         <div className="search-box">
           <Search size={13} className="search-icon" />
-          <input placeholder="Search asset, road, surveyorâ€¦" value={search} onChange={e => { setSearch(e.target.value); setPage(0); }} />
+          <input placeholder="Search asset, road, surveyor..." value={search} onChange={e => { setSearch(e.target.value); setPage(0); }} />
         </div>
         <div className="filter-row">
           <select className="filter-pill" value={typeFilter} onChange={e => { setTypeFilter(e.target.value); setPage(0); }} style={{ fontWeight: "bold" }}>
-            <option value="all">ðŸ” All</option>
-            <option value="sealed">ðŸ›£ï¸ Sealed Roads</option>
-            <option value="gravel">ðŸª¨ Gravel Roads</option>
-            <option value="earth">ðŸšœ Earth Roads</option>
-            <option value="bridge">ðŸŒ‰ Bridges</option>
-            <option value="footbridge">ðŸš¶ Foot Bridges</option>
-            <option value="rail_crossing">ðŸ›¤ï¸ Rail Crossings</option>
-            <option value="tollgate">ðŸª™ Tollgates</option>
-            <option value="drift">ðŸŒŠ Drifts</option>
-            <option value="culvert">ðŸ•³ï¸ Culverts</option>
-            <option value="piped_causeway">ðŸŒ Piped Causeways</option>
-            <option value="shelvet">ðŸ§± Shelverts</option>
-            <option value="grid">ðŸ„ Cattle Grids</option>
-            <option value="layby">ðŸ…¿ï¸ Laybys</option>
-            <option value="busstop">ðŸšŒ Bus Stops</option>
-            <option value="junction">ðŸ”€ Junctions</option>
-            <option value="sign">âš ï¸ Road Signs</option>
-            <option value="traffic_lights">ðŸš¦ Traffic Lights</option>
-            <option value="streetlight">ðŸ’¡ Streetlights</option>
+            <option value="all">All</option>
+            <option value="sealed">Sealed Roads</option>
+            <option value="gravel">Gravel Roads</option>
+            <option value="earth">Earth Roads</option>
+            <option value="bridge">Bridges</option>
+            <option value="footbridge">Foot Bridges</option>
+            <option value="rail_crossing">Rail Crossings</option>
+            <option value="tollgate">Tollgates</option>
+            <option value="drift">Drifts</option>
+            <option value="culvert">Culverts</option>
+            <option value="piped_causeway">Piped Causeways</option>
+            <option value="shelvet">Shelverts</option>
+            <option value="grid">Cattle Grids</option>
+            <option value="layby">Laybys</option>
+            <option value="busstop">Bus Stops</option>
+            <option value="junction">Junctions</option>
+            <option value="sign">⚠️ Road Signs</option>
+            <option value="traffic_lights">Traffic Lights</option>
+            <option value="streetlight">Streetlights</option>
           </select>
           <select className="filter-pill" value={condFilter} onChange={e => { setCondFilter(e.target.value); setPage(0); }}>
             <option value="all">All Conditions</option>
@@ -589,10 +593,10 @@ export default function InnerPanel({ module, records, selectedRecord, onSelectRe
                 <div className="asset-card-name">{name}</div>
                 <span className={`badge ${cond}`}>{formatStatusLabel(cond)}</span>
               </div>
-              <div className="asset-card-sub">{(r.road_name ?? "â€”").split(" (")[0]}{r.section_name ? ` Â· ${r.section_name}` : ""}</div>
+              <div className="asset-card-sub">{(r.road_name ?? "—").split(" (")[0]}{r.section_name ? ` · ${r.section_name}` : ""}</div>
               <div className="asset-card-meta">
                 <span className="asset-card-type">{type}</span>
-                <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{r.survey_date ?? "â€”"}</span>
+                <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{r.survey_date ?? "—"}</span>
               </div>
               <div style={{ marginTop: 4, fontSize: 10, fontFamily: "ui-monospace, monospace", color: "var(--text-secondary)" }}>
                 {gpsLabel ?? "No GPS"}
@@ -603,9 +607,9 @@ export default function InnerPanel({ module, records, selectedRecord, onSelectRe
       </div>
 
       <div className="pagination-row">
-        <button className="page-btn" onClick={() => setPage(p => Math.max(0,p-1))} disabled={page === 0}>â† Prev</button>
+        <button className="page-btn" onClick={() => setPage(p => Math.max(0,p-1))} disabled={page === 0}>← Prev</button>
         <span>Page {page+1} / {Math.max(1,pages)} ({filtered.length})</span>
-        <button className="page-btn" onClick={() => setPage(p => Math.min(pages-1,p+1))} disabled={page >= pages-1}>Next â†’</button>
+        <button className="page-btn" onClick={() => setPage(p => Math.min(pages-1,p+1))} disabled={page >= pages-1}>Next →</button>
       </div>
 
       <div className="panel-footer-strip">
