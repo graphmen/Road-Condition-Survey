@@ -349,7 +349,7 @@ function ExportInner({ records }: { records: any[] }) {
 // -----------------------------------------------------------
 // --- Main InnerPanel ---------------------------------------
 // -----------------------------------------------------------
-export default function InnerPanel({ module, records, selectedRecord, onSelectRecord, selectedRoad, onRoadFilter }: InnerPanelProps) {
+export default function InnerPanel({ module, records, selectedRecord, onSelectRecord, selectedRoad, onRoadFilter, onNavSelect }: InnerPanelProps) {
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
   const [condFilter, setCondFilter] = useState("all");
