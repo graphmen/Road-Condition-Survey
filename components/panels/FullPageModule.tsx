@@ -3509,15 +3509,7 @@ function ExportPage({ records, onSelectRecord }: { records: any[]; onSelectRecor
 /* ═══════════════════════════════════════════════════════════════════════════
    MAIN EXPORT
  ════════════════════════════════════════════════════════════════════════════ */
-interface FullPageModuleProps {
-  module: NavModule;
-  records: any[];
-  onSelectRecord: (r: any) => void;
-  onClose: () => void;
-  onRefresh?: () => void;
-  onToast?: (msg: string, type: "success" | "error" | "info") => void;
-  lastSynced?: Date | null;
-}
+
 
 
 
