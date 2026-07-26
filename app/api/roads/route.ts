@@ -300,6 +300,13 @@ function normaliseRecord(record: any) {
     }
   }
 
+  // Ensure photo and photos array are normalized on output
+  if (!out.photos || !Array.isArray(out.photos) || out.photos.length === 0) {
+    if (out.photo) {
+      out.photos = [out.photo];
+    }
+  }
+
   return out;
 }
 
