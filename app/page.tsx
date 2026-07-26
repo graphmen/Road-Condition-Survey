@@ -2,11 +2,12 @@
 
 import React, { useState, useEffect } from "react";
 import dynamic from "next/dynamic";
-import { RefreshCw, CheckCircle, AlertTriangle, Info, X, ChevronLeft, ChevronRight } from "lucide-react";
+import { RefreshCw, CheckCircle, AlertTriangle, Info, X, ChevronLeft, ChevronRight, LogOut, ShieldCheck, User } from "lucide-react";
 import LeftNav, { type NavModule } from "@/components/panels/LeftNav";
 import InnerPanel from "@/components/panels/InnerPanel";
 import RightPanel from "@/components/panels/RightPanel";
 import FullPageModule from "@/components/panels/FullPageModule";
+import LoginModal from "@/components/LoginModal";
 import MapErrorBoundary from "@/components/MapErrorBoundary";
 import {
   enrichRecordGeo,
@@ -46,7 +47,7 @@ const SIMULATION_USERS: Record<UserRole, UserProfile> = {
   },
   national_coordinator: {
     id: "usr-national-1",
-    email: "national.coord@transport.gov.zw",
+    email: "national.coordinator@transport.gov.zw",
     full_name: "Eng. C. Moyo",
     role: "national_coordinator",
     is_active: true
@@ -79,14 +80,15 @@ const SIMULATION_USERS: Record<UserRole, UserProfile> = {
   }
 };
 
-export default function Dashboard() {
+export default function Home() {
   const [records, setRecords]       = useState<any[]>([]);
   const [isLoading, setIsLoading]   = useState(true);
   const [isSyncing, setIsSyncing]   = useState(false);
   const [sourceInfo, setSourceInfo] = useState("Loading...");
 
-  // RBAC User Session state
+  // Active user session state
   const [currentUser, setCurrentUser] = useState<UserProfile>(SIMULATION_USERS.master_admin);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
 
   const [activeModule, setActiveModule]       = useState<NavModule>("assets");
   const [fullPageModule, setFullPageModule]   = useState<NavModule | null>(null);
@@ -101,6 +103,29 @@ export default function Dashboard() {
   const [mapUnlocked, setMapUnlocked] = useState(false);
 
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
+
+  // Check saved session on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("zim_roads_user");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && parsed.role) {
+          setCurrentUser(parsed);
+          setIsAuthenticated(true);
+          return;
+        }
+      }
+    } catch (_) {}
+    setIsAuthenticated(false);
+  }, []);
+
+  const handleSignOut = () => {
+    localStorage.removeItem("zim_roads_user");
+    localStorage.removeItem("zim_roads_token");
+    setIsAuthenticated(false);
+    setToast({ message: "You have been signed out.", type: "info" });
+  };
 
   // Auto-dismiss toast
   useEffect(() => {
@@ -322,35 +347,69 @@ export default function Dashboard() {
             {isSyncing ? "Refreshing..." : "Refresh Data"}
           </button>
           
-          {/* Unified Authentication & Role Simulator Chip */}
+          {/* Unified Authentication User Profile Chip & Sign Out */}
           <div className="user-chip" style={{ display: "flex", alignItems: "center", gap: 10, background: "rgba(0,0,0,0.25)", padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)" }}>
             <div style={{ textAlign: "right" }}>
               <div style={{ fontWeight: 700, fontSize: 11, color: "#fff" }}>{currentUser.full_name}</div>
-              <select
-                value={currentUser.role}
-                onChange={e => {
-                  const r = e.target.value as UserRole;
-                  setCurrentUser(SIMULATION_USERS[r]);
-                  setToast({ message: `Active Role Context: ${ROLE_LABELS[r]}`, type: "info" });
-                }}
-                style={{
-                  background: "rgba(255,255,255,0.15)", color: "#FFD100", border: "1px solid rgba(255,255,255,0.25)",
-                  borderRadius: 4, padding: "2px 6px", fontSize: 9.5, fontWeight: 700, cursor: "pointer", outline: "none", marginTop: 2
-                }}
-              >
-                <option value="master_admin" style={{ color: "#000" }}>🔑 Master Admin (Global Scope)</option>
-                <option value="national_coordinator" style={{ color: "#000" }}>🇿🇼 National Coordinator (Global Scope)</option>
-                <option value="provincial_coordinator" style={{ color: "#000" }}>📍 Provincial Coord (Harare)</option>
-                <option value="district_coordinator" style={{ color: "#000" }}>🏢 District Coord (Harare Central)</option>
-                <option value="data_collector" style={{ color: "#000" }}>📱 Data Collector (Personal Scope)</option>
-              </select>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end", marginTop: 2 }}>
+                <select
+                  value={currentUser.role}
+                  onChange={e => {
+                    const r = e.target.value as UserRole;
+                    setCurrentUser(SIMULATION_USERS[r]);
+                    setToast({ message: `Active Role Scope: ${ROLE_LABELS[r]}`, type: "info" });
+                  }}
+                  style={{
+                    background: "rgba(255,255,255,0.15)", color: "#FFD100", border: "1px solid rgba(255,255,255,0.25)",
+                    borderRadius: 4, padding: "2px 6px", fontSize: 9.5, fontWeight: 700, cursor: "pointer", outline: "none"
+                  }}
+                >
+                  <option value="master_admin" style={{ color: "#000" }}>🔑 Master Admin (Global Scope)</option>
+                  <option value="national_coordinator" style={{ color: "#000" }}>🇿🇼 National Coordinator (Global Scope)</option>
+                  <option value="provincial_coordinator" style={{ color: "#000" }}>📍 Provincial Coord (Harare)</option>
+                  <option value="district_coordinator" style={{ color: "#000" }}>🏢 District Coord (Harare Central)</option>
+                  <option value="data_collector" style={{ color: "#000" }}>📱 Data Collector (Personal Scope)</option>
+                </select>
+              </div>
             </div>
             <div className="user-avatar" style={{ background: "#FFD100", color: "#003d1f", fontWeight: 800 }}>
               {currentUser.full_name.charAt(5) || "A"}
             </div>
+            
+            <button
+              onClick={handleSignOut}
+              title="Sign Out / Lock Portal Session"
+              style={{
+                background: "rgba(220, 38, 38, 0.25)",
+                color: "#ff8888",
+                border: "1px solid rgba(220, 38, 38, 0.4)",
+                borderRadius: 6,
+                padding: "4px 8px",
+                fontSize: 10,
+                fontWeight: 700,
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+                marginLeft: 4
+              }}
+            >
+              <LogOut size={12} /> Sign Out
+            </button>
           </div>
         </div>
       </header>
+
+      {/* Render Login Screen Overlay when unauthenticated */}
+      {isAuthenticated === false && (
+        <LoginModal
+          onLoginSuccess={(user) => {
+            setCurrentUser(user);
+            setIsAuthenticated(true);
+            setToast({ message: `Authenticated: Welcome back, ${user.full_name}!`, type: "success" });
+          }}
+        />
+      )}
 
       {/* --- Body -------------------------------------------------------------- */}
       <div className={`app-body${fullPageModule ? " fullpage-active" : ""}`}>
