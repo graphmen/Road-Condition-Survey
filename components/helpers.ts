@@ -184,64 +184,67 @@ export function getStatusColor(status: string): string {
 
 const CATEGORY_INFRASTRUCTURE_PHOTOS: Record<string, string[]> = {
   sealed: [
-    "https://images.unsplash.com/photo-1515162816999-a0c47dc192f7?auto=format&fit=crop&w=1000&q=80",
-    "https://images.unsplash.com/photo-1544620347-c4fd4a3d5957?auto=format&fit=crop&w=1000&q=80",
-    "https://images.unsplash.com/photo-1596464716127-f2a82984de30?auto=format&fit=crop&w=1000&q=80",
+    "/photos/sealed.png",
+    "/photos/mota.png",
+    "/photos/WhatsApp_Image_2025-11-28_at_14.26.02.jpeg",
+    "/photos/WhatsApp_Image_2025-11-28_at_14.26.08.jpeg"
   ],
   gravel: [
-    "https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=1000&q=80",
-    "https://images.unsplash.com/photo-1519817650390-64a93db51149?auto=format&fit=crop&w=1000&q=80",
+    "/photos/gravel.png",
+    "/photos/WhatsApp_Image_2025-11-28_at_14.26.15.jpeg",
+    "/photos/WhatsApp_Image_2025-11-28_at_14.26.22.jpeg"
   ],
   earth: [
-    "https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?auto=format&fit=crop&w=1000&q=80",
-    "https://images.unsplash.com/photo-1500382017468-9049fed747ef?auto=format&fit=crop&w=1000&q=80",
+    "/photos/earth.jpg",
+    "/photos/WhatsApp_Image_2025-11-28_at_14.26.28.jpeg",
+    "/photos/WhatsApp_Image_2025-11-28_at_14.26.56.jpeg"
   ],
   bridge: [
-    "https://images.unsplash.com/photo-1545558014-8692077e9b5c?auto=format&fit=crop&w=1000&q=80",
-    "https://images.unsplash.com/photo-1513694203232-719a280e022f?auto=format&fit=crop&w=1000&q=80",
+    "/photos/bridges.jpg",
+    "/photos/WhatsApp_Image_2025-11-28_at_14.27.04.jpeg"
   ],
   footbridge: [
-    "https://images.unsplash.com/photo-1578637387939-43c525550085?auto=format&fit=crop&w=1000&q=80",
+    "/photos/footbridge.jpg"
   ],
   culvert: [
-    "https://images.unsplash.com/photo-1621905251189-08b45d6a269e?auto=format&fit=crop&w=1000&q=80",
+    "/photos/culvet.png"
   ],
   shelvet: [
-    "https://images.unsplash.com/photo-1590496793929-36417d3117de?auto=format&fit=crop&w=1000&q=80",
+    "/photos/shelvet.jpg"
   ],
   piped_causeway: [
-    "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1000&q=80",
+    "/photos/piped.jpg"
   ],
   drift: [
-    "https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?auto=format&fit=crop&w=1000&q=80",
+    "/photos/drift.jpg"
   ],
   sign: [
-    "https://images.unsplash.com/photo-1572949645841-094f3a9c4c94?auto=format&fit=crop&w=1000&q=80",
-    "https://images.unsplash.com/photo-1563986768609-322da13575f3?auto=format&fit=crop&w=1000&q=80",
+    "/photos/sings.png",
+    "/photos/sings.jpg"
   ],
   traffic_light: [
-    "https://images.unsplash.com/photo-1508873696983-2df515122519?auto=format&fit=crop&w=1000&q=80",
+    "/photos/trafficlights.jpg"
   ],
   streetlight: [
-    "https://images.unsplash.com/photo-1517457373958-b7bdd4587205?auto=format&fit=crop&w=1000&q=80",
+    "/photos/streetlights.png"
   ],
   busstop: [
-    "https://images.unsplash.com/photo-1570125909232-eb263c188f7e?auto=format&fit=crop&w=1000&q=80",
+    "/photos/bustop.jpg"
   ],
   layby: [
-    "https://images.unsplash.com/photo-1519003722824-194d4455a60c?auto=format&fit=crop&w=1000&q=80",
+    "/photos/laybye.jpg"
   ],
   tollgate: [
-    "https://images.unsplash.com/photo-1568605117036-5fe5e7bab0b7?auto=format&fit=crop&w=1000&q=80",
+    "/photos/tollgate.jpg"
   ],
   rail_crossing: [
-    "https://images.unsplash.com/photo-1474487548417-781cb71495f3?auto=format&fit=crop&w=1000&q=80",
+    "/photos/railevel.png"
   ],
   grid: [
-    "https://images.unsplash.com/photo-1509114397022-ed747cca3f65?auto=format&fit=crop&w=1000&q=80",
+    "/photos/grid.jpg"
   ],
   junction: [
-    "https://images.unsplash.com/photo-1502877338535-766e1452684a?auto=format&fit=crop&w=1000&q=80",
+    "/photos/junction.png"
   ]
 };
 
