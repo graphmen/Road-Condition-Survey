@@ -54,12 +54,6 @@ export default function LoginModal({ onLoginSuccess }: LoginModalProps) {
     }
   };
 
-  const fillMasterAdmin = () => {
-    setUsernameOrEmail("ict.admin@transport.gov.zw");
-    setPassword("Admin@ZimRoads2026!");
-    setError("");
-  };
-
   return (
     <div style={{
       position: "fixed",
@@ -236,32 +230,6 @@ export default function LoginModal({ onLoginSuccess }: LoginModalProps) {
               )}
             </button>
           </form>
-
-          {/* Quick Master Admin Login Fill */}
-          <div style={{ marginTop: 20, paddingTop: 16, borderTop: "1px solid #e2e8f0", textAlign: "center" }}>
-            <div style={{ fontSize: 11, color: "#64748b", marginBottom: 8, fontWeight: 600 }}>
-              Master Admin System Credentials:
-            </div>
-            <button
-              type="button"
-              onClick={fillMasterAdmin}
-              style={{
-                background: "rgba(0,102,51,0.06)",
-                border: "1px solid rgba(0,102,51,0.2)",
-                color: "#006633",
-                borderRadius: 6,
-                padding: "6px 12px",
-                fontSize: 11,
-                fontWeight: 700,
-                cursor: "pointer",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-              }}
-            >
-              🔑 Fill Master Admin Credentials (ict.admin@transport.gov.zw)
-            </button>
-          </div>
 
         </div>
       </div>
