@@ -6,6 +6,7 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "leaflet-textpath";
 import { MapPin, Navigation, Square, Plus, CheckCircle2, Activity, Gauge, Clock, Wifi, Pause, Play, MapPinned, Camera } from "lucide-react";
+import { assetUrl } from "../lib/assets";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -445,7 +446,7 @@ export function SegmentTracker({
 
   // Fetch offline roads dataset on mount
   useEffect(() => {
-    fetch("/zimbabwe_roads.geojson")
+    fetch(assetUrl("zimbabwe_roads.geojson"))
       .then((res) => {
         if (!res.ok) throw new Error("Failed to load offline roads dataset");
         return res.json();

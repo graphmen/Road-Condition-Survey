@@ -2,11 +2,11 @@
     "available":  true,
     "minAndroid":  "7.0 (API 24)",
     "fileName":  "motid-road-survey.apk",
-    "releasedAt":  "2026-07-29T07:12:19.4994563Z",
+    "releasedAt":  "2026-07-29T09:06:47.9555476Z",
     "packageId":  "zw.gov.motid.roadsurvey",
-    "sizeBytes":  7016183,
-    "versionCode":  7,
-    "versionName":  "1.6",
-    "changelog":  "Phase 2-3 asset forms, sealed road updates, catchpits and traffic calming, segment limits, survey progress, and full multi-photo sync to dashboard.",
+    "sizeBytes":  7016359,
+    "versionCode":  8,
+    "versionName":  "1.6.1",
+    "changelog":  "Fix white screen on install by using relative asset paths in the native APK build.",
     "appName":  "MOTID Road Survey"
 }

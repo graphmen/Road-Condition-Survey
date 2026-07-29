@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { db } from "./lib/db";
 import type { SurveyDraft } from "./lib/db";
+import { assetUrl } from "./lib/assets";
 import { SegmentTracker, PAUSED_ROAD_CONTEXT_KEY, SEGMENT_SESSION_KEY } from "./components/SegmentTracker";
 import type { SegmentGeometry } from "./components/SegmentTracker";
 import { SurveyProgressPanel } from "./components/SurveyProgressPanel";
@@ -2649,7 +2650,7 @@ export default function App() {
       {/* Header */}
       <header className="mobile-header">
         <div className="mobile-logo-group">
-          <img src="/coat_of_arms.png" alt="Zimbabwe Coat of Arms" className="mobile-coat" />
+          <img src={assetUrl("coat_of_arms.png")} alt="Zimbabwe Coat of Arms" className="mobile-coat" />
           <div className="mobile-header-title-container">
             <h1 className="mobile-header-title">MOTID COLLECT</h1>
             <span className="mobile-header-subtitle">Field Survey Telemetry</span>
@@ -2671,7 +2672,7 @@ export default function App() {
             {/* Logo/Hero Area */}
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", padding: "20px 10px", background: "linear-gradient(135deg, var(--bg-sidebar), #002210)", borderRadius: "var(--radius-lg)", border: "1px solid var(--border-color)", color: "#ffffff", boxShadow: "0 4px 15px rgba(0,0,0,0.08)" }}>
               <img 
-                src="/coat_of_arms.png" 
+                src={assetUrl("coat_of_arms.png")} 
                 alt="Zimbabwe Coat of Arms" 
                 onClick={handleDevClick}
                 style={{ height: "70px", marginBottom: "12px", filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.4))", cursor: "pointer" }} 

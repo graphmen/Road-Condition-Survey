@@ -4,7 +4,7 @@ $src = Join-Path $root "mobile\dist"
 $dest = Join-Path $root "public\collector"
 
 if (-not (Test-Path $src)) {
-    throw "Mobile build not found. Run: npm run build --prefix mobile"
+    throw "Mobile build not found. Run: npm run build:web --prefix mobile"
 }
 
 if (Test-Path $dest) {
