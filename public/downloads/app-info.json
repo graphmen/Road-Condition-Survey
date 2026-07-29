@@ -2,11 +2,11 @@
     "available":  true,
     "minAndroid":  "7.0 (API 24)",
     "fileName":  "motid-road-survey.apk",
-    "releasedAt":  "2026-07-21T20:30:30.0108269Z",
+    "releasedAt":  "2026-07-29T07:12:19.4994563Z",
     "packageId":  "zw.gov.motid.roadsurvey",
-    "sizeBytes":  7167964,
-    "versionCode":  6,
-    "versionName":  "1.5",
-    "changelog":  "Reliable multi-photo capture: live camera preview (fixes flaky photo taking), up to 12 photos on road segments while recording, gallery picker fallback, camera permission.",
+    "sizeBytes":  7016183,
+    "versionCode":  7,
+    "versionName":  "1.6",
+    "changelog":  "Phase 2-3 asset forms, sealed road updates, catchpits and traffic calming, segment limits, survey progress, and full multi-photo sync to dashboard.",
     "appName":  "MOTID Road Survey"
 }

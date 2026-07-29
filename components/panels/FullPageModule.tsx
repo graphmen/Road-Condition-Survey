@@ -10,11 +10,27 @@ import {
   BarChart, Bar, XAxis, YAxis, LineChart, Line, CartesianGrid, AreaChart, Area,
 } from "recharts";
 import {
-  getRecordStatus, getAssetType, getAssetName, formatStatusLabel, getStatusColor, normalizePhotos, getSadcValue,
+  getRecordStatus, getAssetType, getAssetName, formatStatusLabel, getStatusColor, normalizePhotos, mergePhotoLists, getSadcValue,
   AUTHORITY_OPTIONS, CONDITION_WITH_CONSTRUCTION_OPTIONS,
   formatGpsLabel,
 } from "@/components/helpers";
 import type { NavModule } from "./LeftNav";
+import {
+  SEALED_ROAD_CLASS_OPTIONS,
+  SEALED_ROAD_TYPE_OPTIONS,
+  SURFACE_TYPE_OPTIONS,
+  POTHOLE_DENSITY_OPTIONS,
+  POTHOLE_PATCHES_OPTIONS,
+  DRAINAGE_TYPE_OPTIONS,
+  DRAINAGE_LINING_OPTIONS,
+  MEDIAN_TYPE_OPTIONS,
+  SURVEY_SIDE_OPTIONS,
+  YES_NO_OPTIONS,
+  DEFECT_SEVERITY_OPTIONS,
+  TRAFFIC_CALMING_TYPES,
+  isDualCarriageway,
+  mapLegacyPotholePatches,
+} from "../sealedRoadConfig";
 
 /* ─── helpers ─────────────────────────────────────────────────────────────── */
 const HIGHWAYS = [
@@ -754,6 +770,7 @@ const CATEGORY_GROUPS = [
       { key: "piped_causeway",label: "Piped Causeway", emoji: "📡" },
       { key: "shelvet",       label: "Shelvert",        emoji: "🛡️" },
       { key: "grid",          label: "Grid",           emoji: "#️⃣" },
+      { key: "catchpit",      label: "Catchpit",       emoji: "🕳️" },
     ]
   },
   {
@@ -774,15 +791,29 @@ const CATEGORY_GROUPS = [
       { key: "sign",           label: "Road Sign",      emoji: "⚠️" },
       { key: "traffic_lights", label: "Traffic Lights", emoji: "🚦" },
       { key: "streetlight",    label: "Streetlight",    emoji: "💡" },
+      { key: "traffic_calming", label: "Traffic Calming", emoji: "🛑" },
     ]
   },
 ];
+
+function recordField(record: any, ...keys: string[]): any {
+  const sources = [record, record?.raw_data].filter(Boolean);
+  for (const key of keys) {
+    for (const src of sources) {
+      const v = src[key];
+      if (v !== undefined && v !== null && v !== "") return v;
+    }
+  }
+  return undefined;
+}
 
 function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFormModalProps) {
   const [section, setSection] = useState<string>("sealed");
   const [isSaving, setIsSaving] = useState(false);
   const [roadName, setRoadName] = useState("A4 Highway (Harare - Masvingo - Beitbridge)");
   const [sectionName, setSectionName] = useState("");
+  const [chainageFrom, setChainageFrom] = useState("");
+  const [chainageTo, setChainageTo] = useState("");
   const [surveyorName, setSurveyorName] = useState("");
   const [surveyDate, setSurveyDate] = useState(new Date().toISOString().split("T")[0]);
   const [vegetation, setVegetation] = useState("none");
@@ -797,7 +828,7 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
   const [potholePatches, setPotholePatches] = useState("none");
   const [narrowCracks, setNarrowCracks] = useState("no_cracks");
   const [wideCracks, setWideCracks] = useState("no_cracks");
-  const [potholePatchesDegree, setPotholePatchesDegree] = useState("good");
+  const [potholePatchesDegree, setPotholePatchesDegree] = useState("no_potholes");
   const [ruttingDegree, setRuttingDegree] = useState("no_rutting__5mm");
   const [edgeBreaksDegree, setEdgeBreaksDegree] = useState("no_edge_break");
   const [edgeDropDegree, setEdgeDropDegree] = useState("no_edge_break");
@@ -807,9 +838,37 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
   const [roadMarkings, setRoadMarkings] = useState("yes");
   const [roadStuds, setRoadStuds] = useState("yes");
   const [passability002, setPassability002] = useState("all_year_round");
-  const [grid, setGrid] = useState("good");
   const [yearConstructedToSealedStandard, setYearConstructedToSealedStandard] = useState("");
   const [lastSurfaceYear, setLastSurfaceYear] = useState("");
+  const [sealedSurfaceType, setSealedSurfaceType] = useState("asphalt");
+  const [sealedPotholeDensity, setSealedPotholeDensity] = useState("low");
+  const [sealedCycleTrack, setSealedCycleTrack] = useState("no");
+  const [sealedSurveySide, setSealedSurveySide] = useState("left");
+  const [sealedSurveyDirection, setSealedSurveyDirection] = useState("");
+  const [sealedLanesPerCarriage, setSealedLanesPerCarriage] = useState("");
+  const [sealedShoulderWidth, setSealedShoulderWidth] = useState("");
+  const [sealedMedianType, setSealedMedianType] = useState("none");
+  const [sealedDrainageType, setSealedDrainageType] = useState("v_drain");
+  const [sealedDrainageLining, setSealedDrainageLining] = useState("not_lined");
+  const [sealedClimate, setSealedClimate] = useState("moderate");
+  const [sealedTerrain, setSealedTerrain] = useState("flat");
+  const [sealedRoadMarkingsVisible, setSealedRoadMarkingsVisible] = useState("yes");
+  const [sealedC1NarrowCracks, setSealedC1NarrowCracks] = useState("no_cracks");
+  const [sealedC1WideCracks, setSealedC1WideCracks] = useState("no_cracks");
+  const [sealedC1Potholes, setSealedC1Potholes] = useState("no_potholes");
+  const [sealedC1Rutting, setSealedC1Rutting] = useState("no_rutting__5mm");
+  const [sealedC1EdgeBreaks, setSealedC1EdgeBreaks] = useState("no_edge_break");
+  const [sealedC1EdgeDrop, setSealedC1EdgeDrop] = useState("no_edge_break");
+  const [sealedC1Ravelling, setSealedC1Ravelling] = useState("none");
+  const [sealedC1RidingQuality, setSealedC1RidingQuality] = useState("good");
+  const [sealedC2NarrowCracks, setSealedC2NarrowCracks] = useState("no_cracks");
+  const [sealedC2WideCracks, setSealedC2WideCracks] = useState("no_cracks");
+  const [sealedC2Potholes, setSealedC2Potholes] = useState("no_potholes");
+  const [sealedC2Rutting, setSealedC2Rutting] = useState("no_rutting__5mm");
+  const [sealedC2EdgeBreaks, setSealedC2EdgeBreaks] = useState("no_edge_break");
+  const [sealedC2EdgeDrop, setSealedC2EdgeDrop] = useState("no_edge_break");
+  const [sealedC2Ravelling, setSealedC2Ravelling] = useState("none");
+  const [sealedC2RidingQuality, setSealedC2RidingQuality] = useState("good");
 
   // Gravel Roads Fields
   const [gravelRoadName, setGravelRoadName] = useState("");
@@ -822,6 +881,18 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
   const [gravelPotholesDegree, setGravelPotholesDegree] = useState("none");
   const [gravelPassability, setGravelPassability] = useState("all_year_round");
   const [gravelYearOfConstruction, setGravelYearOfConstruction] = useState("");
+  const [gravelCorrugationsSeverity, setGravelCorrugationsSeverity] = useState("none");
+  const [gravelCrossSectionSeverity, setGravelCrossSectionSeverity] = useState("none");
+  const [gravelDrainageSeverity, setGravelDrainageSeverity] = useState("none");
+  const [gravelPotholesSeverity, setGravelPotholesSeverity] = useState("none");
+  const [gravelRidingSeverity, setGravelRidingSeverity] = useState("none");
+
+  // Catchpit Fields
+  const [catchpitCondition, setCatchpitCondition] = useState("good");
+
+  // Traffic Calming Fields
+  const [trafficCalmingType, setTrafficCalmingType] = useState("speed_hump");
+  const [trafficCalmingCondition, setTrafficCalmingCondition] = useState("good");
 
   // Earth Roads Fields
   const [earthRoadName, setEarthRoadName] = useState("");
@@ -962,6 +1033,16 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
       setSection(cat);
       setRoadName(record.road_name || "A4 Highway (Harare - Masvingo - Beitbridge)");
       setSectionName(record.section_name || "");
+      setChainageFrom(
+        recordField(record, "Chainage_from_km_002", "Chainage_From_km", "chainage_from_km") != null
+          ? String(recordField(record, "Chainage_from_km_002", "Chainage_From_km", "chainage_from_km"))
+          : ""
+      );
+      setChainageTo(
+        recordField(record, "Chainage_to_km_002", "Chainage_To_km", "chainage_to_km") != null
+          ? String(recordField(record, "Chainage_to_km_002", "Chainage_To_km", "chainage_to_km"))
+          : ""
+      );
       setSurveyorName(record.surveyor_name || "");
       setSurveyDate(record.survey_date || new Date().toISOString().split("T")[0]);
       setVegetation(record.vegetation || "none");
@@ -972,28 +1053,56 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
       setPhoto(record.photo || normalizePhotos(record)[0] || null);
       setPhotos(normalizePhotos(record));
 
-      setPavedRoadName(record.paved_road_name || record.Road_Name_002 || "");
-      setPavedRoadClass(record.paved_road_class || record.Road_Class_002 || "secondary");
-      setPavedRoadType(record.paved_road_type || record.Road_Type || "wide_mat_ss");
-      setPavedRoadCondition(record.paved_road_condition || record.Riding_quality_degree_001 || "good");
+      setPavedRoadName(recordField(record, "paved_road_name", "Road_Name_002") || "");
+      setPavedRoadClass(recordField(record, "paved_road_class", "Road_Class_002") || "secondary");
+      setPavedRoadType(recordField(record, "paved_road_type", "Road_Type") || "wide_mat_ss");
+      setPavedRoadCondition(recordField(record, "paved_road_condition", "Riding_quality_degree_001") || "good");
       setPotholePatches(record.pothole_patches || "none");
-      setNarrowCracks(record.narrow_cracks_degree || record.Narrow_cracks_degree || "no_cracks");
-      setWideCracks(record.wide_cracks_degree || record.Wide_cracks_degree || "no_cracks");
-      setPotholePatchesDegree(record.pothole_patches_degree || record.Pothole_patches_degree || "good");
-      setRuttingDegree(record.rutting_degree || record.Rutting_degree || "no_rutting__5mm");
-      setEdgeBreaksDegree(record.edge_breaks_degree || record.Edge_breaks_Degree || "no_edge_break");
-      setEdgeDropDegree(record.edge_drop_degree || record.Edge_Drop_Degree || "no_edge_break");
-      setDrainage001(record.drainage_001 || record.Drainage_001 || "good");
-      setRavellingDegree(record.ravelling_degree || record.Ravelling_Degree || "none");
-      setRidingQuality001(record.riding_quality_degree_001 || record.Riding_quality_degree_001 || "good");
-      setRoadMarkings(record.road_markings || "yes");
-      setRoadStuds(record.road_studs || "yes");
-      setPassability002(record.passability_002 || "all_year_round");
-      setGrid(record.grid || "good");
-      setYearConstructedToSealedStandard(record.year_constructed_to_sealed_standard || "");
-      setLastSurfaceYear(record.last_surface_year || "");
+      setNarrowCracks(recordField(record, "narrow_cracks_degree", "Narrow_cracks_degree") || "no_cracks");
+      setWideCracks(recordField(record, "wide_cracks_degree", "Wide_cracks_degree") || "no_cracks");
+      setPotholePatchesDegree(mapLegacyPotholePatches(recordField(record, "pothole_patches_degree", "Pothole_patches_degree")));
+      setRuttingDegree(recordField(record, "rutting_degree", "Rutting_degree") || "no_rutting__5mm");
+      setEdgeBreaksDegree(recordField(record, "edge_breaks_degree", "Edge_breaks_Degree") || "no_edge_break");
+      setEdgeDropDegree(recordField(record, "edge_drop_degree", "Edge_Drop_Degree") || "no_edge_break");
+      setDrainage001(recordField(record, "drainage_001", "Drainage_001") || "good");
+      setRavellingDegree(recordField(record, "ravelling_degree", "Ravelling_Degree") || "none");
+      setRidingQuality001(recordField(record, "riding_quality_degree_001", "Riding_quality_degree_001") || "good");
+      setRoadMarkings(recordField(record, "road_markings", "Road_markings") || "yes");
+      setRoadStuds(recordField(record, "road_studs", "Road_studs") || "yes");
+      setPassability002(recordField(record, "passability_002", "Passability_002") || "all_year_round");
+      setYearConstructedToSealedStandard(recordField(record, "year_constructed_to_sealed_standard", "Year_constructed_to_sealed_standard") != null ? String(recordField(record, "year_constructed_to_sealed_standard", "Year_constructed_to_sealed_standard")) : "");
+      setLastSurfaceYear(record.last_surface_year != null ? String(record.last_surface_year) : "");
+      setSealedSurfaceType(recordField(record, "Surface_type", "surface_type") || "asphalt");
+      setSealedPotholeDensity(recordField(record, "Pothole_density", "pothole_density") || "low");
+      setSealedCycleTrack(recordField(record, "Cycle_track", "cycle_track") || "no");
+      setSealedSurveySide(recordField(record, "Survey_side", "survey_side") || "left");
+      setSealedSurveyDirection(recordField(record, "Survey_direction", "survey_direction") || "");
+      setSealedLanesPerCarriage(recordField(record, "Number_of_Lanes_per_carriageway", "number_of_lanes_per_carriageway") != null ? String(recordField(record, "Number_of_Lanes_per_carriageway", "number_of_lanes_per_carriageway")) : "");
+      setSealedShoulderWidth(recordField(record, "Shoulder_Width_m", "shoulder_width_m") != null ? String(recordField(record, "Shoulder_Width_m", "shoulder_width_m")) : "");
+      setSealedMedianType(recordField(record, "Median_type", "median_type") || "none");
+      setSealedDrainageType(recordField(record, "Drainage_Type_002_001", "drainage_type_002_001") || "v_drain");
+      setSealedDrainageLining(recordField(record, "Drainage_lining", "drainage_lining") || "not_lined");
+      setSealedClimate(recordField(record, "Climate_Region_001", "climate_region_001") || "moderate");
+      setSealedTerrain(recordField(record, "Terrain_Type_002", "terrain_type_002") || "flat");
+      setSealedRoadMarkingsVisible(recordField(record, "Road_markings_visible", "road_markings_visible") || "yes");
+      setSealedC1NarrowCracks(recordField(record, "Carriage1_Narrow_cracks", "carriage1_narrow_cracks") || "no_cracks");
+      setSealedC1WideCracks(recordField(record, "Carriage1_Wide_cracks", "carriage1_wide_cracks") || "no_cracks");
+      setSealedC1Potholes(mapLegacyPotholePatches(recordField(record, "Carriage1_Pothole_patches", "carriage1_pothole_patches")));
+      setSealedC1Rutting(recordField(record, "Carriage1_Rutting", "carriage1_rutting") || "no_rutting__5mm");
+      setSealedC1EdgeBreaks(recordField(record, "Carriage1_Edge_breaks", "carriage1_edge_breaks") || "no_edge_break");
+      setSealedC1EdgeDrop(recordField(record, "Carriage1_Edge_drop", "carriage1_edge_drop") || "no_edge_break");
+      setSealedC1Ravelling(recordField(record, "Carriage1_Ravelling", "carriage1_ravelling") || "none");
+      setSealedC1RidingQuality(recordField(record, "Carriage1_Riding_quality", "carriage1_riding_quality") || "good");
+      setSealedC2NarrowCracks(recordField(record, "Carriage2_Narrow_cracks", "carriage2_narrow_cracks") || "no_cracks");
+      setSealedC2WideCracks(recordField(record, "Carriage2_Wide_cracks", "carriage2_wide_cracks") || "no_cracks");
+      setSealedC2Potholes(mapLegacyPotholePatches(recordField(record, "Carriage2_Pothole_patches", "carriage2_pothole_patches")));
+      setSealedC2Rutting(recordField(record, "Carriage2_Rutting", "carriage2_rutting") || "no_rutting__5mm");
+      setSealedC2EdgeBreaks(recordField(record, "Carriage2_Edge_breaks", "carriage2_edge_breaks") || "no_edge_break");
+      setSealedC2EdgeDrop(recordField(record, "Carriage2_Edge_drop", "carriage2_edge_drop") || "no_edge_break");
+      setSealedC2Ravelling(recordField(record, "Carriage2_Ravelling", "carriage2_ravelling") || "none");
+      setSealedC2RidingQuality(recordField(record, "Carriage2_Riding_quality", "carriage2_riding_quality") || "good");
       {
-        const auth = record.Authority_Name_002 || record.authority_name_002 || "rdc";
+        const auth = recordField(record, "Authority_Name_002", "authority_name_002") || "rdc";
         setSealedAuthority(auth === "ddf" ? "rida" : auth);
       }
 
@@ -1005,8 +1114,13 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
       setGravelCorrugations(record.corrugations || "none");
       setGravelRidingQuality(record.riding_quality_degree || "good");
       setGravelPotholesDegree(record.potholes_degree || record.Potholes_Degree || "none");
-      setGravelPassability(record.passability || "all_year_round");
-      setGravelYearOfConstruction(record.year_of_construction || "");
+      setGravelPassability(recordField(record, "passability", "Passability") || "all_year_round");
+      setGravelYearOfConstruction(recordField(record, "year_of_construction", "Year_of_Counstruction") != null ? String(recordField(record, "year_of_construction", "Year_of_Counstruction")) : "");
+      setGravelCorrugationsSeverity(recordField(record, "gravel_corrugations_severity") || "none");
+      setGravelCrossSectionSeverity(recordField(record, "gravel_cross_section_severity") || "none");
+      setGravelDrainageSeverity(recordField(record, "gravel_drainage_severity") || "none");
+      setGravelPotholesSeverity(recordField(record, "gravel_potholes_severity") || "none");
+      setGravelRidingSeverity(recordField(record, "gravel_riding_severity") || "none");
       {
         const gAuth = record.Authority_Name || record.authority_name || "rdc";
         setGravelAuthority(gAuth === "ddf" ? "rida" : gAuth);
@@ -1115,10 +1229,16 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
       setStreetlightPowerSource(record.streetlight_power_source || "grid");
       setStreetlightOperational(record.streetlight_operational || "yes");
       setStreetlightCount(record.streetlight_count || "");
+
+      setCatchpitCondition(recordField(record, "catchpit_condition") || "good");
+      setTrafficCalmingType(recordField(record, "traffic_calming_type") || "speed_hump");
+      setTrafficCalmingCondition(recordField(record, "traffic_calming_condition") || "good");
     } else {
       setSection("sealed");
       setRoadName("A4 Highway (Harare - Masvingo - Beitbridge)");
       setSectionName("");
+      setChainageFrom("");
+      setChainageTo("");
       setSurveyorName("");
       setSurveyDate(new Date().toISOString().split("T")[0]);
       setVegetation("none");
@@ -1138,7 +1258,7 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
       setPotholePatches("none");
       setNarrowCracks("no_cracks");
       setWideCracks("no_cracks");
-      setPotholePatchesDegree("good");
+      setPotholePatchesDegree("no_potholes");
       setRuttingDegree("no_rutting__5mm");
       setEdgeBreaksDegree("no_edge_break");
       setEdgeDropDegree("no_edge_break");
@@ -1148,9 +1268,37 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
       setRoadMarkings("yes");
       setRoadStuds("yes");
       setPassability002("all_year_round");
-      setGrid("good");
       setYearConstructedToSealedStandard("");
       setLastSurfaceYear("");
+      setSealedSurfaceType("asphalt");
+      setSealedPotholeDensity("low");
+      setSealedCycleTrack("no");
+      setSealedSurveySide("left");
+      setSealedSurveyDirection("");
+      setSealedLanesPerCarriage("");
+      setSealedShoulderWidth("");
+      setSealedMedianType("none");
+      setSealedDrainageType("v_drain");
+      setSealedDrainageLining("not_lined");
+      setSealedClimate("moderate");
+      setSealedTerrain("flat");
+      setSealedRoadMarkingsVisible("yes");
+      setSealedC1NarrowCracks("no_cracks");
+      setSealedC1WideCracks("no_cracks");
+      setSealedC1Potholes("no_potholes");
+      setSealedC1Rutting("no_rutting__5mm");
+      setSealedC1EdgeBreaks("no_edge_break");
+      setSealedC1EdgeDrop("no_edge_break");
+      setSealedC1Ravelling("none");
+      setSealedC1RidingQuality("good");
+      setSealedC2NarrowCracks("no_cracks");
+      setSealedC2WideCracks("no_cracks");
+      setSealedC2Potholes("no_potholes");
+      setSealedC2Rutting("no_rutting__5mm");
+      setSealedC2EdgeBreaks("no_edge_break");
+      setSealedC2EdgeDrop("no_edge_break");
+      setSealedC2Ravelling("none");
+      setSealedC2RidingQuality("good");
 
       setGravelRoadName("");
       setGravelRoadClass("urban_collector");
@@ -1162,6 +1310,15 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
       setGravelPotholesDegree("none");
       setGravelPassability("all_year_round");
       setGravelYearOfConstruction("");
+      setGravelCorrugationsSeverity("none");
+      setGravelCrossSectionSeverity("none");
+      setGravelDrainageSeverity("none");
+      setGravelPotholesSeverity("none");
+      setGravelRidingSeverity("none");
+
+      setCatchpitCondition("good");
+      setTrafficCalmingType("speed_hump");
+      setTrafficCalmingCondition("good");
 
       setEarthRoadName("");
       setEarthRoadClass("tertiary_feeder");
@@ -1323,11 +1480,14 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
       photos: photos.length > 0 ? photos : (photo ? [photo] : undefined),
     };
     if (section === "sealed") {
-      data.paved_road_name = pavedRoadName;
+      const finalSealedName = roadName.split(" (")[0] || roadName;
+      const chainFrom = chainageFrom.trim() ? parseFloat(chainageFrom) : undefined;
+      const chainTo = chainageTo.trim() ? parseFloat(chainageTo) : undefined;
+      data.paved_road_name = finalSealedName;
       data.paved_road_class = pavedRoadClass;
       data.paved_road_type = pavedRoadType;
-      data.paved_road_condition = pavedRoadCondition;
-      data.pothole_patches = potholePatches;
+      data.paved_road_condition = ridingQuality001;
+      data.pothole_patches = potholePatchesDegree;
       data.narrow_cracks_degree = narrowCracks;
       data.wide_cracks_degree = wideCracks;
       data.pothole_patches_degree = potholePatchesDegree;
@@ -1340,13 +1500,66 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
       data.road_markings = roadMarkings;
       data.road_studs = roadStuds;
       data.passability_002 = passability002;
-      data.grid = grid;
       data.Authority_Name_002 = sealedAuthority;
       data.authority_name_002 = sealedAuthority;
-      if (yearConstructedToSealedStandard) data.year_constructed_to_sealed_standard = Number(yearConstructedToSealedStandard);
+      data.chainage_from_km = chainFrom;
+      data.chainage_to_km = chainTo;
+      data.Road_Name_002 = finalSealedName;
+      data.Road_Class_002 = pavedRoadClass;
+      data.Road_Type = pavedRoadType;
+      data.Climate_Region_001 = sealedClimate;
+      data.Terrain_Type_002 = sealedTerrain;
+      data.Drainage_Type_002_001 = sealedDrainageType;
+      data.Narrow_cracks_degree = narrowCracks;
+      data.Wide_cracks_degree = wideCracks;
+      data.Pothole_patches_degree = potholePatchesDegree;
+      data.Rutting_degree = ruttingDegree;
+      data.Edge_breaks_Degree = edgeBreaksDegree;
+      data.Edge_Drop_Degree = edgeDropDegree;
+      data.Drainage_001 = drainage001;
+      data.Ravelling_Degree = ravellingDegree;
+      data.Riding_quality_degree_001 = ridingQuality001;
+      data.Road_markings = roadMarkings;
+      data.Road_studs = roadStuds;
+      data.Passability_002 = passability002;
+      data.Surface_type = sealedSurfaceType;
+      data.Pothole_density = sealedPotholeDensity;
+      data.Cycle_track = sealedCycleTrack;
+      data.Survey_side = sealedSurveySide;
+      if (sealedSurveyDirection) data.Survey_direction = sealedSurveyDirection;
+      if (sealedLanesPerCarriage) data.Number_of_Lanes_per_carriageway = parseInt(sealedLanesPerCarriage);
+      if (sealedShoulderWidth) data.Shoulder_Width_m = parseFloat(sealedShoulderWidth);
+      data.Median_type = sealedMedianType;
+      data.Drainage_lining = sealedDrainageLining;
+      data.Road_markings_visible = sealedRoadMarkingsVisible;
+      data.Chainage_from_km_002 = chainFrom;
+      data.Chainage_to_km_002 = chainTo;
+      data.Carriage1_Narrow_cracks = sealedC1NarrowCracks;
+      data.Carriage1_Wide_cracks = sealedC1WideCracks;
+      data.Carriage1_Pothole_patches = sealedC1Potholes;
+      data.Carriage1_Rutting = sealedC1Rutting;
+      data.Carriage1_Edge_breaks = sealedC1EdgeBreaks;
+      data.Carriage1_Edge_drop = sealedC1EdgeDrop;
+      data.Carriage1_Ravelling = sealedC1Ravelling;
+      data.Carriage1_Riding_quality = sealedC1RidingQuality;
+      data.Carriage2_Narrow_cracks = sealedC2NarrowCracks;
+      data.Carriage2_Wide_cracks = sealedC2WideCracks;
+      data.Carriage2_Pothole_patches = sealedC2Potholes;
+      data.Carriage2_Rutting = sealedC2Rutting;
+      data.Carriage2_Edge_breaks = sealedC2EdgeBreaks;
+      data.Carriage2_Edge_drop = sealedC2EdgeDrop;
+      data.Carriage2_Ravelling = sealedC2Ravelling;
+      data.Carriage2_Riding_quality = sealedC2RidingQuality;
+      if (yearConstructedToSealedStandard) {
+        data.year_constructed_to_sealed_standard = Number(yearConstructedToSealedStandard);
+        data.Year_constructed_to_sealed_standard = Number(yearConstructedToSealedStandard);
+      }
       if (lastSurfaceYear) data.last_surface_year = Number(lastSurfaceYear);
     } else if (section === "gravel") {
-      data.gravel_road_name = gravelRoadName;
+      const finalGravelName = roadName.split(" (")[0] || roadName;
+      const chainFrom = chainageFrom.trim() ? parseFloat(chainageFrom) : undefined;
+      const chainTo = chainageTo.trim() ? parseFloat(chainageTo) : undefined;
+      data.gravel_road_name = finalGravelName;
       data.gravel_road_class = gravelRoadClass;
       data.gravel_thickness = gravelThickness;
       data.gravel_condition = gravelCondition;
@@ -1357,9 +1570,20 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
       data.passability = gravelPassability;
       data.Authority_Name = gravelAuthority;
       data.authority_name = gravelAuthority;
+      data.chainage_from_km = chainFrom;
+      data.chainage_to_km = chainTo;
+      data.Chainage_From_km = chainFrom;
+      data.Chainage_To_km = chainTo;
+      data.gravel_corrugations_severity = gravelCorrugationsSeverity;
+      data.gravel_cross_section_severity = gravelCrossSectionSeverity;
+      data.gravel_drainage_severity = gravelDrainageSeverity;
+      data.gravel_potholes_severity = gravelPotholesSeverity;
+      data.gravel_riding_severity = gravelRidingSeverity;
       if (gravelYearOfConstruction) data.year_of_construction = Number(gravelYearOfConstruction);
     } else if (section === "earth") {
-      data.earth_road_name = earthRoadName;
+      const chainFrom = chainageFrom.trim() ? parseFloat(chainageFrom) : undefined;
+      const chainTo = chainageTo.trim() ? parseFloat(chainageTo) : undefined;
+      data.earth_road_name = roadName.split(" (")[0] || roadName;
       data.earth_road_class = earthRoadClass;
       if (earthRoadWidth) data.earth_road_width = Number(earthRoadWidth);
       if (earthRoadLength) data.earth_road_length = Number(earthRoadLength);
@@ -1370,6 +1594,8 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
       data.earth_terrain = earthTerrain;
       data.earth_climate = earthClimate;
       data.earth_authority = earthAuthority;
+      data.chainage_from_km = chainFrom;
+      data.chainage_to_km = chainTo;
       if (earthYearConstructed) data.earth_year_constructed = Number(earthYearConstructed);
     } else if (section === "bridge") {
       data.bridge = bridgeName;
@@ -1456,6 +1682,11 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
       data.grid_condition = gridCondition;
       data.grid_material = gridMaterial;
       data.grid_operational = gridOperational;
+    } else if (section === "catchpit") {
+      data.catchpit_condition = catchpitCondition;
+    } else if (section === "traffic_calming") {
+      data.traffic_calming_type = trafficCalmingType;
+      data.traffic_calming_condition = trafficCalmingCondition;
     } else if (section === "traffic_lights") {
       data.traffic_lights_location = trafficLightsLocation;
       data.traffic_lights_condition = trafficLightsCondition;
@@ -1471,7 +1702,7 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
     }
 
     let derivedCond = "good";
-    if (section === "sealed") derivedCond = pavedRoadCondition;
+    if (section === "sealed") derivedCond = ridingQuality001;
     else if (section === "gravel") derivedCond = gravelCondition;
     else if (section === "earth") derivedCond = earthRoadCondition;
     else if (section === "bridge") derivedCond = bridgeCondition;
@@ -1487,6 +1718,8 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
     else if (section === "piped_causeway") derivedCond = causewayCondition;
     else if (section === "drift") derivedCond = driftCondition;
     else if (section === "grid") derivedCond = gridCondition;
+    else if (section === "catchpit") derivedCond = catchpitCondition;
+    else if (section === "traffic_calming") derivedCond = trafficCalmingCondition;
     else if (section === "traffic_lights") derivedCond = trafficLightsCondition;
     else if (section === "streetlight") derivedCond = streetlightCondition;
 
@@ -1607,6 +1840,19 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
               <input type="text" placeholder="e.g. Masvingo – Chivhu Section" value={sectionName} onChange={e => setSectionName(e.target.value)} required style={{ width: "100%", padding: "8px 12px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 8, fontSize: 12, outline: "none", fontFamily: "var(--font-body)" }} />
             </div>
           </div>
+
+          {(section === "sealed" || section === "gravel" || section === "earth") && (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <div>
+                <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 5 }}>Chainage From (km)</label>
+                <input type="number" step="any" placeholder="e.g. 12.5" value={chainageFrom} onChange={e => setChainageFrom(e.target.value)} style={{ width: "100%", padding: "8px 12px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 8, fontSize: 12, outline: "none", fontFamily: "var(--font-body)" }} />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 5 }}>Chainage To (km)</label>
+                <input type="number" step="any" placeholder="e.g. 15.0" value={chainageTo} onChange={e => setChainageTo(e.target.value)} style={{ width: "100%", padding: "8px 12px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 8, fontSize: 12, outline: "none", fontFamily: "var(--font-body)" }} />
+              </div>
+            </div>
+          )}
 
           {/* Province & District */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
@@ -1743,93 +1989,54 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
           {section === "sealed" && (
             <div style={{ background: "#f0f7f3", border: "1px solid rgba(0,102,51,0.15)", borderRadius: 12, padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: "var(--green)", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 4 }}>Sealed Road Details</div>
-              
-              <div>
-                <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Road Name</label>
-                <input type="text" placeholder="e.g. A4 Section 5" value={pavedRoadName} onChange={e => setPavedRoadName(e.target.value)} required={section === "sealed"} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff", outline: "none" }} />
-              </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 <div>
                   <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Road Class</label>
                   <select value={pavedRoadClass} onChange={e => setPavedRoadClass(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
-                    <option value="primary">Primary Link</option>
-                    <option value="secondary">Secondary Link</option>
-                    <option value="tertiary">Tertiary Feeder</option>
+                    {SEALED_ROAD_CLASS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Pavement Type</label>
+                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Road Type</label>
                   <select value={pavedRoadType} onChange={e => setPavedRoadType(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
-                    <option value="wide_mat_ss">Wide Mat Single Seal</option>
-                    <option value="double_seal">Double Seal</option>
-                    <option value="concrete_pavement">Concrete Pavement</option>
-                  </select>
-                </div>
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
-                <div>
-                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Riding Quality</label>
-                  <select value={pavedRoadCondition} onChange={e => setPavedRoadCondition(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
-                    {CONDITION_WITH_CONSTRUCTION_OPTIONS.map(o => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Potholes/Patches</label>
-                  <select value={potholePatches} onChange={e => setPotholePatches(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
-                    <option value="none">None</option>
-                    <option value="light">Light</option>
-                    <option value="severe">Severe</option>
-                    <option value="mixed">Mixed</option>
-                    <option value="good">Good</option>
-                    <option value="fair">Fair</option>
-                    <option value="poor">Poor</option>
-                  </select>
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Rutting</label>
-                  <select value={ruttingDegree} onChange={e => setRuttingDegree(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
-                    <option value="no_rutting__5mm">No Rutting (&lt; 5mm)</option>
-                    <option value="moderate_5_15mm">Moderate (5-15mm)</option>
-                    <option value="severe__15mm">Severe (&gt; 15mm)</option>
+                    {SEALED_ROAD_TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                   </select>
                 </div>
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 <div>
-                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Narrow Cracks</label>
-                  <select value={narrowCracks} onChange={e => setNarrowCracks(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
-                    <option value="no_cracks">No Cracks</option>
-                    <option value="light">Light</option>
-                    <option value="severe">Severe</option>
+                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Surface Type</label>
+                  <select value={sealedSurfaceType} onChange={e => setSealedSurfaceType(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                    {SURFACE_TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Wide Cracks</label>
-                  <select value={wideCracks} onChange={e => setWideCracks(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
-                    <option value="no_cracks">No Cracks</option>
-                    <option value="light">Light</option>
-                    <option value="severe">Severe</option>
+                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Pothole Density</label>
+                  <select value={sealedPotholeDensity} onChange={e => setSealedPotholeDensity(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                    {POTHOLE_DENSITY_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                   </select>
                 </div>
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 <div>
-                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Drainage State</label>
-                  <select value={drainage001} onChange={e => setDrainage001(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
-                    <option value="good">Good (Clean)</option>
-                    <option value="fair">Fair (Slight Silt)</option>
-                    <option value="poor">Poor (Blocked)</option>
+                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Climate</label>
+                  <select value={sealedClimate} onChange={e => setSealedClimate(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                    <option value="dry">Dry</option>
+                    <option value="moderate">Moderate</option>
+                    <option value="wet">Wet</option>
+                    <option value="very_wet">Very Wet</option>
                   </select>
                 </div>
                 <div>
-                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Year Sealed</label>
-                  <input type="number" placeholder="e.g. 2018" value={yearConstructedToSealedStandard} onChange={e => setYearConstructedToSealedStandard(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff", outline: "none" }} />
+                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Terrain</label>
+                  <select value={sealedTerrain} onChange={e => setSealedTerrain(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                    <option value="flat">Flat</option>
+                    <option value="undulating">Undulating</option>
+                    <option value="mountainous">Mountainous</option>
+                  </select>
                 </div>
               </div>
 
@@ -1841,12 +2048,342 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
                   </select>
                 </div>
                 <div>
+                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Cycle Track</label>
+                  <select value={sealedCycleTrack} onChange={e => setSealedCycleTrack(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                    {YES_NO_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Survey Side</label>
+                  <select value={sealedSurveySide} onChange={e => setSealedSurveySide(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                    {SURVEY_SIDE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Survey Direction</label>
+                  <input type="text" placeholder="e.g. Northbound" value={sealedSurveyDirection} onChange={e => setSealedSurveyDirection(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff", outline: "none" }} />
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Lanes / Carriage</label>
+                  <input type="number" min="1" placeholder="e.g. 2" value={sealedLanesPerCarriage} onChange={e => setSealedLanesPerCarriage(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff", outline: "none" }} />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Shoulder Width (m)</label>
+                  <input type="number" step="any" placeholder="e.g. 1.5" value={sealedShoulderWidth} onChange={e => setSealedShoulderWidth(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff", outline: "none" }} />
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Median Type</label>
+                  <select value={sealedMedianType} onChange={e => setSealedMedianType(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                    {MEDIAN_TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Drainage Status</label>
+                  <select value={drainage001} onChange={e => setDrainage001(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                    <option value="good">Good</option>
+                    <option value="fair">Fair</option>
+                    <option value="poor">Poor</option>
+                    <option value="eroded">Eroded</option>
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Drainage Type</label>
+                  <select value={sealedDrainageType} onChange={e => setSealedDrainageType(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                    {DRAINAGE_TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Drainage Lining</label>
+                  <select value={sealedDrainageLining} onChange={e => setSealedDrainageLining(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                    {DRAINAGE_LINING_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              {!isDualCarriageway(pavedRoadType) && (
+                <>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: "var(--green)", textTransform: "uppercase", marginTop: 4 }}>Pavement Defects</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    <div>
+                      <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Narrow Cracks</label>
+                      <select value={narrowCracks} onChange={e => setNarrowCracks(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                        <option value="no_cracks">No cracks</option>
+                        <option value="faint_cracks">Faint cracks</option>
+                        <option value="distinct_cracks_up_to_1mm">Distinct cracks up to 1mm</option>
+                        <option value="mixed">Mixed</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Wide Cracks</label>
+                      <select value={wideCracks} onChange={e => setWideCracks(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                        <option value="no_cracks">No cracks</option>
+                        <option value="cracks_3_5mm">Cracks 3-5mm</option>
+                        <option value="cracks_5_10mm">Cracks 5-10mm</option>
+                        <option value="mixed">Mixed</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    <div>
+                      <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Pothole / Patches</label>
+                      <select value={potholePatchesDegree} onChange={e => setPotholePatchesDegree(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                        {POTHOLE_PATCHES_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Rutting</label>
+                      <select value={ruttingDegree} onChange={e => setRuttingDegree(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                        <option value="no_rutting__5mm">No rutting &lt;5mm</option>
+                        <option value="discernible_5_15mm">Discernible 5-15mm</option>
+                        <option value="large_15_25mm">Large 15-25mm</option>
+                        <option value="mixed">Mixed</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    <div>
+                      <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Edge Breaks</label>
+                      <select value={edgeBreaksDegree} onChange={e => setEdgeBreaksDegree(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                        <option value="no_edge_break">No edge break</option>
+                        <option value="up_to_50mm">Up to 50mm</option>
+                        <option value="50_100mm_break">50-100mm break</option>
+                        <option value="__100mm">&gt; 100mm</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Edge Drop</label>
+                      <select value={edgeDropDegree} onChange={e => setEdgeDropDegree(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                        <option value="no_edge_break">No edge drop</option>
+                        <option value="up_to_50mm">Up to 50mm</option>
+                        <option value="50_100mm_break">50-100mm drop</option>
+                        <option value="__100mm">&gt; 100mm</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    <div>
+                      <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Ravelling</label>
+                      <select value={ravellingDegree} onChange={e => setRavellingDegree(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                        <option value="none">None</option>
+                        <option value="minor">Minor</option>
+                        <option value="major">Major</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Riding Quality</label>
+                      <select value={ridingQuality001} onChange={e => setRidingQuality001(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                        {CONDITION_WITH_CONSTRUCTION_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {isDualCarriageway(pavedRoadType) && (
+                <>
+                  <fieldset style={{ border: "1px dashed rgba(0,102,51,0.25)", borderRadius: 8, padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+                    <legend style={{ fontSize: 9, fontWeight: 700, color: "var(--green)", padding: "0 4px" }}>Carriage 1</legend>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <div>
+                        <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Narrow Cracks</label>
+                        <select value={sealedC1NarrowCracks} onChange={e => setSealedC1NarrowCracks(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                          <option value="no_cracks">No cracks</option>
+                          <option value="faint_cracks">Faint cracks</option>
+                          <option value="distinct_cracks_up_to_1mm">Distinct up to 1mm</option>
+                          <option value="mixed">Mixed</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Wide Cracks</label>
+                        <select value={sealedC1WideCracks} onChange={e => setSealedC1WideCracks(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                          <option value="no_cracks">No cracks</option>
+                          <option value="cracks_3_5mm">Cracks 3-5mm</option>
+                          <option value="cracks_5_10mm">Cracks 5-10mm</option>
+                          <option value="mixed">Mixed</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <div>
+                        <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Pothole / Patches</label>
+                        <select value={sealedC1Potholes} onChange={e => setSealedC1Potholes(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                          {POTHOLE_PATCHES_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Rutting</label>
+                        <select value={sealedC1Rutting} onChange={e => setSealedC1Rutting(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                          <option value="no_rutting__5mm">No rutting &lt;5mm</option>
+                          <option value="discernible_5_15mm">Discernible 5-15mm</option>
+                          <option value="large_15_25mm">Large 15-25mm</option>
+                          <option value="mixed">Mixed</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <div>
+                        <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Edge Breaks</label>
+                        <select value={sealedC1EdgeBreaks} onChange={e => setSealedC1EdgeBreaks(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                          <option value="no_edge_break">No edge break</option>
+                          <option value="up_to_50mm">Up to 50mm</option>
+                          <option value="50_100mm_break">50-100mm break</option>
+                          <option value="__100mm">&gt; 100mm</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Edge Drop</label>
+                        <select value={sealedC1EdgeDrop} onChange={e => setSealedC1EdgeDrop(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                          <option value="no_edge_break">No edge drop</option>
+                          <option value="up_to_50mm">Up to 50mm</option>
+                          <option value="50_100mm_break">50-100mm drop</option>
+                          <option value="__100mm">&gt; 100mm</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <div>
+                        <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Ravelling</label>
+                        <select value={sealedC1Ravelling} onChange={e => setSealedC1Ravelling(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                          <option value="none">None</option>
+                          <option value="minor">Minor</option>
+                          <option value="major">Major</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Riding Quality</label>
+                        <select value={sealedC1RidingQuality} onChange={e => setSealedC1RidingQuality(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                          {CONDITION_WITH_CONSTRUCTION_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                  </fieldset>
+                  <fieldset style={{ border: "1px dashed rgba(0,102,51,0.25)", borderRadius: 8, padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+                    <legend style={{ fontSize: 9, fontWeight: 700, color: "var(--green)", padding: "0 4px" }}>Carriage 2</legend>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <div>
+                        <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Narrow Cracks</label>
+                        <select value={sealedC2NarrowCracks} onChange={e => setSealedC2NarrowCracks(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                          <option value="no_cracks">No cracks</option>
+                          <option value="faint_cracks">Faint cracks</option>
+                          <option value="distinct_cracks_up_to_1mm">Distinct up to 1mm</option>
+                          <option value="mixed">Mixed</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Wide Cracks</label>
+                        <select value={sealedC2WideCracks} onChange={e => setSealedC2WideCracks(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                          <option value="no_cracks">No cracks</option>
+                          <option value="cracks_3_5mm">Cracks 3-5mm</option>
+                          <option value="cracks_5_10mm">Cracks 5-10mm</option>
+                          <option value="mixed">Mixed</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <div>
+                        <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Pothole / Patches</label>
+                        <select value={sealedC2Potholes} onChange={e => setSealedC2Potholes(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                          {POTHOLE_PATCHES_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Rutting</label>
+                        <select value={sealedC2Rutting} onChange={e => setSealedC2Rutting(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                          <option value="no_rutting__5mm">No rutting &lt;5mm</option>
+                          <option value="discernible_5_15mm">Discernible 5-15mm</option>
+                          <option value="large_15_25mm">Large 15-25mm</option>
+                          <option value="mixed">Mixed</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <div>
+                        <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Edge Breaks</label>
+                        <select value={sealedC2EdgeBreaks} onChange={e => setSealedC2EdgeBreaks(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                          <option value="no_edge_break">No edge break</option>
+                          <option value="up_to_50mm">Up to 50mm</option>
+                          <option value="50_100mm_break">50-100mm break</option>
+                          <option value="__100mm">&gt; 100mm</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Edge Drop</label>
+                        <select value={sealedC2EdgeDrop} onChange={e => setSealedC2EdgeDrop(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                          <option value="no_edge_break">No edge drop</option>
+                          <option value="up_to_50mm">Up to 50mm</option>
+                          <option value="50_100mm_break">50-100mm drop</option>
+                          <option value="__100mm">&gt; 100mm</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <div>
+                        <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Ravelling</label>
+                        <select value={sealedC2Ravelling} onChange={e => setSealedC2Ravelling(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                          <option value="none">None</option>
+                          <option value="minor">Minor</option>
+                          <option value="major">Major</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Riding Quality</label>
+                        <select value={sealedC2RidingQuality} onChange={e => setSealedC2RidingQuality(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                          {CONDITION_WITH_CONSTRUCTION_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                  </fieldset>
+                </>
+              )}
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Road Markings</label>
+                  <select value={roadMarkings} onChange={e => setRoadMarkings(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                    {YES_NO_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                </div>
+                {roadMarkings === "yes" && (
+                  <div>
+                    <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Markings Visible</label>
+                    <select value={sealedRoadMarkingsVisible} onChange={e => setSealedRoadMarkingsVisible(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                      {YES_NO_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  </div>
+                )}
+                <div>
+                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Road Studs</label>
+                  <select value={roadStuds} onChange={e => setRoadStuds(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                    {YES_NO_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <div>
                   <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Passability</label>
                   <select value={passability002} onChange={e => setPassability002(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
-                    <option value="all_year_round">All Year Round</option>
-                    <option value="dry_season_only">Dry Season Only</option>
+                    <option value="all_year_round">All year round</option>
+                    <option value="dry_season_only">Dry season</option>
+                    <option value="rupture">Rupture</option>
                     <option value="under_construction">Under construction / rehabilitation (detour)</option>
                   </select>
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Year Sealed</label>
+                  <input type="number" placeholder="e.g. 2018" value={yearConstructedToSealedStandard} onChange={e => setYearConstructedToSealedStandard(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff", outline: "none" }} />
                 </div>
               </div>
             </div>
@@ -1855,19 +2392,12 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
           {section === "gravel" && (
             <div style={{ background: "#f0f7f3", border: "1px solid rgba(0,102,51,0.15)", borderRadius: 12, padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: "var(--green)", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 4 }}>Gravel Road Details</div>
-              
-              <div>
-                <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Road Name</label>
-                <input type="text" placeholder="e.g. Murambinda Link" value={gravelRoadName} onChange={e => setGravelRoadName(e.target.value)} required={section === "gravel"} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff", outline: "none" }} />
-              </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 <div>
                   <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Road Class</label>
                   <select value={gravelRoadClass} onChange={e => setGravelRoadClass(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
-                    <option value="urban_collector">Urban Collector</option>
-                    <option value="rural_feeder">Rural Feeder</option>
-                    <option value="tertiary">Tertiary Feeder</option>
+                    {SEALED_ROAD_CLASS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                   </select>
                 </div>
                 <div>
@@ -1927,6 +2457,43 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 <div>
+                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Corrugations Severity</label>
+                  <select value={gravelCorrugationsSeverity} onChange={e => setGravelCorrugationsSeverity(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                    {DEFECT_SEVERITY_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Cross Section Severity</label>
+                  <select value={gravelCrossSectionSeverity} onChange={e => setGravelCrossSectionSeverity(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                    {DEFECT_SEVERITY_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Drainage Severity</label>
+                  <select value={gravelDrainageSeverity} onChange={e => setGravelDrainageSeverity(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                    {DEFECT_SEVERITY_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Potholes Severity</label>
+                  <select value={gravelPotholesSeverity} onChange={e => setGravelPotholesSeverity(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                    {DEFECT_SEVERITY_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Riding Quality Severity</label>
+                <select value={gravelRidingSeverity} onChange={e => setGravelRidingSeverity(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                  {DEFECT_SEVERITY_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <div>
                   <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Authority</label>
                   <select value={gravelAuthority} onChange={e => setGravelAuthority(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
                     {AUTHORITY_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -1935,8 +2502,9 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
                 <div>
                   <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Passability</label>
                   <select value={gravelPassability} onChange={e => setGravelPassability(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
-                    <option value="all_year_round">All Year Round</option>
-                    <option value="dry_season_only">Dry Season Only</option>
+                    <option value="all_year_round">All year round</option>
+                    <option value="dry_season_only">Dry season</option>
+                    <option value="rupture">Rupture</option>
                     <option value="under_construction">Under construction / rehabilitation (detour)</option>
                   </select>
                 </div>
@@ -2631,6 +3199,41 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
             </div>
           )}
 
+          {section === "catchpit" && (
+            <div style={{ background: "#f0f7f3", border: "1px solid rgba(0,102,51,0.15)", borderRadius: 12, padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "var(--green)", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 4 }}>Catchpit Details</div>
+              <div>
+                <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Condition</label>
+                <select value={catchpitCondition} onChange={e => setCatchpitCondition(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                  <option value="good">Good</option>
+                  <option value="fair">Fair</option>
+                  <option value="poor">Poor</option>
+                  <option value="blocked">Blocked</option>
+                </select>
+              </div>
+            </div>
+          )}
+
+          {section === "traffic_calming" && (
+            <div style={{ background: "#f0f7f3", border: "1px solid rgba(0,102,51,0.15)", borderRadius: 12, padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "var(--green)", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 4 }}>Traffic Calming Details</div>
+              <div>
+                <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Type</label>
+                <select value={trafficCalmingType} onChange={e => setTrafficCalmingType(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                  {TRAFFIC_CALMING_TYPES.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Condition</label>
+                <select value={trafficCalmingCondition} onChange={e => setTrafficCalmingCondition(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                  <option value="good">Good</option>
+                  <option value="fair">Fair</option>
+                  <option value="poor">Poor</option>
+                </select>
+              </div>
+            </div>
+          )}
+
           {section === "traffic_lights" && (
             <div style={{ background: "#f0f7f3", border: "1px solid rgba(0,102,51,0.15)", borderRadius: 12, padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: "var(--green)", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 4 }}>Traffic Lights Details</div>
@@ -3128,11 +3731,13 @@ const EXPORT_PARAMETERS = [
   { key: "piped_causeway",  label: "Piped Causeways", emoji: "🌁" },
   { key: "shelvet",         label: "Shelverts",        emoji: "🧱" },
   { key: "grid",            label: "Cattle Grids",    emoji: "🐄" },
+  { key: "catchpit",        label: "Catchpits",       emoji: "🕳️" },
   { key: "layby",           label: "Lay-bys",         emoji: "🅿️" },
   { key: "busstop",         label: "Bus Stops",       emoji: "🚌" },
   { key: "junction",        label: "Junctions",       emoji: "🔀" },
   { key: "sign",            label: "Road Signs",      emoji: "⚠️" },
   { key: "traffic_lights",  label: "Traffic Lights",  emoji: "🚦" },
+  { key: "traffic_calming", label: "Traffic Calming", emoji: "🛑" },
   { key: "streetlight",     label: "Streetlights",    emoji: "💡" }
 ];
 
@@ -3622,23 +4227,20 @@ function GalleryCard({ record, onSelectRecord, onOpenLightbox }: { record: any; 
   const [loading, setLoading] = useState<boolean>(false);
 
   useEffect(() => {
-    const init = normalizePhotos(record);
-    if (init.length > 0) {
-      setPhotos(init);
-      return;
-    }
     const id = record.id || record._id || record.survey_id;
+    const initial = normalizePhotos(record);
+    setPhotos(initial);
+
     if (!id) return;
 
     setLoading(true);
     fetch(`/api/roads?photoFor=${encodeURIComponent(id)}`)
       .then(res => res.json())
       .then(data => {
-        if (Array.isArray(data.photos) && data.photos.length > 0) {
-          setPhotos(data.photos);
-        } else if (data.photo) {
-          setPhotos([data.photo]);
-        }
+        const remote = Array.isArray(data.photos) && data.photos.length > 0
+          ? data.photos
+          : (data.photo ? [data.photo] : []);
+        setPhotos(mergePhotoLists(initial, remote));
       })
       .catch(() => {})
       .finally(() => setLoading(false));

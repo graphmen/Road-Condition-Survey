@@ -154,6 +154,15 @@ export default function DownloadPage() {
               </div>
             )}
 
+            {!loading && (
+              <div className="dl-cta-row" style={{ marginTop: 12 }}>
+                <a className="dl-btn-secondary" href="/collector" target="_blank" rel="noopener noreferrer">
+                  <Smartphone size={16} />
+                  Preview collector app in browser
+                </a>
+              </div>
+            )}
+
             <div className="dl-meta">
               <div>
                 <span>Version</span>

@@ -25,15 +25,26 @@ export interface SurveyDraft {
   vegetation_growth?: string;
   drainage?: string;
   bridge_condition?: string;
+  bridge_structure_type?: string;
+  bridge_length_m?: number;
+  bridge_width_m?: number;
+  bridge_spans?: number;
+  bridge_approach_condition?: string;
+  bridge_signage?: string;
 
   // Culvert optional fields
   culvet_class?: string;
   culvet_type?: string;
   culvet_serviceability?: string;
+  culvert_size_m2?: number;
+  culvert_openings?: number;
 
   // Shelvet optional fields
   shelvets_type?: string;
   shelvet_condition?: string;
+  shelvet_serviceability?: string;
+  shelvet_size_m2?: number;
+  shelvet_openings?: number;
 
   // Sealed Roads optional fields
   paved_road_name?: string;
@@ -73,6 +84,46 @@ export interface SurveyDraft {
   Grid?: string;
   Year_constructed_to_sealed_standard?: number;
   Last_surface_year?: number;
+  Surface_type?: string;
+  Pothole_density?: string;
+  Cycle_track?: string;
+  Survey_side?: string;
+  Survey_direction?: string;
+  Drainage_lining?: string;
+  Road_markings_visible?: string;
+  Median_type?: string;
+  Carriage1_Narrow_cracks?: string;
+  Carriage1_Wide_cracks?: string;
+  Carriage1_Pothole_patches?: string;
+  Carriage1_Rutting?: string;
+  Carriage1_Edge_breaks?: string;
+  Carriage1_Edge_drop?: string;
+  Carriage1_Ravelling?: string;
+  Carriage1_Riding_quality?: string;
+  Carriage2_Narrow_cracks?: string;
+  Carriage2_Wide_cracks?: string;
+  Carriage2_Pothole_patches?: string;
+  Carriage2_Rutting?: string;
+  Carriage2_Edge_breaks?: string;
+  Carriage2_Edge_drop?: string;
+  Carriage2_Ravelling?: string;
+  Carriage2_Riding_quality?: string;
+  chainage_from_km?: number;
+  chainage_to_km?: number;
+
+  // Catchpit optional fields
+  catchpit_condition?: string;
+
+  // Traffic calming optional fields
+  traffic_calming_type?: string;
+  traffic_calming_condition?: string;
+
+  // Gravel severity/extent fields
+  gravel_corrugations_severity?: string;
+  gravel_cross_section_severity?: string;
+  gravel_drainage_severity?: string;
+  gravel_potholes_severity?: string;
+  gravel_riding_severity?: string;
 
   // Gravel Roads optional fields
   gravel_road_name?: string;
@@ -148,18 +199,25 @@ export interface SurveyDraft {
   tollgate_condition?: string;
   tollgate_lanes?: number;
   tollgate_operational?: string;
+  tollgate_dualisation?: string;
+  tollgate_vegetation?: string;
 
   // Lay-by optional fields
   layby_condition?: string;
   layby_surface?: string;
   layby_length?: number;
   layby_drainage?: string;
+  layby_width?: number;
+  layby_furniture?: string;
+  layby_refuse_bin?: string;
 
   // Bus Stop optional fields
   busstop_type?: string;
   busstop_condition?: string;
   busstop_shelter?: string;
   busstop_drainage?: string;
+  busstop_furniture_condition?: string;
+  busstop_refuse_bin?: string;
 
   // Junction optional fields
   junction_type?: string;
@@ -173,10 +231,15 @@ export interface SurveyDraft {
   sign_condition?: string;
   sign_sadc_compliant?: string;
   sign_visibility?: string;
+  sign_name?: string;
 
   // Piped Causeway optional fields
   causeway_name?: string;
   causeway_condition?: string;
+  causeway_type?: string;
+  causeway_length_m?: number;
+  causeway_openings?: number;
+  causeway_box_size?: string;
   causeway_pipe_material?: string;
   causeway_pipe_diameter?: string;
   causeway_drainage?: string;
@@ -188,12 +251,16 @@ export interface SurveyDraft {
   drift_surface?: string;
   drift_passability?: string;
   drift_width?: number;
+  drift_length_m?: number;
+  drift_type?: string;
 
   // Grid optional fields
   grid_name?: string;
   grid_condition?: string;
   grid_material?: string;
   grid_operational?: string;
+  grid_serviceability?: string;
+  grid_passability?: string;
 
   // Traffic Lights optional fields
   traffic_lights_location?: string;
@@ -201,6 +268,7 @@ export interface SurveyDraft {
   traffic_lights_operational?: string;
   traffic_lights_type?: string;
   traffic_lights_phases?: number;
+  traffic_lights_power_source?: string;
 
   // Streetlights optional fields
   streetlight_type?: string;

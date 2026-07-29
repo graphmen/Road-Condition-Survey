@@ -1,6 +1,5 @@
-import { useRef, useState, type ChangeEvent } from "react";
-import { Capacitor } from "@capacitor/core";
-import { Camera as CameraIcon, ImagePlus, Trash2 } from "lucide-react";
+import { useState } from "react";
+import { Camera as CameraIcon, Trash2 } from "lucide-react";
 
 type Props = {
   photos: string[];
@@ -39,23 +38,15 @@ export async function compressDataUrl(dataUrl: string, maxWidth = 1280, quality 
 }
 
 /**
- * Capture one photo using the device camera.
- * Prefer getUserMedia (works in Capacitor Android WebView once CAMERA permission is granted),
- * fall back to a hidden file input with capture=environment.
+ * Capture one photo using the device camera (live preview only — no gallery).
  */
-export async function capturePhotoNativeOrNull(
-  fileInputFallback?: HTMLInputElement | null
-): Promise<string | null> {
-  // Try live camera stream first (native WebView + modern browsers)
+export async function capturePhotoNativeOrNull(): Promise<string | null> {
   if (typeof navigator !== "undefined" && navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === "function") {
     try {
       return await captureViaGetUserMedia();
     } catch (e) {
-      console.warn("getUserMedia capture failed, falling back:", e);
+      console.warn("getUserMedia capture failed:", e);
     }
-  }
-  if (fileInputFallback) {
-    fileInputFallback.click();
   }
   return null;
 }
@@ -178,11 +169,7 @@ function captureViaGetUserMedia(): Promise<string> {
   });
 }
 
-/**
- * Reliable multi-photo capture for survey forms:
- * - Native APK: getUserMedia live preview (fixes flaky WebView file-input)
- * - Always: file input fallback (gallery / system camera)
- */
+/** Multi-photo capture — camera only (no gallery). */
 export function PhotoCapture({
   photos,
   onChange,
@@ -190,7 +177,6 @@ export function PhotoCapture({
   label = "Photos",
   hint,
 }: Props) {
-  const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -206,46 +192,19 @@ export function PhotoCapture({
     setError("");
     setBusy(true);
     try {
-      const dataUrl = await capturePhotoNativeOrNull(fileRef.current);
-      if (dataUrl) await addPhoto(dataUrl);
+      const dataUrl = await capturePhotoNativeOrNull();
+      if (dataUrl) {
+        await addPhoto(dataUrl);
+      } else {
+        setError("Camera unavailable. Allow camera permission and try again.");
+      }
     } catch (e: unknown) {
       const msg = (e as Error)?.message || "Camera failed";
       if (!/cancel|dismiss|User cancelled/i.test(msg)) {
         setError(msg);
-        // Last resort: system picker
-        try {
-          fileRef.current?.click();
-        } catch { /* ignore */ }
       }
     } finally {
       setBusy(false);
-    }
-  };
-
-  const onFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-    setBusy(true);
-    setError("");
-    try {
-      const remaining = maxPhotos - photos.length;
-      const selected = Array.from(files).slice(0, remaining);
-      const next = [...photos];
-      for (const file of selected) {
-        const dataUrl = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve(String(reader.result || ""));
-          reader.onerror = () => reject(new Error("Failed to read image"));
-          reader.readAsDataURL(file);
-        });
-        if (dataUrl) next.push(await compressDataUrl(dataUrl));
-      }
-      onChange(next);
-    } catch (err: unknown) {
-      setError((err as Error)?.message || "Could not load image");
-    } finally {
-      setBusy(false);
-      e.target.value = "";
     }
   };
 
@@ -317,39 +276,28 @@ export function PhotoCapture({
       )}
 
       {canAdd && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <button
-            type="button"
-            onClick={handleCapture}
-            disabled={busy}
-            className="mobile-btn"
-            style={{
-              width: "100%",
-              height: 48,
-              gap: 8,
-              fontSize: 12,
-              opacity: busy ? 0.6 : 1,
-            }}
-          >
-            {busy ? (
-              "Opening camera…"
-            ) : (
-              <>
-                {photos.length === 0 ? <CameraIcon size={16} /> : <ImagePlus size={16} />}
-                {photos.length === 0 ? "Take Photo" : "Add Another Photo"}
-              </>
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={() => fileRef.current?.click()}
-            disabled={busy}
-            className="mobile-btn mobile-btn-outline"
-            style={{ width: "100%", height: 40, gap: 8, fontSize: 11 }}
-          >
-            Choose from Gallery
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={handleCapture}
+          disabled={busy}
+          className="mobile-btn"
+          style={{
+            width: "100%",
+            height: 48,
+            gap: 8,
+            fontSize: 12,
+            opacity: busy ? 0.6 : 1,
+          }}
+        >
+          {busy ? (
+            "Opening camera…"
+          ) : (
+            <>
+              <CameraIcon size={16} />
+              {photos.length === 0 ? "Take Photo" : "Add Another Photo"}
+            </>
+          )}
+        </button>
       )}
 
       {!canAdd && (
@@ -361,17 +309,6 @@ export function PhotoCapture({
       {error && (
         <p style={{ fontSize: 11, color: "#dc2626", margin: "6px 0 0" }}>{error}</p>
       )}
-
-      {/* Hidden file input — gallery + system-camera fallback */}
-      <input
-        ref={fileRef}
-        type="file"
-        accept="image/*"
-        multiple={!Capacitor.isNativePlatform()}
-        capture={Capacitor.isNativePlatform() ? undefined : "environment"}
-        onChange={onFileChange}
-        style={{ display: "none" }}
-      />
     </div>
   );
 }

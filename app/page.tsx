@@ -9,6 +9,7 @@ import RightPanel from "@/components/panels/RightPanel";
 import FullPageModule from "@/components/panels/FullPageModule";
 import LoginModal from "@/components/LoginModal";
 import MapErrorBoundary from "@/components/MapErrorBoundary";
+import { useInactivityTimeout, clearInactivityTimestamp } from "@/hooks/useInactivityTimeout";
 import {
   enrichRecordGeo,
   buildMapGoto,
@@ -123,9 +124,26 @@ export default function Home() {
   const handleSignOut = () => {
     localStorage.removeItem("zim_roads_user");
     localStorage.removeItem("zim_roads_token");
+    clearInactivityTimestamp();
     setIsAuthenticated(false);
     setToast({ message: "You have been signed out.", type: "info" });
   };
+
+  // Automatic 15-minute inactivity session timeout
+  useInactivityTimeout({
+    enabled: isAuthenticated === true,
+    timeoutMs: 15 * 60 * 1000, // 15 minutes
+    onTimeout: () => {
+      localStorage.removeItem("zim_roads_user");
+      localStorage.removeItem("zim_roads_token");
+      clearInactivityTimestamp();
+      setIsAuthenticated(false);
+      setToast({
+        message: "Session expired due to 15 minutes of inactivity. Please log in again.",
+        type: "error",
+      });
+    },
+  });
 
   // Auto-dismiss toast
   useEffect(() => {

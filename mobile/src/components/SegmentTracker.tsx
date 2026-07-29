@@ -47,6 +47,9 @@ interface Props {
   onAddPhoto?: () => void | Promise<void>;
   photoCount?: number;
   maxPhotos?: number;
+  /** Max allowed segment length in metres (urban/rural). Blocks End Segment when exceeded. */
+  maxSegmentLengthM?: number;
+  segmentLimitHint?: string;
 }
 
 type Phase = "idle" | "tracking" | "paused" | "completed";
@@ -266,6 +269,8 @@ export function SegmentTracker({
   onAddPhoto,
   photoCount = 0,
   maxPhotos = 12,
+  maxSegmentLengthM,
+  segmentLimitHint,
 }: Props) {
   const initial = readInitialSegmentState(existingGeometry);
   const [phase, setPhase] = useState<Phase>(initial.phase);
@@ -958,6 +963,45 @@ export function SegmentTracker({
     onSegmentComplete(geo);
   };
 
+  const confirmEndSegment = () => {
+    const finalPts = pointsRef.current.length > 0 ? pointsRef.current : points;
+    if (finalPts.length < 2) return;
+
+    const length_m = totalDistance(finalPts);
+    if (maxSegmentLengthM != null && length_m > maxSegmentLengthM) {
+      setStatusMsg(
+        `⚠ Segment ${fmtDist(length_m)} exceeds limit (${fmtDist(maxSegmentLengthM)}). End here and start a new segment.`
+      );
+      window.alert(
+        `Segment length ${fmtDist(length_m)} exceeds the allowed maximum of ${fmtDist(maxSegmentLengthM)}.\n\n` +
+          (segmentLimitHint ? `${segmentLimitHint}\n\n` : "") +
+          "Pause or end recording and start a new segment for the remainder of the road."
+      );
+      return;
+    }
+
+    const message =
+      `End this segment?\n\n` +
+      `${finalPts.length} GPS points recorded · ${fmtDist(length_m)}\n\n` +
+      `Road attributes will unlock after you confirm. This cannot be undone.`;
+
+    if (!window.confirm(message)) return;
+    void endSegment();
+  };
+
+  // Shared layout for segment control buttons
+  const segmentBtnBase: React.CSSProperties = {
+    height: 44,
+    minHeight: 44,
+    fontSize: 11,
+    gap: 6,
+    padding: "0 10px",
+    lineHeight: 1.25,
+    whiteSpace: "normal",
+    textAlign: "center",
+    justifyContent: "center",
+  };
+
   // ── Accuracy helpers ───────────────────────────────────────────────────────
 
   const accColour =
@@ -1002,6 +1046,7 @@ export function SegmentTracker({
             </p>
             <p style={{ fontSize: "10px", color: "var(--text-muted)", margin: "2px 0 0" }}>
               Record segment geometry before entering attributes
+              {segmentLimitHint ? ` · ${segmentLimitHint}` : ""}
             </p>
           </div>
         </div>
@@ -1318,54 +1363,59 @@ export function SegmentTracker({
         )}
 
         {/* Action Buttons */}
-        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 16, paddingTop: 4 }}>
           {onAddPhoto && (
             <button
               type="button"
               onClick={() => { void onAddPhoto(); }}
               disabled={photoCount >= maxPhotos}
               className="mobile-btn mobile-btn-outline"
-              style={{ width: "100%", height: "42px", fontSize: "12px", gap: "6px" }}
+              style={{ width: "100%", height: 42, fontSize: 12, gap: 6 }}
             >
               <Camera size={14} />
               Snap Road Photo ({photoCount}/{maxPhotos})
             </button>
           )}
-          <div style={{ display: "flex", gap: "8px" }}>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: 8,
+            }}
+          >
             <button
               type="button"
               onClick={manualAdd}
               disabled={!currentPos}
               className="mobile-btn mobile-btn-outline"
-              style={{ flex: 1, height: "42px", fontSize: "12px", gap: "6px" }}
+              style={segmentBtnBase}
             >
-              <Plus size={14} />
+              <Plus size={14} style={{ flexShrink: 0 }} />
               Add Point Now
             </button>
             <button
               type="button"
-              onClick={endSegment}
+              onClick={confirmEndSegment}
               disabled={points.length < 2}
               className="mobile-btn"
               style={{
-                flex: 1, height: "42px", fontSize: "12px", gap: "6px",
+                ...segmentBtnBase,
                 background: points.length >= 2 ? "#dc2626" : undefined,
                 borderColor: points.length >= 2 ? "#dc2626" : undefined,
               }}
             >
-              <Square size={14} />
+              <Square size={14} style={{ flexShrink: 0 }} />
               End Segment
             </button>
-          </div>
-          <div style={{ display: "flex", gap: "8px" }}>
             <button
               type="button"
               onClick={() => pauseSegment(false)}
               disabled={points.length < 1}
               className="mobile-btn mobile-btn-outline"
-              style={{ flex: 1, height: "40px", fontSize: "11px", gap: "6px" }}
+              style={segmentBtnBase}
             >
-              <Pause size={14} />
+              <Pause size={14} style={{ flexShrink: 0 }} />
               Pause
             </button>
             <button
@@ -1374,12 +1424,12 @@ export function SegmentTracker({
               disabled={points.length < 1}
               className="mobile-btn"
               style={{
-                flex: 1.4, height: "40px", fontSize: "11px", gap: "6px",
+                ...segmentBtnBase,
                 background: "#b45309",
                 borderColor: "#b45309",
               }}
             >
-              <MapPinned size={14} />
+              <MapPinned size={14} style={{ flexShrink: 0 }} />
               Pause &amp; Collect Point
             </button>
           </div>
@@ -1484,11 +1534,11 @@ export function SegmentTracker({
 
         <button
           type="button"
-          onClick={endSegment}
+          onClick={confirmEndSegment}
           disabled={points.length < 2}
           className="mobile-btn"
           style={{
-            width: "100%", height: "40px", fontSize: "12px", gap: "6px",
+            width: "100%", height: 44, fontSize: 12, gap: 6, marginTop: 4,
             background: points.length >= 2 ? "#dc2626" : undefined,
             borderColor: points.length >= 2 ? "#dc2626" : undefined,
             opacity: points.length < 2 ? 0.5 : 1,

@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { Lock, Mail, Eye, EyeOff, ShieldCheck, CheckCircle, AlertCircle, Key } from "lucide-react";
 import { UserProfile } from "@/components/helpers";
+import { setInactivityTimestamp } from "@/hooks/useInactivityTimeout";
 
 interface LoginModalProps {
   onLoginSuccess: (user: UserProfile) => void;
@@ -43,9 +44,10 @@ export default function LoginModal({ onLoginSuccess }: LoginModalProps) {
         return;
       }
 
-      // Save active session to localStorage
+      // Save active session to localStorage & set inactivity timestamp
       localStorage.setItem("zim_roads_user", JSON.stringify(data.user));
       localStorage.setItem("zim_roads_token", data.token);
+      setInactivityTimestamp();
 
       onLoginSuccess(data.user);
     } catch (err: any) {

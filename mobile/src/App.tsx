@@ -3,14 +3,31 @@ import { db } from "./lib/db";
 import type { SurveyDraft } from "./lib/db";
 import { SegmentTracker, PAUSED_ROAD_CONTEXT_KEY, SEGMENT_SESSION_KEY } from "./components/SegmentTracker";
 import type { SegmentGeometry } from "./components/SegmentTracker";
+import { SurveyProgressPanel } from "./components/SurveyProgressPanel";
 import { AutocompleteInput } from "./components/AutocompleteInput";
 import { PhotoCapture, capturePhotoNativeOrNull } from "./components/PhotoCapture";
 import {
+  SEALED_ROAD_CLASS_OPTIONS,
+  SEALED_ROAD_TYPE_OPTIONS,
+  SURFACE_TYPE_OPTIONS,
+  POTHOLE_DENSITY_OPTIONS,
+  POTHOLE_PATCHES_OPTIONS,
+  DRAINAGE_TYPE_OPTIONS,
+  DRAINAGE_LINING_OPTIONS,
+  MEDIAN_TYPE_OPTIONS,
+  SURVEY_SIDE_OPTIONS,
+  YES_NO_OPTIONS,
+  DEFECT_SEVERITY_OPTIONS,
+  TRAFFIC_CALMING_TYPES,
+  isDualCarriageway,
+} from "./sealedRoadConfig";
+import { segmentMaxLengthM, fmtSegmentLimitHint, validateSegmentLengthM } from "./lib/segmentLimits";
+import {
   SelectWithOther,
   AUTHORITY_OPTIONS,
-  CONDITION_GFPM,
   CONDITION_GFPM_CONSTRUCTION,
 } from "./components/SelectWithOther";
+import { ROAD_CLASS_OPTIONS, CONDITION_GFP } from "./pointAssetConfig";
 import {
   highwaySuggestions,
   sectionSuggestions,
@@ -46,6 +63,8 @@ import {
   FolderOpen,
   CircleDot,
   Droplets,
+  Droplet,
+  Shield,
   Waves,
   Grid,
   Flame,
@@ -67,14 +86,23 @@ type PausedRoadContext = {
 };
 
 const PAUSED_ROAD_PHOTOS_KEY = "roads_paused_road_photos";
-const MAX_ROAD_PHOTOS = 12;
-const MAX_POINT_PHOTOS = 5;
+const MAX_ROAD_PHOTOS = 6;
+const MAX_POINT_PHOTOS = 2;
+
+function captureSurveyDate(): string {
+  return new Date().toISOString().split("T")[0];
+}
 
 function normalizePhotos(s: { photos?: string[]; photo?: string | null } | null | undefined): string[] {
   if (!s) return [];
   if (Array.isArray(s.photos) && s.photos.length > 0) return s.photos.filter(Boolean);
   if (s.photo) return [s.photo];
   return [];
+}
+
+function clampPhotos(photos: string[], isRoad: boolean): string[] {
+  const max = isRoad ? MAX_ROAD_PHOTOS : MAX_POINT_PHOTOS;
+  return photos.slice(0, max);
 }
 
 function savePausedRoadPhotos(photos: string[]) {
@@ -110,6 +138,11 @@ function loadPausedRoadContext(): PausedRoadContext | null {
   } catch {
     return null;
   }
+}
+
+function mapLegacyPotholePatches(val: string | undefined): string {
+  if (!val || val === "good") return "no_potholes";
+  return val;
 }
 
 const ASSET_CLASSES = [
@@ -217,11 +250,21 @@ const ASSET_CLASSES = [
     id: "sign",
     label: "Road Sign",
     type: "Furniture",
-    category: "amenities",
+    category: "traffic",
     icon: <Info size={20} />,
     desc: "Speed limits & safety signs. Inspect SADC compliance status, poles, and reflectivity.",
     color: "#4c1d95",
     grad: "linear-gradient(135deg, #8b5cf6, #3b0764)"
+  },
+  {
+    id: "traffic_calming",
+    label: "Traffic Calming",
+    type: "Control",
+    category: "traffic",
+    icon: <Shield size={20} />,
+    desc: "Speed humps, rumble strips, and dips. Record type and structural condition.",
+    color: "#c2410c",
+    grad: "linear-gradient(135deg, #ea580c, #9a3412)"
   },
   {
     id: "shelvet",
@@ -264,10 +307,20 @@ const ASSET_CLASSES = [
     grad: "linear-gradient(135deg, #06b6d4, #0891b2)"
   },
   {
+    id: "catchpit",
+    label: "Catchpit",
+    type: "Drainage",
+    category: "drainage",
+    icon: <Droplet size={20} />,
+    desc: "Roadside catchpit drainage structures. Record condition and blockage status.",
+    color: "#2563eb",
+    grad: "linear-gradient(135deg, #3b82f6, #1d4ed8)"
+  },
+  {
     id: "grid",
     label: "Grid",
     type: "Drainage",
-    category: "drainage",
+    category: "amenities",
     icon: <Grid size={20} />,
     desc: "Vehicle cattle grids. Check grid frame stability, welded bar spacing, & cleanout pit.",
     color: "#0891b2",
@@ -327,7 +380,7 @@ export default function App() {
   const devClickCountRef = React.useRef(0);
 
   // Form Fields State
-  const [assetCategory, setAssetCategory] = useState<"sealed" | "gravel" | "earth" | "bridge" | "footbridge" | "rail_crossing" | "tollgate" | "layby" | "busstop" | "junction" | "sign" | "shelvet" | "culvert" | "piped_causeway" | "drift" | "grid" | "traffic_lights" | "streetlight">("sealed");
+  const [assetCategory, setAssetCategory] = useState<"sealed" | "gravel" | "earth" | "bridge" | "footbridge" | "rail_crossing" | "tollgate" | "layby" | "busstop" | "junction" | "sign" | "shelvet" | "culvert" | "piped_causeway" | "drift" | "catchpit" | "grid" | "traffic_calming" | "traffic_lights" | "streetlight">("sealed");
   const [segmentGeometry, setSegmentGeometry] = useState<SegmentGeometry | null>(null);
   const isRoadType = assetCategory === "sealed" || assetCategory === "gravel" || assetCategory === "earth";
   const [pausedRoadContext, setPausedRoadContext] = useState<PausedRoadContext | null>(() => loadPausedRoadContext());
@@ -388,6 +441,8 @@ export default function App() {
 
   const [roadName, setRoadName] = useState("");
   const [sectionName, setSectionName] = useState("");
+  const [chainageFrom, setChainageFrom] = useState("");
+  const [chainageTo, setChainageTo] = useState("");
   const [surveyorName, setSurveyorName] = useState("");
   const [surveyDate, setSurveyDate] = useState(new Date().toISOString().split("T")[0]);
   const [vegetation, setVegetation] = useState("medium");
@@ -413,15 +468,26 @@ export default function App() {
   const [vegetationGrowth, setVegetationGrowth] = useState("no");
   const [drainage, setDrainage] = useState("good");
   const [bridgeCondition, setBridgeCondition] = useState("good");
+  const [bridgeStructureType, setBridgeStructureType] = useState("beam");
+  const [bridgeLength, setBridgeLength] = useState("");
+  const [bridgeWidth, setBridgeWidth] = useState("");
+  const [bridgeSpans, setBridgeSpans] = useState("");
+  const [bridgeApproachCondition, setBridgeApproachCondition] = useState("good");
+  const [bridgeSignage, setBridgeSignage] = useState("yes");
 
   // Conditional Culvert Fields
   const [culvertClass, setCulvertClass] = useState("pipe_culvert");
   const [culvertType, setCulvertType] = useState("concrete");
   const [culvertServiceability, setCulvertServiceability] = useState("good");
+  const [culvertSizeM2, setCulvertSizeM2] = useState("");
+  const [culvertOpenings, setCulvertOpenings] = useState("");
 
   // Conditional Shelvet Fields
   const [shelvetType, setShelvetType] = useState("armco");
   const [shelvetCondition, setShelvetCondition] = useState("good");
+  const [shelvetServiceability, setShelvetServiceability] = useState("good");
+  const [shelvetSizeM2, setShelvetSizeM2] = useState("");
+  const [shelvetOpenings, setShelvetOpenings] = useState("");
 
   // Conditional Sealed Roads Fields
   const [sealedName, setSealedName] = useState("");
@@ -437,7 +503,7 @@ export default function App() {
   const [sealedVegetation, setSealedVegetation] = useState("medium");
   const [sealedNarrowCracks, setSealedNarrowCracks] = useState("no_cracks");
   const [sealedWideCracks, setSealedWideCracks] = useState("no_cracks");
-  const [sealedPotholesPatches, setSealedPotholesPatches] = useState("good");
+  const [sealedPotholesPatches, setSealedPotholesPatches] = useState("no_potholes");
   const [sealedRutting, setSealedRutting] = useState("no_rutting__5mm");
   const [sealedEdgeBreaks, setSealedEdgeBreaks] = useState("no_edge_break");
   const [sealedEdgeDrop, setSealedEdgeDrop] = useState("no_edge_break");
@@ -447,8 +513,33 @@ export default function App() {
   const [sealedRoadMarkings, setSealedRoadMarkings] = useState("yes");
   const [sealedRoadStuds, setSealedRoadStuds] = useState("yes");
   const [sealedPassability, setSealedPassability] = useState("all_year_round");
-  const [sealedGrid, setSealedGrid] = useState("good");
   const [sealedYearConstructed, setSealedYearConstructed] = useState("");
+  const [sealedSurfaceType, setSealedSurfaceType] = useState("asphalt");
+  const [sealedPotholeDensity, setSealedPotholeDensity] = useState("low");
+  const [sealedCycleTrack, setSealedCycleTrack] = useState("no");
+  const [sealedSurveySide, setSealedSurveySide] = useState("left");
+  const [sealedSurveyDirection, setSealedSurveyDirection] = useState("");
+  const [sealedLanesPerCarriage, setSealedLanesPerCarriage] = useState("");
+  const [sealedShoulderWidth, setSealedShoulderWidth] = useState("");
+  const [sealedMedianType, setSealedMedianType] = useState("none");
+  const [sealedDrainageLining, setSealedDrainageLining] = useState("not_lined");
+  const [sealedRoadMarkingsVisible, setSealedRoadMarkingsVisible] = useState("yes");
+  const [sealedC1NarrowCracks, setSealedC1NarrowCracks] = useState("no_cracks");
+  const [sealedC1WideCracks, setSealedC1WideCracks] = useState("no_cracks");
+  const [sealedC1Potholes, setSealedC1Potholes] = useState("no_potholes");
+  const [sealedC1Rutting, setSealedC1Rutting] = useState("no_rutting__5mm");
+  const [sealedC1EdgeBreaks, setSealedC1EdgeBreaks] = useState("no_edge_break");
+  const [sealedC1EdgeDrop, setSealedC1EdgeDrop] = useState("no_edge_break");
+  const [sealedC1Ravelling, setSealedC1Ravelling] = useState("none");
+  const [sealedC1RidingQuality, setSealedC1RidingQuality] = useState("good");
+  const [sealedC2NarrowCracks, setSealedC2NarrowCracks] = useState("no_cracks");
+  const [sealedC2WideCracks, setSealedC2WideCracks] = useState("no_cracks");
+  const [sealedC2Potholes, setSealedC2Potholes] = useState("no_potholes");
+  const [sealedC2Rutting, setSealedC2Rutting] = useState("no_rutting__5mm");
+  const [sealedC2EdgeBreaks, setSealedC2EdgeBreaks] = useState("no_edge_break");
+  const [sealedC2EdgeDrop, setSealedC2EdgeDrop] = useState("no_edge_break");
+  const [sealedC2Ravelling, setSealedC2Ravelling] = useState("none");
+  const [sealedC2RidingQuality, setSealedC2RidingQuality] = useState("good");
 
   // Conditional Gravel Roads Fields
   const [gravelName, setGravelName] = useState("");
@@ -469,6 +560,18 @@ export default function App() {
   const [gravelPotholes, setGravelPotholes] = useState("none");
   const [gravelPassability, setGravelPassability] = useState("all_year_round");
   const [gravelYearConstructed, setGravelYearConstructed] = useState("");
+  const [gravelCorrugationsSeverity, setGravelCorrugationsSeverity] = useState("none");
+  const [gravelCrossSectionSeverity, setGravelCrossSectionSeverity] = useState("none");
+  const [gravelDrainageSeverity, setGravelDrainageSeverity] = useState("none");
+  const [gravelPotholesSeverity, setGravelPotholesSeverity] = useState("none");
+  const [gravelRidingSeverity, setGravelRidingSeverity] = useState("none");
+
+  // Catchpit Fields
+  const [catchpitCondition, setCatchpitCondition] = useState("good");
+
+  // Traffic Calming Fields
+  const [trafficCalmingType, setTrafficCalmingType] = useState("speed_hump");
+  const [trafficCalmingCondition, setTrafficCalmingCondition] = useState("good");
 
   // Earth Roads Fields
   const [earthName, setEarthName] = useState("");
@@ -506,31 +609,39 @@ export default function App() {
   const [tollgateCondition, setTollgateCondition] = useState("good");
   const [tollgateLanes, setTollgateLanes] = useState("2");
   const [tollgateOperational, setTollgateOperational] = useState("yes");
+  const [tollgateDualisation, setTollgateDualisation] = useState("no");
+  const [tollgateVegetation, setTollgateVegetation] = useState("none");
 
   // Lay-by Fields
   const [laybyCondition, setLaybyCondition] = useState("good");
   const [laybySurface, setLaybySurface] = useState("gravel");
   const [laybyLength, setLaybyLength] = useState("");
   const [laybyDrainage, setLaybyDrainage] = useState("good");
+  const [laybyWidth, setLaybyWidth] = useState("");
+  const [laybyFurniture, setLaybyFurniture] = useState("good");
+  const [laybyRefuseBin, setLaybyRefuseBin] = useState("no");
 
   // Bus Stop Fields
   const [busstopType, setBusstopType] = useState("bay_type");
   const [busstopCondition, setBusstopCondition] = useState("good");
   const [busstopShelter, setBusstopShelter] = useState("yes");
   const [busstopDrainage, setBusstopDrainage] = useState("good");
+  const [busstopFurnitureCondition, setBusstopFurnitureCondition] = useState("good");
+  const [busstopRefuseBin, setBusstopRefuseBin] = useState("no");
 
   // Junction Fields
   const [junctionType, setJunctionType] = useState("t_junction");
   const [junctionCondition, setJunctionCondition] = useState("good");
   const [junctionControl, setJunctionControl] = useState("signs");
   const [junctionMarkings, setJunctionMarkings] = useState("yes");
-  const [junctionSignage, setJunctionSignage] = useState("yes");
+  const [junctionSignage, setJunctionSignage] = useState("good");
 
   // Road Sign Fields
   const [signType, setSignType] = useState("warning");
   const [signCondition, setSignCondition] = useState("good");
   const [signSadcCompliant, setSignSadcCompliant] = useState("yes");
   const [signVisibility, setSignVisibility] = useState("good");
+  const [signName, setSignName] = useState("");
 
   // Piped Causeway Fields
   const [causewayName, setCausewayName] = useState("");
@@ -538,6 +649,11 @@ export default function App() {
   const [causewayPipeDiameter, setCausewayPipeDiameter] = useState("600_900");
   const [causewayDrainage, setCausewayDrainage] = useState("good");
   const [causewayServiceability, setCausewayServiceability] = useState("good");
+  const [causewayCondition, setCausewayCondition] = useState("good");
+  const [causewayType, setCausewayType] = useState("piped");
+  const [causewayLength, setCausewayLength] = useState("");
+  const [causewayOpenings, setCausewayOpenings] = useState("");
+  const [causewayBoxSize, setCausewayBoxSize] = useState("");
 
   // Drift Fields
   const [driftName, setDriftName] = useState("");
@@ -545,12 +661,16 @@ export default function App() {
   const [driftSurface, setDriftSurface] = useState("concrete");
   const [driftPassability, setDriftPassability] = useState("dry_season_only");
   const [driftWidth, setDriftWidth] = useState("");
+  const [driftLength, setDriftLength] = useState("");
+  const [driftType, setDriftType] = useState("concrete");
 
   // Grid Fields
   const [gridName, setGridName] = useState("");
   const [gridCondition, setGridCondition] = useState("good");
   const [gridMaterial, setGridMaterial] = useState("steel");
   const [gridOperational, setGridOperational] = useState("yes");
+  const [gridServiceability, setGridServiceability] = useState("good");
+  const [gridPassability, setGridPassability] = useState("all_year_round");
 
   // Traffic Lights Fields
   const [trafficLightsLocation, setTrafficLightsLocation] = useState("");
@@ -558,6 +678,7 @@ export default function App() {
   const [trafficLightsOperational, setTrafficLightsOperational] = useState("yes");
   const [trafficLightsType, setTrafficLightsType] = useState("standard");
   const [trafficLightsPhases, setTrafficLightsPhases] = useState("3");
+  const [trafficLightsPowerSource, setTrafficLightsPowerSource] = useState("grid");
 
   // Streetlight Fields
   const [streetlightType, setStreetlightType] = useState("led");
@@ -749,30 +870,43 @@ export default function App() {
         const snapshot = {
           savedAt: Date.now(),
           assetCategory,
-          roadName, sectionName, surveyorName, surveyDate, vegetation, gps,
+          roadName, sectionName, chainageFrom, chainageTo, surveyorName, surveyDate, vegetation, gps,
           imageSadcCompliant, photos,
           // Bridge
           bridgeName, bridgeCrossing, bridgeType, bridgeBearing, bridgeJoints,
           bearingsState, parapet, chemicalEffect, vegetationGrowth, drainage, bridgeCondition,
+          bridgeStructureType, bridgeLength, bridgeWidth, bridgeSpans, bridgeApproachCondition, bridgeSignage,
           // Culvert
-          culvertClass, culvertType, culvertServiceability,
+          culvertClass, culvertType, culvertServiceability, culvertSizeM2, culvertOpenings,
           // Shelvet
-          shelvetType, shelvetCondition,
+          shelvetType, shelvetCondition, shelvetServiceability, shelvetSizeM2, shelvetOpenings,
           // Sealed
           sealedName, sealedRoute, sealedClass, sealedType, sealedClimate, sealedTerrain,
           sealedAuthority, sealedLength, sealedWidth, sealedDrainageType, sealedVegetation,
           sealedNarrowCracks, sealedWideCracks, sealedPotholesPatches, sealedRutting,
           sealedEdgeBreaks, sealedEdgeDrop, sealedDrainage, sealedRavelling,
           sealedRidingQuality, sealedRoadMarkings, sealedRoadStuds, sealedPassability,
-          sealedGrid, sealedYearConstructed,
+          sealedYearConstructed, sealedSurfaceType, sealedPotholeDensity, sealedCycleTrack,
+          sealedSurveySide, sealedSurveyDirection, sealedLanesPerCarriage, sealedShoulderWidth,
+          sealedMedianType, sealedDrainageLining, sealedRoadMarkingsVisible,
+          sealedC1NarrowCracks, sealedC1WideCracks, sealedC1Potholes, sealedC1Rutting,
+          sealedC1EdgeBreaks, sealedC1EdgeDrop, sealedC1Ravelling, sealedC1RidingQuality,
+          sealedC2NarrowCracks, sealedC2WideCracks, sealedC2Potholes, sealedC2Rutting,
+          sealedC2EdgeBreaks, sealedC2EdgeDrop, sealedC2Ravelling, sealedC2RidingQuality,
           // Gravel
           gravelName, gravelRoute, gravelLength, gravelClass, gravelAuthority, gravelVegetation,
           gravelClimate, gravelTerrain, gravelWidth, gravelDrainageType, gravelCrossSection,
           gravelThickness, gravelCorrugations, gravelRidingQuality, gravelDrainageCond,
           gravelPotholes, gravelPassability, gravelYearConstructed,
+          gravelCorrugationsSeverity, gravelCrossSectionSeverity, gravelDrainageSeverity,
+          gravelPotholesSeverity, gravelRidingSeverity,
           // Earth
           earthName, earthClass, earthWidth, earthLength, earthCondition, earthPassability,
           earthDrainageType, earthDrainageCond, earthTerrain, earthClimate, earthAuthority, earthYearConstructed,
+          // Catchpit
+          catchpitCondition,
+          // Traffic calming
+          trafficCalmingType, trafficCalmingCondition,
           // Footbridge
           footbridgeName, footbridgeType, footbridgeCondition, footbridgeWidth, footbridgeSpan,
           footbridgeMaterial, footbridgeCrossing,
@@ -780,22 +914,25 @@ export default function App() {
           railCrossingName, railCrossingType, railCrossingCondition, railCrossingControl, railCrossingRoadClass,
           // Tollgate
           tollgateName, tollgateType, tollgateCondition, tollgateLanes, tollgateOperational,
+          tollgateDualisation, tollgateVegetation,
           // Layby
-          laybyCondition, laybySurface, laybyLength, laybyDrainage,
+          laybyCondition, laybySurface, laybyLength, laybyDrainage, laybyWidth, laybyFurniture, laybyRefuseBin,
           // Bus stop
-          busstopType, busstopCondition, busstopShelter, busstopDrainage,
+          busstopType, busstopCondition, busstopShelter, busstopDrainage, busstopFurnitureCondition, busstopRefuseBin,
           // Junction
           junctionType, junctionCondition, junctionControl, junctionMarkings, junctionSignage,
           // Sign
-          signType, signCondition, signSadcCompliant, signVisibility,
+          signType, signCondition, signSadcCompliant, signVisibility, signName,
           // Piped Causeway
           causewayName, causewayPipeMaterial, causewayPipeDiameter, causewayDrainage, causewayServiceability,
+          causewayCondition, causewayType, causewayLength, causewayOpenings, causewayBoxSize,
           // Drift
-          driftName, driftCondition, driftSurface, driftPassability, driftWidth,
+          driftName, driftCondition, driftSurface, driftPassability, driftWidth, driftLength, driftType,
           // Grid
-          gridName, gridCondition, gridMaterial, gridOperational,
+          gridName, gridCondition, gridMaterial, gridOperational, gridServiceability, gridPassability,
           // Traffic Lights
           trafficLightsLocation, trafficLightsCondition, trafficLightsOperational, trafficLightsType, trafficLightsPhases,
+          trafficLightsPowerSource,
           // Streetlight
           streetlightType, streetlightCondition, streetlightPowerSource, streetlightOperational, streetlightCount,
         };
@@ -814,36 +951,49 @@ export default function App() {
     };
   }, [
     activeTab, selectedCategory, editingDraftId,
-    assetCategory, roadName, sectionName, surveyorName, surveyDate, vegetation, gps,
+    assetCategory, roadName, sectionName, chainageFrom, chainageTo, surveyorName, surveyDate, vegetation, gps,
     imageSadcCompliant, photos,
     bridgeName, bridgeCrossing, bridgeType, bridgeBearing, bridgeJoints,
     bearingsState, parapet, chemicalEffect, vegetationGrowth, drainage, bridgeCondition,
-    culvertClass, culvertType, culvertServiceability,
-    shelvetType, shelvetCondition,
+    bridgeStructureType, bridgeLength, bridgeWidth, bridgeSpans, bridgeApproachCondition, bridgeSignage,
+    culvertClass, culvertType, culvertServiceability, culvertSizeM2, culvertOpenings,
+    shelvetType, shelvetCondition, shelvetServiceability, shelvetSizeM2, shelvetOpenings,
     sealedName, sealedRoute, sealedClass, sealedType, sealedClimate, sealedTerrain,
     sealedAuthority, sealedLength, sealedWidth, sealedDrainageType, sealedVegetation,
     sealedNarrowCracks, sealedWideCracks, sealedPotholesPatches, sealedRutting,
     sealedEdgeBreaks, sealedEdgeDrop, sealedDrainage, sealedRavelling,
     sealedRidingQuality, sealedRoadMarkings, sealedRoadStuds, sealedPassability,
-    sealedGrid, sealedYearConstructed,
+    sealedYearConstructed, sealedSurfaceType, sealedPotholeDensity, sealedCycleTrack,
+    sealedSurveySide, sealedSurveyDirection, sealedLanesPerCarriage, sealedShoulderWidth,
+    sealedMedianType, sealedDrainageLining, sealedRoadMarkingsVisible,
+    sealedC1NarrowCracks, sealedC1WideCracks, sealedC1Potholes, sealedC1Rutting,
+    sealedC1EdgeBreaks, sealedC1EdgeDrop, sealedC1Ravelling, sealedC1RidingQuality,
+    sealedC2NarrowCracks, sealedC2WideCracks, sealedC2Potholes, sealedC2Rutting,
+    sealedC2EdgeBreaks, sealedC2EdgeDrop, sealedC2Ravelling, sealedC2RidingQuality,
     gravelName, gravelRoute, gravelLength, gravelClass, gravelAuthority, gravelVegetation,
     gravelClimate, gravelTerrain, gravelWidth, gravelDrainageType, gravelCrossSection,
     gravelThickness, gravelCorrugations, gravelRidingQuality, gravelDrainageCond,
     gravelPotholes, gravelPassability, gravelYearConstructed,
+    gravelCorrugationsSeverity, gravelCrossSectionSeverity, gravelDrainageSeverity,
+    gravelPotholesSeverity, gravelRidingSeverity,
     earthName, earthClass, earthWidth, earthLength, earthCondition, earthPassability,
     earthDrainageType, earthDrainageCond, earthTerrain, earthClimate, earthAuthority, earthYearConstructed,
+    catchpitCondition, trafficCalmingType, trafficCalmingCondition,
     footbridgeName, footbridgeType, footbridgeCondition, footbridgeWidth, footbridgeSpan,
     footbridgeMaterial, footbridgeCrossing,
     railCrossingName, railCrossingType, railCrossingCondition, railCrossingControl, railCrossingRoadClass,
     tollgateName, tollgateType, tollgateCondition, tollgateLanes, tollgateOperational,
-    laybyCondition, laybySurface, laybyLength, laybyDrainage,
-    busstopType, busstopCondition, busstopShelter, busstopDrainage,
+    tollgateDualisation, tollgateVegetation,
+    laybyCondition, laybySurface, laybyLength, laybyDrainage, laybyWidth, laybyFurniture, laybyRefuseBin,
+    busstopType, busstopCondition, busstopShelter, busstopDrainage, busstopFurnitureCondition, busstopRefuseBin,
     junctionType, junctionCondition, junctionControl, junctionMarkings, junctionSignage,
-    signType, signCondition, signSadcCompliant, signVisibility,
+    signType, signCondition, signSadcCompliant, signVisibility, signName,
     causewayName, causewayPipeMaterial, causewayPipeDiameter, causewayDrainage, causewayServiceability,
-    driftName, driftCondition, driftSurface, driftPassability, driftWidth,
-    gridName, gridCondition, gridMaterial, gridOperational,
+    causewayCondition, causewayType, causewayLength, causewayOpenings, causewayBoxSize,
+    driftName, driftCondition, driftSurface, driftPassability, driftWidth, driftLength, driftType,
+    gridName, gridCondition, gridMaterial, gridOperational, gridServiceability, gridPassability,
     trafficLightsLocation, trafficLightsCondition, trafficLightsOperational, trafficLightsType, trafficLightsPhases,
+    trafficLightsPowerSource,
     streetlightType, streetlightCondition, streetlightPowerSource, streetlightOperational, streetlightCount,
   ]);
 
@@ -874,12 +1024,18 @@ export default function App() {
       if (s.assetCategory) { setAssetCategory(s.assetCategory); setSelectedCategory(s.assetCategory); }
       if (s.roadName !== undefined) setRoadName(s.roadName);
       if (s.sectionName !== undefined) setSectionName(s.sectionName);
+      if (s.chainageFrom !== undefined) setChainageFrom(s.chainageFrom);
+      if (s.chainageTo !== undefined) setChainageTo(s.chainageTo);
       if (s.surveyorName !== undefined) setSurveyorName(s.surveyorName);
       if (s.surveyDate !== undefined) setSurveyDate(s.surveyDate);
       if (s.vegetation !== undefined) setVegetation(s.vegetation);
       if (s.gps !== undefined) setGps(s.gps);
       if (s.imageSadcCompliant !== undefined) setImageSadcCompliant(s.imageSadcCompliant);
-      if (s.photos !== undefined || s.photo !== undefined) setPhotos(normalizePhotos(s));
+      if (s.photos !== undefined || s.photo !== undefined) {
+        const cat = s.assetCategory || "sealed";
+        const isRoad = cat === "sealed" || cat === "gravel" || cat === "earth";
+        setPhotos(clampPhotos(normalizePhotos(s), isRoad));
+      }
 
       // Bridge
       if (s.bridgeName !== undefined) setBridgeName(s.bridgeName);
@@ -893,13 +1049,24 @@ export default function App() {
       if (s.vegetationGrowth !== undefined) setVegetationGrowth(s.vegetationGrowth);
       if (s.drainage !== undefined) setDrainage(s.drainage);
       if (s.bridgeCondition !== undefined) setBridgeCondition(s.bridgeCondition);
+      if (s.bridgeStructureType !== undefined) setBridgeStructureType(s.bridgeStructureType);
+      if (s.bridgeLength !== undefined) setBridgeLength(s.bridgeLength);
+      if (s.bridgeWidth !== undefined) setBridgeWidth(s.bridgeWidth);
+      if (s.bridgeSpans !== undefined) setBridgeSpans(s.bridgeSpans);
+      if (s.bridgeApproachCondition !== undefined) setBridgeApproachCondition(s.bridgeApproachCondition);
+      if (s.bridgeSignage !== undefined) setBridgeSignage(s.bridgeSignage);
       // Culvert
       if (s.culvertClass !== undefined) setCulvertClass(s.culvertClass);
       if (s.culvertType !== undefined) setCulvertType(s.culvertType);
       if (s.culvertServiceability !== undefined) setCulvertServiceability(s.culvertServiceability);
+      if (s.culvertSizeM2 !== undefined) setCulvertSizeM2(s.culvertSizeM2);
+      if (s.culvertOpenings !== undefined) setCulvertOpenings(s.culvertOpenings);
       // Shelvet
       if (s.shelvetType !== undefined) setShelvetType(s.shelvetType);
       if (s.shelvetCondition !== undefined) setShelvetCondition(s.shelvetCondition);
+      if (s.shelvetServiceability !== undefined) setShelvetServiceability(s.shelvetServiceability);
+      if (s.shelvetSizeM2 !== undefined) setShelvetSizeM2(s.shelvetSizeM2);
+      if (s.shelvetOpenings !== undefined) setShelvetOpenings(s.shelvetOpenings);
       // Sealed
       if (s.sealedName !== undefined) setSealedName(s.sealedName);
       if (s.sealedRoute !== undefined) setSealedRoute(s.sealedRoute);
@@ -914,7 +1081,7 @@ export default function App() {
       if (s.sealedVegetation !== undefined) setSealedVegetation(s.sealedVegetation);
       if (s.sealedNarrowCracks !== undefined) setSealedNarrowCracks(s.sealedNarrowCracks);
       if (s.sealedWideCracks !== undefined) setSealedWideCracks(s.sealedWideCracks);
-      if (s.sealedPotholesPatches !== undefined) setSealedPotholesPatches(s.sealedPotholesPatches);
+      if (s.sealedPotholesPatches !== undefined) setSealedPotholesPatches(mapLegacyPotholePatches(s.sealedPotholesPatches));
       if (s.sealedRutting !== undefined) setSealedRutting(s.sealedRutting);
       if (s.sealedEdgeBreaks !== undefined) setSealedEdgeBreaks(s.sealedEdgeBreaks);
       if (s.sealedEdgeDrop !== undefined) setSealedEdgeDrop(s.sealedEdgeDrop);
@@ -924,8 +1091,33 @@ export default function App() {
       if (s.sealedRoadMarkings !== undefined) setSealedRoadMarkings(s.sealedRoadMarkings);
       if (s.sealedRoadStuds !== undefined) setSealedRoadStuds(s.sealedRoadStuds);
       if (s.sealedPassability !== undefined) setSealedPassability(s.sealedPassability);
-      if (s.sealedGrid !== undefined) setSealedGrid(s.sealedGrid);
       if (s.sealedYearConstructed !== undefined) setSealedYearConstructed(s.sealedYearConstructed);
+      if (s.sealedSurfaceType !== undefined) setSealedSurfaceType(s.sealedSurfaceType);
+      if (s.sealedPotholeDensity !== undefined) setSealedPotholeDensity(s.sealedPotholeDensity);
+      if (s.sealedCycleTrack !== undefined) setSealedCycleTrack(s.sealedCycleTrack);
+      if (s.sealedSurveySide !== undefined) setSealedSurveySide(s.sealedSurveySide);
+      if (s.sealedSurveyDirection !== undefined) setSealedSurveyDirection(s.sealedSurveyDirection);
+      if (s.sealedLanesPerCarriage !== undefined) setSealedLanesPerCarriage(s.sealedLanesPerCarriage);
+      if (s.sealedShoulderWidth !== undefined) setSealedShoulderWidth(s.sealedShoulderWidth);
+      if (s.sealedMedianType !== undefined) setSealedMedianType(s.sealedMedianType);
+      if (s.sealedDrainageLining !== undefined) setSealedDrainageLining(s.sealedDrainageLining);
+      if (s.sealedRoadMarkingsVisible !== undefined) setSealedRoadMarkingsVisible(s.sealedRoadMarkingsVisible);
+      if (s.sealedC1NarrowCracks !== undefined) setSealedC1NarrowCracks(s.sealedC1NarrowCracks);
+      if (s.sealedC1WideCracks !== undefined) setSealedC1WideCracks(s.sealedC1WideCracks);
+      if (s.sealedC1Potholes !== undefined) setSealedC1Potholes(mapLegacyPotholePatches(s.sealedC1Potholes));
+      if (s.sealedC1Rutting !== undefined) setSealedC1Rutting(s.sealedC1Rutting);
+      if (s.sealedC1EdgeBreaks !== undefined) setSealedC1EdgeBreaks(s.sealedC1EdgeBreaks);
+      if (s.sealedC1EdgeDrop !== undefined) setSealedC1EdgeDrop(s.sealedC1EdgeDrop);
+      if (s.sealedC1Ravelling !== undefined) setSealedC1Ravelling(s.sealedC1Ravelling);
+      if (s.sealedC1RidingQuality !== undefined) setSealedC1RidingQuality(s.sealedC1RidingQuality);
+      if (s.sealedC2NarrowCracks !== undefined) setSealedC2NarrowCracks(s.sealedC2NarrowCracks);
+      if (s.sealedC2WideCracks !== undefined) setSealedC2WideCracks(s.sealedC2WideCracks);
+      if (s.sealedC2Potholes !== undefined) setSealedC2Potholes(mapLegacyPotholePatches(s.sealedC2Potholes));
+      if (s.sealedC2Rutting !== undefined) setSealedC2Rutting(s.sealedC2Rutting);
+      if (s.sealedC2EdgeBreaks !== undefined) setSealedC2EdgeBreaks(s.sealedC2EdgeBreaks);
+      if (s.sealedC2EdgeDrop !== undefined) setSealedC2EdgeDrop(s.sealedC2EdgeDrop);
+      if (s.sealedC2Ravelling !== undefined) setSealedC2Ravelling(s.sealedC2Ravelling);
+      if (s.sealedC2RidingQuality !== undefined) setSealedC2RidingQuality(s.sealedC2RidingQuality);
       // Gravel
       if (s.gravelName !== undefined) setGravelName(s.gravelName);
       if (s.gravelRoute !== undefined) setGravelRoute(s.gravelRoute);
@@ -945,6 +1137,11 @@ export default function App() {
       if (s.gravelPotholes !== undefined) setGravelPotholes(s.gravelPotholes);
       if (s.gravelPassability !== undefined) setGravelPassability(s.gravelPassability);
       if (s.gravelYearConstructed !== undefined) setGravelYearConstructed(s.gravelYearConstructed);
+      if (s.gravelCorrugationsSeverity !== undefined) setGravelCorrugationsSeverity(s.gravelCorrugationsSeverity);
+      if (s.gravelCrossSectionSeverity !== undefined) setGravelCrossSectionSeverity(s.gravelCrossSectionSeverity);
+      if (s.gravelDrainageSeverity !== undefined) setGravelDrainageSeverity(s.gravelDrainageSeverity);
+      if (s.gravelPotholesSeverity !== undefined) setGravelPotholesSeverity(s.gravelPotholesSeverity);
+      if (s.gravelRidingSeverity !== undefined) setGravelRidingSeverity(s.gravelRidingSeverity);
       // Earth
       if (s.earthName !== undefined) setEarthName(s.earthName);
       if (s.earthClass !== undefined) setEarthClass(s.earthClass);
@@ -958,6 +1155,11 @@ export default function App() {
       if (s.earthClimate !== undefined) setEarthClimate(s.earthClimate);
       if (s.earthAuthority !== undefined) setEarthAuthority(s.earthAuthority);
       if (s.earthYearConstructed !== undefined) setEarthYearConstructed(s.earthYearConstructed);
+      // Catchpit
+      if (s.catchpitCondition !== undefined) setCatchpitCondition(s.catchpitCondition);
+      // Traffic calming
+      if (s.trafficCalmingType !== undefined) setTrafficCalmingType(s.trafficCalmingType);
+      if (s.trafficCalmingCondition !== undefined) setTrafficCalmingCondition(s.trafficCalmingCondition);
       // Footbridge
       if (s.footbridgeName !== undefined) setFootbridgeName(s.footbridgeName);
       if (s.footbridgeType !== undefined) setFootbridgeType(s.footbridgeType);
@@ -978,16 +1180,23 @@ export default function App() {
       if (s.tollgateCondition !== undefined) setTollgateCondition(s.tollgateCondition);
       if (s.tollgateLanes !== undefined) setTollgateLanes(s.tollgateLanes);
       if (s.tollgateOperational !== undefined) setTollgateOperational(s.tollgateOperational);
+      if (s.tollgateDualisation !== undefined) setTollgateDualisation(s.tollgateDualisation);
+      if (s.tollgateVegetation !== undefined) setTollgateVegetation(s.tollgateVegetation);
       // Layby
       if (s.laybyCondition !== undefined) setLaybyCondition(s.laybyCondition);
       if (s.laybySurface !== undefined) setLaybySurface(s.laybySurface);
       if (s.laybyLength !== undefined) setLaybyLength(s.laybyLength);
       if (s.laybyDrainage !== undefined) setLaybyDrainage(s.laybyDrainage);
+      if (s.laybyWidth !== undefined) setLaybyWidth(s.laybyWidth);
+      if (s.laybyFurniture !== undefined) setLaybyFurniture(s.laybyFurniture);
+      if (s.laybyRefuseBin !== undefined) setLaybyRefuseBin(s.laybyRefuseBin);
       // Bus stop
       if (s.busstopType !== undefined) setBusstopType(s.busstopType);
       if (s.busstopCondition !== undefined) setBusstopCondition(s.busstopCondition);
       if (s.busstopShelter !== undefined) setBusstopShelter(s.busstopShelter);
       if (s.busstopDrainage !== undefined) setBusstopDrainage(s.busstopDrainage);
+      if (s.busstopFurnitureCondition !== undefined) setBusstopFurnitureCondition(s.busstopFurnitureCondition);
+      if (s.busstopRefuseBin !== undefined) setBusstopRefuseBin(s.busstopRefuseBin);
       // Junction
       if (s.junctionType !== undefined) setJunctionType(s.junctionType);
       if (s.junctionCondition !== undefined) setJunctionCondition(s.junctionCondition);
@@ -999,29 +1208,40 @@ export default function App() {
       if (s.signCondition !== undefined) setSignCondition(s.signCondition);
       if (s.signSadcCompliant !== undefined) setSignSadcCompliant(s.signSadcCompliant);
       if (s.signVisibility !== undefined) setSignVisibility(s.signVisibility);
+      if (s.signName !== undefined) setSignName(s.signName);
       // Causeway
       if (s.causewayName !== undefined) setCausewayName(s.causewayName);
       if (s.causewayPipeMaterial !== undefined) setCausewayPipeMaterial(s.causewayPipeMaterial);
       if (s.causewayPipeDiameter !== undefined) setCausewayPipeDiameter(s.causewayPipeDiameter);
       if (s.causewayDrainage !== undefined) setCausewayDrainage(s.causewayDrainage);
       if (s.causewayServiceability !== undefined) setCausewayServiceability(s.causewayServiceability);
+      if (s.causewayCondition !== undefined) setCausewayCondition(s.causewayCondition);
+      if (s.causewayType !== undefined) setCausewayType(s.causewayType);
+      if (s.causewayLength !== undefined) setCausewayLength(s.causewayLength);
+      if (s.causewayOpenings !== undefined) setCausewayOpenings(s.causewayOpenings);
+      if (s.causewayBoxSize !== undefined) setCausewayBoxSize(s.causewayBoxSize);
       // Drift
       if (s.driftName !== undefined) setDriftName(s.driftName);
       if (s.driftCondition !== undefined) setDriftCondition(s.driftCondition);
       if (s.driftSurface !== undefined) setDriftSurface(s.driftSurface);
       if (s.driftPassability !== undefined) setDriftPassability(s.driftPassability);
       if (s.driftWidth !== undefined) setDriftWidth(s.driftWidth);
+      if (s.driftLength !== undefined) setDriftLength(s.driftLength);
+      if (s.driftType !== undefined) setDriftType(s.driftType);
       // Grid
       if (s.gridName !== undefined) setGridName(s.gridName);
       if (s.gridCondition !== undefined) setGridCondition(s.gridCondition);
       if (s.gridMaterial !== undefined) setGridMaterial(s.gridMaterial);
       if (s.gridOperational !== undefined) setGridOperational(s.gridOperational);
+      if (s.gridServiceability !== undefined) setGridServiceability(s.gridServiceability);
+      if (s.gridPassability !== undefined) setGridPassability(s.gridPassability);
       // Traffic Lights
       if (s.trafficLightsLocation !== undefined) setTrafficLightsLocation(s.trafficLightsLocation);
       if (s.trafficLightsCondition !== undefined) setTrafficLightsCondition(s.trafficLightsCondition);
       if (s.trafficLightsOperational !== undefined) setTrafficLightsOperational(s.trafficLightsOperational);
       if (s.trafficLightsType !== undefined) setTrafficLightsType(s.trafficLightsType);
       if (s.trafficLightsPhases !== undefined) setTrafficLightsPhases(s.trafficLightsPhases);
+      if (s.trafficLightsPowerSource !== undefined) setTrafficLightsPowerSource(s.trafficLightsPowerSource);
       // Streetlight
       if (s.streetlightType !== undefined) setStreetlightType(s.streetlightType);
       if (s.streetlightCondition !== undefined) setStreetlightCondition(s.streetlightCondition);
@@ -1165,6 +1385,8 @@ export default function App() {
 
   const clearForm = () => {
     setSectionName("");
+    setChainageFrom("");
+    setChainageTo("");
     setGps("");
     setRoadName("");
     setBridgeName("");
@@ -1178,6 +1400,7 @@ export default function App() {
     setDriftName("");
     setGridName("");
     setTrafficLightsLocation("");
+    setSignName("");
     setSegmentGeometry(null);
 
     setSealedLength("");
@@ -1188,9 +1411,58 @@ export default function App() {
     setEarthWidth("");
     setFootbridgeWidth("");
     setFootbridgeSpan("");
+    setBridgeLength("");
+    setBridgeWidth("");
+    setBridgeSpans("");
+    setCulvertSizeM2("");
+    setCulvertOpenings("");
+    setShelvetSizeM2("");
+    setShelvetOpenings("");
+    setLaybyLength("");
+    setLaybyWidth("");
+    setCausewayLength("");
+    setCausewayOpenings("");
+    setCausewayBoxSize("");
+    setDriftWidth("");
+    setDriftLength("");
     setTollgateLanes("2");
     setTrafficLightsPhases("");
     setStreetlightCount("");
+    setSealedSurfaceType("asphalt");
+    setSealedPotholeDensity("low");
+    setSealedCycleTrack("no");
+    setSealedSurveySide("left");
+    setSealedSurveyDirection("");
+    setSealedLanesPerCarriage("");
+    setSealedShoulderWidth("");
+    setSealedMedianType("none");
+    setSealedDrainageLining("not_lined");
+    setSealedRoadMarkingsVisible("yes");
+    setSealedPotholesPatches("no_potholes");
+    setSealedC1NarrowCracks("no_cracks");
+    setSealedC1WideCracks("no_cracks");
+    setSealedC1Potholes("no_potholes");
+    setSealedC1Rutting("no_rutting__5mm");
+    setSealedC1EdgeBreaks("no_edge_break");
+    setSealedC1EdgeDrop("no_edge_break");
+    setSealedC1Ravelling("none");
+    setSealedC1RidingQuality("good");
+    setSealedC2NarrowCracks("no_cracks");
+    setSealedC2WideCracks("no_cracks");
+    setSealedC2Potholes("no_potholes");
+    setSealedC2Rutting("no_rutting__5mm");
+    setSealedC2EdgeBreaks("no_edge_break");
+    setSealedC2EdgeDrop("no_edge_break");
+    setSealedC2Ravelling("none");
+    setSealedC2RidingQuality("good");
+    setGravelCorrugationsSeverity("none");
+    setGravelCrossSectionSeverity("none");
+    setGravelDrainageSeverity("none");
+    setGravelPotholesSeverity("none");
+    setGravelRidingSeverity("none");
+    setCatchpitCondition("good");
+    setTrafficCalmingType("speed_hump");
+    setTrafficCalmingCondition("good");
     setEditingDraftId(null);
     setSelectedCategory(null);
     setPhotos([]);
@@ -1218,23 +1490,35 @@ export default function App() {
     if (draft.busstop_type) return "busstop";
     if (draft.layby_surface) return "layby";
     if (draft.sign_type) return "sign";
+    if (draft.catchpit_condition) return "catchpit";
+    if (draft.traffic_calming_type) return "traffic_calming";
     if (draft.paved_road_name) return "sealed";
     return "sealed";
   };
 
   const handleEditDraft = (draft: SurveyDraft) => {
     setEditingDraftId(draft.id);
+    const category = getDraftCategory(draft);
     
     setRoadName(draft.road_name);
     setSectionName(draft.section_name);
+    setChainageFrom(
+      draft.Chainage_from_km_002 != null ? String(draft.Chainage_from_km_002)
+      : draft.Chainage_From_km != null ? String(draft.Chainage_From_km)
+      : draft.chainage_from_km != null ? String(draft.chainage_from_km) : ""
+    );
+    setChainageTo(
+      draft.Chainage_to_km_002 != null ? String(draft.Chainage_to_km_002)
+      : draft.Chainage_To_km != null ? String(draft.Chainage_To_km)
+      : draft.chainage_to_km != null ? String(draft.chainage_to_km) : ""
+    );
     setSurveyorName(draft.surveyor_name);
     setSurveyDate(draft.survey_date);
     setVegetation(draft.vegetation);
     setGps(draft.gps);
     setImageSadcCompliant(draft.image_SADC_compliant || "yes");
-    setPhotos(normalizePhotos(draft));
+    setPhotos(clampPhotos(normalizePhotos(draft), category === "sealed" || category === "gravel" || category === "earth"));
 
-    const category = getDraftCategory(draft);
     setAssetCategory(category);
     setSelectedCategory(category);
 
@@ -1264,13 +1548,24 @@ export default function App() {
       setVegetationGrowth(draft.vegetation_growth || "no");
       setDrainage(draft.drainage || "good");
       setBridgeCondition(draft.bridge_condition || "good");
+      setBridgeStructureType(draft.bridge_structure_type || "beam");
+      setBridgeLength(draft.bridge_length_m !== undefined ? String(draft.bridge_length_m) : "");
+      setBridgeWidth(draft.bridge_width_m !== undefined ? String(draft.bridge_width_m) : "");
+      setBridgeSpans(draft.bridge_spans !== undefined ? String(draft.bridge_spans) : "");
+      setBridgeApproachCondition(draft.bridge_approach_condition || "good");
+      setBridgeSignage(draft.bridge_signage || "yes");
     } else if (category === "culvert") {
       setCulvertClass(draft.culvet_class || "pipe_culvert");
       setCulvertType(draft.culvet_type || "concrete");
       setCulvertServiceability(draft.culvet_serviceability || "good");
+      setCulvertSizeM2(draft.culvert_size_m2 !== undefined ? String(draft.culvert_size_m2) : "");
+      setCulvertOpenings(draft.culvert_openings !== undefined ? String(draft.culvert_openings) : "");
     } else if (category === "shelvet") {
       setShelvetType(draft.shelvets_type || "armco");
       setShelvetCondition(draft.shelvet_condition || "good");
+      setShelvetServiceability(draft.shelvet_serviceability || draft.shelvet_condition || "good");
+      setShelvetSizeM2(draft.shelvet_size_m2 !== undefined ? String(draft.shelvet_size_m2) : "");
+      setShelvetOpenings(draft.shelvet_openings !== undefined ? String(draft.shelvet_openings) : "");
     } else if (category === "sealed") {
       setSealedName(draft.paved_road_name || "");
       setSealedRoute(draft.Route_number_004 || "");
@@ -1285,7 +1580,7 @@ export default function App() {
       setSealedVegetation(draft.servitude_vegetation_001 || "medium");
       setSealedNarrowCracks(draft.Narrow_cracks_degree || "no_cracks");
       setSealedWideCracks(draft.Wide_cracks_degree || "no_cracks");
-      setSealedPotholesPatches(draft.Pothole_patches_degree || "good");
+      setSealedPotholesPatches(mapLegacyPotholePatches(draft.Pothole_patches_degree));
       setSealedRutting(draft.Rutting_degree || "no_rutting__5mm");
       setSealedEdgeBreaks(draft.Edge_breaks_Degree || "no_edge_break");
       setSealedEdgeDrop(draft.Edge_Drop_Degree || "no_edge_break");
@@ -1295,8 +1590,33 @@ export default function App() {
       setSealedRoadMarkings(draft.Road_markings || "yes");
       setSealedRoadStuds(draft.Road_studs || "yes");
       setSealedPassability(draft.Passability_002 || "all_year_round");
-      setSealedGrid(draft.Grid || "good");
       setSealedYearConstructed(draft.Year_constructed_to_sealed_standard !== undefined ? String(draft.Year_constructed_to_sealed_standard) : "");
+      setSealedSurfaceType(draft.Surface_type || "asphalt");
+      setSealedPotholeDensity(draft.Pothole_density || "low");
+      setSealedCycleTrack(draft.Cycle_track || "no");
+      setSealedSurveySide(draft.Survey_side || "left");
+      setSealedSurveyDirection(draft.Survey_direction || "");
+      setSealedLanesPerCarriage(draft.Number_of_Lanes_per_carriageway !== undefined ? String(draft.Number_of_Lanes_per_carriageway) : "");
+      setSealedShoulderWidth(draft.Shoulder_Width_m !== undefined ? String(draft.Shoulder_Width_m) : "");
+      setSealedMedianType(draft.Median_type || "none");
+      setSealedDrainageLining(draft.Drainage_lining || "not_lined");
+      setSealedRoadMarkingsVisible(draft.Road_markings_visible || "yes");
+      setSealedC1NarrowCracks(draft.Carriage1_Narrow_cracks || "no_cracks");
+      setSealedC1WideCracks(draft.Carriage1_Wide_cracks || "no_cracks");
+      setSealedC1Potholes(mapLegacyPotholePatches(draft.Carriage1_Pothole_patches));
+      setSealedC1Rutting(draft.Carriage1_Rutting || "no_rutting__5mm");
+      setSealedC1EdgeBreaks(draft.Carriage1_Edge_breaks || "no_edge_break");
+      setSealedC1EdgeDrop(draft.Carriage1_Edge_drop || "no_edge_break");
+      setSealedC1Ravelling(draft.Carriage1_Ravelling || "none");
+      setSealedC1RidingQuality(draft.Carriage1_Riding_quality || "good");
+      setSealedC2NarrowCracks(draft.Carriage2_Narrow_cracks || "no_cracks");
+      setSealedC2WideCracks(draft.Carriage2_Wide_cracks || "no_cracks");
+      setSealedC2Potholes(mapLegacyPotholePatches(draft.Carriage2_Pothole_patches));
+      setSealedC2Rutting(draft.Carriage2_Rutting || "no_rutting__5mm");
+      setSealedC2EdgeBreaks(draft.Carriage2_Edge_breaks || "no_edge_break");
+      setSealedC2EdgeDrop(draft.Carriage2_Edge_drop || "no_edge_break");
+      setSealedC2Ravelling(draft.Carriage2_Ravelling || "none");
+      setSealedC2RidingQuality(draft.Carriage2_Riding_quality || "good");
     } else if (category === "gravel") {
       setGravelName(draft.gravel_road_name || "");
       setGravelRoute(draft.Route_Number || "");
@@ -1316,6 +1636,11 @@ export default function App() {
       setGravelPassability(draft.Passability || "all_year");
       setGravelYearConstructed(draft.Year_of_Counstruction !== undefined ? String(draft.Year_of_Counstruction) : "");
       setGravelDrainageCond(draft.Drainage_condition || "good");
+      setGravelCorrugationsSeverity(draft.gravel_corrugations_severity || "none");
+      setGravelCrossSectionSeverity(draft.gravel_cross_section_severity || "none");
+      setGravelDrainageSeverity(draft.gravel_drainage_severity || "none");
+      setGravelPotholesSeverity(draft.gravel_potholes_severity || "none");
+      setGravelRidingSeverity(draft.gravel_riding_severity || "none");
     } else if (category === "earth") {
       setEarthName(draft.earth_road_name || "");
       setEarthClass(draft.earth_road_class || "secondary");
@@ -1339,66 +1664,89 @@ export default function App() {
       setFootbridgeCrossing(draft.footbridge_crossing || "river");
     } else if (category === "rail_crossing") {
       setRailCrossingName(draft.rail_crossing_name || "");
-      setRailCrossingType(draft.rail_crossing_type || "concrete");
+      setRailCrossingType(draft.rail_crossing_type || "at_grade");
       setRailCrossingCondition(draft.rail_crossing_condition || "good");
-      setRailCrossingControl(draft.rail_crossing_control || "passive");
+      setRailCrossingControl(draft.rail_crossing_control || "gates");
       setRailCrossingRoadClass(draft.rail_crossing_road_class || "secondary");
     } else if (category === "tollgate") {
       setTollgateName(draft.tollgate_name || "");
-      setTollgateType(draft.tollgate_type || "booth");
+      setTollgateType(draft.tollgate_type || "manual");
       setTollgateCondition(draft.tollgate_condition || "good");
       setTollgateLanes(draft.tollgate_lanes !== undefined ? String(draft.tollgate_lanes) : "");
       setTollgateOperational(draft.tollgate_operational || "yes");
+      setTollgateDualisation(draft.tollgate_dualisation || "no");
+      setTollgateVegetation(draft.tollgate_vegetation || "none");
     } else if (category === "layby") {
       setLaybyCondition(draft.layby_condition || "good");
       setLaybySurface(draft.layby_surface || "gravel");
       setLaybyLength(draft.layby_length !== undefined ? String(draft.layby_length) : "");
       setLaybyDrainage(draft.layby_drainage || "good");
+      setLaybyWidth(draft.layby_width !== undefined ? String(draft.layby_width) : "");
+      setLaybyFurniture(draft.layby_furniture || "good");
+      setLaybyRefuseBin(draft.layby_refuse_bin || "no");
     } else if (category === "busstop") {
-      setBusstopType(draft.busstop_type || "sheltered");
+      setBusstopType(draft.busstop_type || "bay_type");
       setBusstopCondition(draft.busstop_condition || "good");
-      setBusstopShelter(draft.busstop_shelter || "steel");
+      setBusstopShelter(draft.busstop_shelter || "yes");
       setBusstopDrainage(draft.busstop_drainage || "good");
+      setBusstopFurnitureCondition(draft.busstop_furniture_condition || "good");
+      setBusstopRefuseBin(draft.busstop_refuse_bin || "no");
     } else if (category === "junction") {
       setJunctionType(draft.junction_type || "t_junction");
       setJunctionCondition(draft.junction_condition || "good");
-      setJunctionControl(draft.junction_control || "give_way");
-      setJunctionMarkings(draft.junction_road_markings || "good");
+      setJunctionControl(draft.junction_control || "signs");
+      setJunctionMarkings(draft.junction_road_markings || "yes");
       setJunctionSignage(draft.junction_signage || "good");
     } else if (category === "sign") {
-      setSignType(draft.sign_type || "regulatory");
+      setSignType(draft.sign_type || "warning");
       setSignCondition(draft.sign_condition || "good");
       setSignSadcCompliant(draft.sign_sadc_compliant || "yes");
       setSignVisibility(draft.sign_visibility || "good");
+      setSignName(draft.sign_name || "");
     } else if (category === "piped_causeway") {
       setCausewayName(draft.causeway_name || "");
       setCausewayPipeMaterial(draft.causeway_pipe_material || "concrete");
-      setCausewayPipeDiameter(draft.causeway_pipe_diameter || "600");
+      setCausewayPipeDiameter(draft.causeway_pipe_diameter || "600_900");
       setCausewayDrainage(draft.causeway_drainage || "good");
       setCausewayServiceability(draft.causeway_serviceability || "good");
+      setCausewayCondition(draft.causeway_condition || "good");
+      setCausewayType(draft.causeway_type || "piped");
+      setCausewayLength(draft.causeway_length_m !== undefined ? String(draft.causeway_length_m) : "");
+      setCausewayOpenings(draft.causeway_openings !== undefined ? String(draft.causeway_openings) : "");
+      setCausewayBoxSize(draft.causeway_box_size || "");
     } else if (category === "drift") {
       setDriftName(draft.drift_name || "");
       setDriftCondition(draft.drift_condition || "good");
       setDriftSurface(draft.drift_surface || "concrete");
-      setDriftPassability(draft.drift_passability || "all_year");
+      setDriftPassability(draft.drift_passability || "dry_season_only");
       setDriftWidth(draft.drift_width !== undefined ? String(draft.drift_width) : "");
+      setDriftLength(draft.drift_length_m !== undefined ? String(draft.drift_length_m) : "");
+      setDriftType(draft.drift_type || "concrete");
     } else if (category === "grid") {
       setGridName(draft.grid_name || "");
       setGridCondition(draft.grid_condition || "good");
       setGridMaterial(draft.grid_material || "steel");
       setGridOperational(draft.grid_operational || "yes");
+      setGridServiceability(draft.grid_serviceability || "good");
+      setGridPassability(draft.grid_passability || "all_year_round");
     } else if (category === "traffic_lights") {
       setTrafficLightsLocation(draft.traffic_lights_location || "");
       setTrafficLightsCondition(draft.traffic_lights_condition || "good");
       setTrafficLightsOperational(draft.traffic_lights_operational || "yes");
       setTrafficLightsType(draft.traffic_lights_type || "standard");
       setTrafficLightsPhases(draft.traffic_lights_phases !== undefined ? String(draft.traffic_lights_phases) : "");
+      setTrafficLightsPowerSource(draft.traffic_lights_power_source || "grid");
     } else if (category === "streetlight") {
       setStreetlightType(draft.streetlight_type || "led");
       setStreetlightCondition(draft.streetlight_condition || "good");
       setStreetlightPowerSource(draft.streetlight_power_source || "grid");
       setStreetlightOperational(draft.streetlight_operational || "yes");
       setStreetlightCount(draft.streetlight_count !== undefined ? String(draft.streetlight_count) : "");
+    } else if (category === "catchpit") {
+      setCatchpitCondition(draft.catchpit_condition || "good");
+    } else if (category === "traffic_calming") {
+      setTrafficCalmingType(draft.traffic_calming_type || "speed_hump");
+      setTrafficCalmingCondition(draft.traffic_calming_condition || "good");
     }
 
     setActiveTab("form");
@@ -1421,14 +1769,6 @@ export default function App() {
         showToast("Surveyor Name is required", "error");
         return;
       }
-      if (!surveyDate) {
-        showToast("Survey Date is required", "error");
-        return;
-      }
-      if (!vegetation) {
-        showToast("Vegetation Status is required", "error");
-        return;
-      }
 
       if (isRoadType) {
         // Road surveys: GPS is derived from segment geometry — no separate point capture needed
@@ -1436,16 +1776,28 @@ export default function App() {
           showToast("🛰 Please complete the GPS segment recording before queueing.", "error");
           return;
         }
-        if (assetCategory === "sealed" && !sealedName.trim() && !roadName.trim()) {
-          showToast("Sealed road name is required", "error");
+        if (!vegetation) {
+          showToast("Vegetation Status is required — complete the segment first.", "error");
           return;
         }
-        if (assetCategory === "gravel" && !gravelName.trim() && !roadName.trim()) {
-          showToast("Gravel road name is required", "error");
+        if (assetCategory === "sealed" && !roadName.trim()) {
+          showToast("Sealed road name is required (use Highway Route)", "error");
           return;
         }
-        if (assetCategory === "earth" && !earthName.trim() && !roadName.trim()) {
-          showToast("Earth road name is required", "error");
+        if (assetCategory === "gravel" && !roadName.trim()) {
+          showToast("Gravel road name is required (use Highway Route)", "error");
+          return;
+        }
+        if (assetCategory === "earth" && !roadName.trim()) {
+          showToast("Earth road name is required (use Highway Route)", "error");
+          return;
+        }
+        const roadClassForLimit =
+          assetCategory === "sealed" ? sealedClass
+          : assetCategory === "gravel" ? gravelClass : earthClass;
+        const segCheck = validateSegmentLengthM(segmentGeometry.length_m, roadClassForLimit);
+        if (!segCheck.ok) {
+          showToast(segCheck.message, "error");
           return;
         }
         // Auto-populate GPS from the first segment point
@@ -1453,6 +1805,10 @@ export default function App() {
         const derivedGps = `${firstPt.lat.toFixed(6)} ${firstPt.lng.toFixed(6)} ${firstPt.alt ?? 1200} ${Math.round(firstPt.acc)}`;
         setGps(derivedGps);
       } else {
+        if (!vegetation) {
+          showToast("Vegetation Status is required", "error");
+          return;
+        }
         // Non-road / point surveys: require a fresh Capture GPS before queue/save
         if (!gps || !gps.trim()) {
           showToast("Capture GPS at this asset before queueing. Each point survey needs its own location.", "error");
@@ -1473,12 +1829,14 @@ export default function App() {
       }
     }
 
+    const capturedSurveyDate = captureSurveyDate();
+
     const baseData = {
       asset_category: assetCategory,
       road_name: roadName,
       section_name: sectionName || "(Incomplete Draft)",
       surveyor_name: surveyorName || "(Draft Surveyor)",
-      survey_date: surveyDate,
+      survey_date: capturedSurveyDate,
       vegetation,
       gps: gps || "",
       image_SADC_compliant: imageSadcCompliant,
@@ -1508,6 +1866,12 @@ export default function App() {
         vegetation_growth: vegetationGrowth,
         drainage,
         bridge_condition: bridgeCondition,
+        bridge_structure_type: bridgeStructureType,
+        bridge_length_m: bridgeLength ? parseFloat(bridgeLength) : undefined,
+        bridge_width_m: bridgeWidth ? parseFloat(bridgeWidth) : undefined,
+        bridge_spans: bridgeSpans ? parseInt(bridgeSpans) : undefined,
+        bridge_approach_condition: bridgeApproachCondition,
+        bridge_signage: bridgeSignage,
       };
     } else if (assetCategory === "culvert") {
       draftData = {
@@ -1515,28 +1879,34 @@ export default function App() {
         culvet_class: culvertClass,
         culvet_type: culvertType,
         culvet_serviceability: culvertServiceability,
+        culvert_size_m2: culvertSizeM2 ? parseFloat(culvertSizeM2) : undefined,
+        culvert_openings: culvertOpenings ? parseInt(culvertOpenings) : undefined,
       };
     } else if (assetCategory === "shelvet") {
       draftData = {
         ...baseData,
         shelvets_type: shelvetType,
         shelvet_condition: shelvetCondition,
+        shelvet_serviceability: shelvetServiceability,
+        shelvet_size_m2: shelvetSizeM2 ? parseFloat(shelvetSizeM2) : undefined,
+        shelvet_openings: shelvetOpenings ? parseInt(shelvetOpenings) : undefined,
       };
     } else if (assetCategory === "sealed") {
-      const finalSealedName = sealedName || roadName.split(" (")[0];
+      const finalSealedName = roadName.split(" (")[0] || roadName;
+      const chainFrom = chainageFrom.trim() ? parseFloat(chainageFrom) : undefined;
+      const chainTo = chainageTo.trim() ? parseFloat(chainageTo) : undefined;
       draftData = {
         ...baseData,
-        // Flat normal keys
         paved_road_name: finalSealedName,
         paved_road_class: sealedClass,
         paved_road_type: sealedType,
         paved_road_condition: sealedRidingQuality,
         pothole_patches: sealedPotholesPatches,
         vegetation: sealedVegetation,
-
-        // Schema raw keys
+        chainage_from_km: chainFrom,
+        chainage_to_km: chainTo,
         Road_Name_002: finalSealedName,
-        Route_number_004: sealedRoute || "A4",
+        Route_number_004: undefined,
         Road_Class_002: sealedClass,
         Road_Type: sealedType,
         Climate_Region_001: sealedClimate,
@@ -1558,24 +1928,52 @@ export default function App() {
         Road_markings: sealedRoadMarkings,
         Road_studs: sealedRoadStuds,
         Passability_002: sealedPassability,
-        Grid: sealedGrid,
         Year_constructed_to_sealed_standard: sealedYearConstructed ? parseInt(sealedYearConstructed) : undefined,
+        Surface_type: sealedSurfaceType,
+        Pothole_density: sealedPotholeDensity,
+        Cycle_track: sealedCycleTrack,
+        Survey_side: sealedSurveySide,
+        Survey_direction: sealedSurveyDirection || undefined,
+        Number_of_Lanes_per_carriageway: sealedLanesPerCarriage ? parseInt(sealedLanesPerCarriage) : undefined,
+        Shoulder_Width_m: sealedShoulderWidth ? parseFloat(sealedShoulderWidth) : undefined,
+        Median_type: sealedMedianType,
+        Drainage_lining: sealedDrainageLining,
+        Road_markings_visible: sealedRoadMarkingsVisible,
+        Chainage_from_km_002: chainFrom,
+        Chainage_to_km_002: chainTo,
+        Carriage1_Narrow_cracks: sealedC1NarrowCracks,
+        Carriage1_Wide_cracks: sealedC1WideCracks,
+        Carriage1_Pothole_patches: sealedC1Potholes,
+        Carriage1_Rutting: sealedC1Rutting,
+        Carriage1_Edge_breaks: sealedC1EdgeBreaks,
+        Carriage1_Edge_drop: sealedC1EdgeDrop,
+        Carriage1_Ravelling: sealedC1Ravelling,
+        Carriage1_Riding_quality: sealedC1RidingQuality,
+        Carriage2_Narrow_cracks: sealedC2NarrowCracks,
+        Carriage2_Wide_cracks: sealedC2WideCracks,
+        Carriage2_Pothole_patches: sealedC2Potholes,
+        Carriage2_Rutting: sealedC2Rutting,
+        Carriage2_Edge_breaks: sealedC2EdgeBreaks,
+        Carriage2_Edge_drop: sealedC2EdgeDrop,
+        Carriage2_Ravelling: sealedC2Ravelling,
+        Carriage2_Riding_quality: sealedC2RidingQuality,
       };
     } else if (assetCategory === "gravel") {
-      const finalGravelName = gravelName || roadName.split(" (")[0];
+      const finalGravelName = roadName.split(" (")[0] || roadName;
+      const chainFrom = chainageFrom.trim() ? parseFloat(chainageFrom) : undefined;
+      const chainTo = chainageTo.trim() ? parseFloat(chainageTo) : undefined;
       draftData = {
         ...baseData,
-        // Flat normal keys
         gravel_road_name: finalGravelName,
         gravel_road_class: gravelClass,
         gravel_thickness: gravelThickness,
         gravel_condition: gravelRidingQuality,
         drainage_condition: gravelDrainageCond,
         vegetation: gravelVegetation,
-
-        // Schema raw keys
+        chainage_from_km: chainFrom,
+        chainage_to_km: chainTo,
         Road_Name: finalGravelName,
-        Route_Number: gravelRoute || "A4",
+        Route_Number: undefined,
         Road_Length: gravelLength ? parseFloat(gravelLength) : undefined,
         Road_Class: gravelClass,
         Authority_Name: gravelAuthority,
@@ -1592,11 +1990,20 @@ export default function App() {
         Potholes_Degree: gravelPotholes,
         Passability: gravelPassability,
         Year_of_Counstruction: gravelYearConstructed ? parseInt(gravelYearConstructed) : undefined,
+        Chainage_From_km: chainFrom,
+        Chainage_To_km: chainTo,
+        gravel_corrugations_severity: gravelCorrugationsSeverity,
+        gravel_cross_section_severity: gravelCrossSectionSeverity,
+        gravel_drainage_severity: gravelDrainageSeverity,
+        gravel_potholes_severity: gravelPotholesSeverity,
+        gravel_riding_severity: gravelRidingSeverity,
       };
     } else if (assetCategory === "earth") {
+      const chainFrom = chainageFrom.trim() ? parseFloat(chainageFrom) : undefined;
+      const chainTo = chainageTo.trim() ? parseFloat(chainageTo) : undefined;
       draftData = {
         ...baseData,
-        earth_road_name: earthName || roadName.split(" (")[0],
+        earth_road_name: roadName.split(" (")[0] || roadName,
         earth_road_class: earthClass,
         earth_road_width: earthWidth ? parseFloat(earthWidth) : undefined,
         earth_road_length: earthLength ? parseFloat(earthLength) : undefined,
@@ -1608,6 +2015,8 @@ export default function App() {
         earth_climate: earthClimate,
         earth_authority: earthAuthority,
         earth_year_constructed: earthYearConstructed ? parseInt(earthYearConstructed) : undefined,
+        chainage_from_km: chainFrom,
+        chainage_to_km: chainTo,
       };
     } else if (assetCategory === "footbridge") {
       if (!saveAsDraft && !footbridgeName) { showToast("Footbridge name is required.", "error"); return; }
@@ -1639,6 +2048,8 @@ export default function App() {
         tollgate_condition: tollgateCondition,
         tollgate_lanes: tollgateLanes ? parseInt(tollgateLanes) : undefined,
         tollgate_operational: tollgateOperational,
+        tollgate_dualisation: tollgateDualisation,
+        tollgate_vegetation: tollgateVegetation,
       };
     } else if (assetCategory === "layby") {
       draftData = {
@@ -1647,6 +2058,9 @@ export default function App() {
         layby_surface: laybySurface,
         layby_length: laybyLength ? parseFloat(laybyLength) : undefined,
         layby_drainage: laybyDrainage,
+        layby_width: laybyWidth ? parseFloat(laybyWidth) : undefined,
+        layby_furniture: laybyFurniture,
+        layby_refuse_bin: laybyRefuseBin,
       };
     } else if (assetCategory === "busstop") {
       draftData = {
@@ -1655,6 +2069,8 @@ export default function App() {
         busstop_condition: busstopCondition,
         busstop_shelter: busstopShelter,
         busstop_drainage: busstopDrainage,
+        busstop_furniture_condition: busstopFurnitureCondition,
+        busstop_refuse_bin: busstopRefuseBin,
       };
     } else if (assetCategory === "junction") {
       draftData = {
@@ -1672,11 +2088,17 @@ export default function App() {
         sign_condition: signCondition,
         sign_sadc_compliant: signSadcCompliant,
         sign_visibility: signVisibility,
+        sign_name: signName || undefined,
       };
     } else if (assetCategory === "piped_causeway") {
       draftData = {
         ...baseData,
         causeway_name: causewayName,
+        causeway_condition: causewayCondition,
+        causeway_type: causewayType,
+        causeway_length_m: causewayLength ? parseFloat(causewayLength) : undefined,
+        causeway_openings: causewayOpenings ? parseInt(causewayOpenings) : undefined,
+        causeway_box_size: causewayBoxSize || undefined,
         causeway_pipe_material: causewayPipeMaterial,
         causeway_pipe_diameter: causewayPipeDiameter,
         causeway_drainage: causewayDrainage,
@@ -1690,6 +2112,8 @@ export default function App() {
         drift_surface: driftSurface,
         drift_passability: driftPassability,
         drift_width: driftWidth ? parseFloat(driftWidth) : undefined,
+        drift_length_m: driftLength ? parseFloat(driftLength) : undefined,
+        drift_type: driftType,
       };
     } else if (assetCategory === "grid") {
       draftData = {
@@ -1698,6 +2122,8 @@ export default function App() {
         grid_condition: gridCondition,
         grid_material: gridMaterial,
         grid_operational: gridOperational,
+        grid_serviceability: gridServiceability,
+        grid_passability: gridPassability,
       };
     } else if (assetCategory === "traffic_lights") {
       draftData = {
@@ -1707,6 +2133,7 @@ export default function App() {
         traffic_lights_operational: trafficLightsOperational,
         traffic_lights_type: trafficLightsType,
         traffic_lights_phases: trafficLightsPhases ? parseInt(trafficLightsPhases) : undefined,
+        traffic_lights_power_source: trafficLightsPowerSource,
       };
     } else if (assetCategory === "streetlight") {
       draftData = {
@@ -1716,6 +2143,17 @@ export default function App() {
         streetlight_power_source: streetlightPowerSource,
         streetlight_operational: streetlightOperational,
         streetlight_count: streetlightCount ? parseInt(streetlightCount) : undefined,
+      };
+    } else if (assetCategory === "catchpit") {
+      draftData = {
+        ...baseData,
+        catchpit_condition: catchpitCondition,
+      };
+    } else if (assetCategory === "traffic_calming") {
+      draftData = {
+        ...baseData,
+        traffic_calming_type: trafficCalmingType,
+        traffic_calming_condition: trafficCalmingCondition,
       };
     } else {
       draftData = { ...baseData };
@@ -1773,7 +2211,9 @@ export default function App() {
   };
 
   const handleDeleteDraft = (id: string) => {
-    if (!window.confirm("Delete this survey? This cannot be undone.")) return;
+    const target = drafts.find((d) => d.id === id);
+    const kind = target?.status === "queued" ? "queued survey" : "draft";
+    if (!window.confirm(`Delete this ${kind}? This cannot be undone.`)) return;
     db.deleteDraft(id);
     setDrafts(db.getDrafts());
     showToast("Survey draft deleted.", "info");
@@ -1814,11 +2254,25 @@ export default function App() {
       piped_causeway: "survey_piped_causeways",
       drift: "survey_drifts",
       grid: "survey_grids",
+      catchpit: "survey_catchpits",
+      traffic_calming: "survey_traffic_calming",
       traffic_lights: "survey_traffic_lights",
       streetlight: "survey_streetlights"
     };
 
     const mapDraftToSupabaseTable = (draft: any, tableName: string) => {
+      const photoList: string[] = [];
+      const addPhoto = (item: unknown) => {
+        if (typeof item === "string" && item.trim()) photoList.push(item.trim());
+      };
+      if (Array.isArray(draft.photos)) draft.photos.forEach(addPhoto);
+      addPhoto(draft.photo);
+      const uniquePhotos = Array.from(new Set(photoList));
+      const rawWithoutPhotos =
+        draft && typeof draft === "object"
+          ? Object.fromEntries(Object.entries(draft).filter(([k]) => k !== "photo" && k !== "photos"))
+          : draft;
+
       const row: any = {
         survey_id:            draft.id,
         asset_category:       draft.asset_category || Object.keys(categoryToTable).find(k => categoryToTable[k] === tableName) || null,
@@ -1828,9 +2282,9 @@ export default function App() {
         survey_date:          draft.survey_date || null,
         gps_point:            draft.gps || null,
         image_sadc_compliant: draft.image_SADC_compliant || draft.image_sadc_compliant || "yes",
-        // Keep first photo on dedicated column; full set lives in raw_data.photos
-        photo:                draft.photo || (Array.isArray(draft.photos) ? draft.photos[0] : null) || null,
-        raw_data:             draft,
+        photo:                uniquePhotos[0] || null,
+        photos:               uniquePhotos.length > 0 ? uniquePhotos : null,
+        raw_data:             rawWithoutPhotos,
         source:               "mobile_app"
       };
 
@@ -1883,9 +2337,32 @@ export default function App() {
         row.road_markings = draft.Road_markings || null;
         row.road_studs = draft.Road_studs || null;
         row.passability_002 = draft.Passability_002 || null;
-        row.grid = draft.Grid || null;
         row.year_constructed_to_sealed_standard = draft.Year_constructed_to_sealed_standard !== undefined ? Number(draft.Year_constructed_to_sealed_standard) : null;
         row.last_surface_year = draft.Last_surface_year !== undefined ? Number(draft.Last_surface_year) : null;
+        row.surface_type = draft.Surface_type || null;
+        row.pothole_density = draft.Pothole_density || null;
+        row.cycle_track = draft.Cycle_track || null;
+        row.survey_side = draft.Survey_side || null;
+        row.survey_direction = draft.Survey_direction || null;
+        row.drainage_lining = draft.Drainage_lining || null;
+        row.road_markings_visible = draft.Road_markings_visible || null;
+        row.median_type = draft.Median_type || null;
+        row.carriage1_narrow_cracks = draft.Carriage1_Narrow_cracks || null;
+        row.carriage1_wide_cracks = draft.Carriage1_Wide_cracks || null;
+        row.carriage1_pothole_patches = draft.Carriage1_Pothole_patches || null;
+        row.carriage1_rutting = draft.Carriage1_Rutting || null;
+        row.carriage1_edge_breaks = draft.Carriage1_Edge_breaks || null;
+        row.carriage1_edge_drop = draft.Carriage1_Edge_drop || null;
+        row.carriage1_ravelling = draft.Carriage1_Ravelling || null;
+        row.carriage1_riding_quality = draft.Carriage1_Riding_quality || null;
+        row.carriage2_narrow_cracks = draft.Carriage2_Narrow_cracks || null;
+        row.carriage2_wide_cracks = draft.Carriage2_Wide_cracks || null;
+        row.carriage2_pothole_patches = draft.Carriage2_Pothole_patches || null;
+        row.carriage2_rutting = draft.Carriage2_Rutting || null;
+        row.carriage2_edge_breaks = draft.Carriage2_Edge_breaks || null;
+        row.carriage2_edge_drop = draft.Carriage2_Edge_drop || null;
+        row.carriage2_ravelling = draft.Carriage2_Ravelling || null;
+        row.carriage2_riding_quality = draft.Carriage2_Riding_quality || null;
       } else if (tableName === "survey_gravel_roads") {
         row.road_condition = draft.gravel_condition || null;
         row.road_class = draft.gravel_road_class || null;
@@ -1919,6 +2396,11 @@ export default function App() {
         row.age_in_years = draft.Age_in_Years !== undefined ? Number(draft.Age_in_Years) : null;
         row.last_year_of_re_gravelling = draft.Last_year_of_re_gravelling !== undefined ? Number(draft.Last_year_of_re_gravelling) : null;
         row.drainage_condition_raw = draft.Drainage_condition || null;
+        row.gravel_corrugations_severity = draft.gravel_corrugations_severity || null;
+        row.gravel_cross_section_severity = draft.gravel_cross_section_severity || null;
+        row.gravel_drainage_severity = draft.gravel_drainage_severity || null;
+        row.gravel_potholes_severity = draft.gravel_potholes_severity || null;
+        row.gravel_riding_severity = draft.gravel_riding_severity || null;
       } else if (tableName === "survey_earth_roads") {
         row.road_condition = draft.earth_road_condition || null;
         row.road_class = draft.earth_road_class || null;
@@ -1935,6 +2417,13 @@ export default function App() {
         row.earth_climate = draft.earth_climate || null;
         row.earth_authority = draft.earth_authority || null;
         row.earth_year_constructed = draft.earth_year_constructed !== undefined ? Number(draft.earth_year_constructed) : null;
+        row.chainage_from_km = draft.chainage_from_km !== undefined ? Number(draft.chainage_from_km) : null;
+        row.chainage_to_km = draft.chainage_to_km !== undefined ? Number(draft.chainage_to_km) : null;
+      } else if (tableName === "survey_catchpits") {
+        row.catchpit_condition = draft.catchpit_condition || null;
+      } else if (tableName === "survey_traffic_calming") {
+        row.traffic_calming_type = draft.traffic_calming_type || null;
+        row.traffic_calming_condition = draft.traffic_calming_condition || null;
       } else if (tableName === "survey_bridges") {
         row.bridge = draft.bridge || null;
         row.bridge_crossing = draft.bridge_crossing || null;
@@ -1988,6 +2477,7 @@ export default function App() {
         row.sign_condition = draft.sign_condition || null;
         row.sign_sadc_compliant = draft.sign_sadc_compliant || null;
         row.sign_visibility = draft.sign_visibility || null;
+        row.sign_name = draft.sign_name || null;
       } else if (tableName === "survey_shelvets") {
         row.shelvets_type = draft.shelvets_type || null;
         row.shelvet_condition = draft.shelvet_condition || null;
@@ -2079,6 +2569,8 @@ export default function App() {
       else if (draft.streetlight_type) draftName = `Streetlight: ${draft.streetlight_type}`;
       else if (draft.rail_crossing_name) draftName = `Rail Crossing: ${draft.rail_crossing_name}`;
       else if (draft.junction_type) draftName = `Junction: ${String(draft.junction_type).replace("_", "-")}`;
+      else if (draft.catchpit_condition) draftName = `Catchpit (${draft.catchpit_condition})`;
+      else if (draft.traffic_calming_type) draftName = `Traffic Calming: ${String(draft.traffic_calming_type).replace("_", " ")}`;
 
       setSyncProgress({ current: i + 1, total: queuedDrafts.length, currentName: draftName });
 
@@ -2344,12 +2836,12 @@ export default function App() {
                   }
                 `}</style>
                 {[
-                  { id: "all", label: "All Assets", count: 18 },
+                  { id: "all", label: "All Assets", count: 20 },
                   { id: "roads", label: "Roads", count: 3 },
                   { id: "structures", label: "Structures", count: 4 },
                   { id: "drainage", label: "Drainage", count: 5 },
-                  { id: "traffic", label: "Traffic", count: 2 },
-                  { id: "amenities", label: "Amenities", count: 4 }
+                  { id: "traffic", label: "Traffic", count: 4 },
+                  { id: "amenities", label: "Amenities", count: 5 }
                 ].map((cat) => (
                   <button
                     key={cat.id}
@@ -2637,7 +3129,7 @@ export default function App() {
             </div>
 
             <div className="mobile-form-group">
-              <label className="mobile-label">Section / Chainage Name</label>
+              <label className="mobile-label">Section Name</label>
               <AutocompleteInput
                 placeholder="e.g. Marondera - Rusape Section"
                 value={sectionName}
@@ -2647,27 +3139,42 @@ export default function App() {
               />
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-              <div className="mobile-form-group">
-                <label className="mobile-label">Surveyor Name</label>
-                <AutocompleteInput
-                  placeholder="e.g. Eng. Rondozai"
-                  value={surveyorName}
-                  onChange={setSurveyorName}
-                  suggestions={surveyorSuggestions(drafts)}
-                  required
-                />
+            {isRoadType && (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                <div className="mobile-form-group">
+                  <label className="mobile-label">Chainage from (km)</label>
+                  <input
+                    type="number"
+                    step="any"
+                    placeholder="Optional"
+                    value={chainageFrom}
+                    onChange={(e) => setChainageFrom(e.target.value)}
+                    className="mobile-input"
+                  />
+                </div>
+                <div className="mobile-form-group">
+                  <label className="mobile-label">Chainage to (km)</label>
+                  <input
+                    type="number"
+                    step="any"
+                    placeholder="Optional"
+                    value={chainageTo}
+                    onChange={(e) => setChainageTo(e.target.value)}
+                    className="mobile-input"
+                  />
+                </div>
               </div>
-              <div className="mobile-form-group">
-                <label className="mobile-label">Survey Date</label>
-                <input
-                  type="date"
-                  value={surveyDate}
-                  onChange={(e) => setSurveyDate(e.target.value)}
-                  className="mobile-input"
-                  required
-                />
-              </div>
+            )}
+
+            <div className="mobile-form-group">
+              <label className="mobile-label">Surveyor Name</label>
+              <AutocompleteInput
+                placeholder="e.g. Eng. Rondozai"
+                value={surveyorName}
+                onChange={setSurveyorName}
+                suggestions={surveyorSuggestions(drafts)}
+                required
+              />
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: isRoadType ? "1fr" : "1fr 1fr", gap: "10px" }}>
@@ -2808,8 +3315,8 @@ export default function App() {
               label={isRoadType ? "Road Photos (Optional)" : "Photos (Optional)"}
               hint={
                 isRoadType
-                  ? "Take several photos along the segment while recording (defects, surface, drainage). You can also use Snap Road Photo on the tracker below."
-                  : "Use the camera for a clear photo of the asset. You can add more than one if needed."
+                  ? `Take photos along the segment while recording (up to ${MAX_ROAD_PHOTOS}). You can also use Snap Road Photo on the tracker below.`
+                  : `Use the camera for a clear photo of the asset (up to ${MAX_POINT_PHOTOS} photos).`
               }
             />
 
@@ -2821,6 +3328,14 @@ export default function App() {
                   : assetCategory === "gravel" ? "Gravel Road"
                   : "Earth Road"
                 }
+                maxSegmentLengthM={segmentMaxLengthM(
+                  assetCategory === "sealed" ? sealedClass
+                  : assetCategory === "gravel" ? gravelClass : earthClass
+                )}
+                segmentLimitHint={fmtSegmentLimitHint(
+                  assetCategory === "sealed" ? sealedClass
+                  : assetCategory === "gravel" ? gravelClass : earthClass
+                )}
                 onSegmentComplete={(geo) => {
                   setSegmentGeometry(geo);
                   persistPausedRoadContext(null);
@@ -2850,12 +3365,12 @@ export default function App() {
                         return next;
                       });
                     } else {
-                      showToast("Camera unavailable — use Add Photo above.", "info");
+                      showToast("Camera unavailable — check camera permission.", "info");
                     }
                   } catch (e: unknown) {
                     const msg = (e as Error)?.message || "";
                     if (!/cancel|dismiss|User cancelled/i.test(msg)) {
-                      showToast("Camera failed — use Add Photo above.", "error");
+                      showToast("Camera failed — try again.", "error");
                     }
                   }
                 }}
@@ -2940,14 +3455,29 @@ export default function App() {
 
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                   <div className="mobile-form-group">
+                    <label className="mobile-label">Structure Type</label>
+                    <select value={bridgeStructureType} onChange={(e) => setBridgeStructureType(e.target.value)} className="mobile-select">
+                      <option value="beam">Beam</option>
+                      <option value="arch">Arch</option>
+                      <option value="slab">Slab</option>
+                      <option value="truss">Truss</option>
+                      <option value="cantilever">Cantilever</option>
+                      <option value="suspension">Suspension</option>
+                    </select>
+                  </div>
+                  <div className="mobile-form-group">
                     <label className="mobile-label">Crossing Type</label>
                     <select value={bridgeCrossing} onChange={(e) => setBridgeCrossing(e.target.value)} className="mobile-select">
-                      <option value="river">River Crossing</option>
+                      <option value="stream">Stream</option>
+                      <option value="river">River</option>
                       <option value="road">Road flyover</option>
                       <option value="rail">Railway flyover</option>
                       <option value="other">Other</option>
                     </select>
                   </div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                   <div className="mobile-form-group">
                     <label className="mobile-label">Deck Type</label>
                     <select value={bridgeType} onChange={(e) => setBridgeType(e.target.value)} className="mobile-select">
@@ -2955,6 +3485,21 @@ export default function App() {
                       <option value="sldc">SLDC Deck</option>
                       <option value="slc">SLC Deck</option>
                     </select>
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px" }}>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Length (m)</label>
+                    <input type="number" step="any" placeholder="e.g. 45" value={bridgeLength} onChange={(e) => setBridgeLength(e.target.value)} className="mobile-input" />
+                  </div>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Width (m)</label>
+                    <input type="number" step="any" placeholder="e.g. 7.2" value={bridgeWidth} onChange={(e) => setBridgeWidth(e.target.value)} className="mobile-input" />
+                  </div>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Spans</label>
+                    <input type="number" min="1" placeholder="e.g. 3" value={bridgeSpans} onChange={(e) => setBridgeSpans(e.target.value)} className="mobile-input" />
                   </div>
                 </div>
 
@@ -3017,6 +3562,25 @@ export default function App() {
 
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                   <div className="mobile-form-group">
+                    <label className="mobile-label">Approach condition</label>
+                    <select value={bridgeApproachCondition} onChange={(e) => setBridgeApproachCondition(e.target.value)} className="mobile-select">
+                      <option value="good">Good</option>
+                      <option value="fair">Fair</option>
+                      <option value="poor">Poor</option>
+                    </select>
+                  </div>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Signage</label>
+                    <select value={bridgeSignage} onChange={(e) => setBridgeSignage(e.target.value)} className="mobile-select">
+                      <option value="yes">Yes</option>
+                      <option value="partial">Partial</option>
+                      <option value="no">No</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                  <div className="mobile-form-group">
                     <label className="mobile-label">Drainage status</label>
                     <select value={drainage} onChange={(e) => setDrainage(e.target.value)} className="mobile-select">
                       <option value="good">Good</option>
@@ -3042,7 +3606,7 @@ export default function App() {
                 <legend style={{ fontSize: "10px", fontWeight: "700", textTransform: "uppercase", color: "var(--text-accent)", padding: "0 6px" }}>Culvert properties</legend>
                 
                 <div className="mobile-form-group">
-                  <label className="mobile-label">Culvert Class</label>
+                  <label className="mobile-label">Culvert Type</label>
                   <select value={culvertClass} onChange={(e) => setCulvertClass(e.target.value)} className="mobile-select">
                     <option value="box_culvert">Box Culvert</option>
                     <option value="pipe_culvert">Pipe Culvert</option>
@@ -3050,14 +3614,28 @@ export default function App() {
                 </div>
 
                 <div className="mobile-form-group">
-                  <label className="mobile-label">Material Type</label>
-                  <select value={culvertType} onChange={(e) => setCulvertType(e.target.value)} className="mobile-select">
-                    <option value="concrete">Concrete</option>
-                    <option value="steel">Steel</option>
-                    <option value="masonry">Masonry</option>
-                    <option value="corrugated_metal">Corrugated Metal</option>
-                    <option value="other">Other</option>
-                  </select>
+                  <label className="mobile-label">Material</label>
+                  <SelectWithOther
+                    value={culvertType}
+                    onChange={setCulvertType}
+                    options={[
+                      { value: "concrete", label: "Concrete" },
+                      { value: "steel", label: "Steel" },
+                      { value: "masonry", label: "Masonry" },
+                      { value: "corrugated_metal", label: "Corrugated Metal" },
+                    ]}
+                  />
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Size (m²)</label>
+                    <input type="number" step="any" placeholder="e.g. 2.5" value={culvertSizeM2} onChange={(e) => setCulvertSizeM2(e.target.value)} className="mobile-input" />
+                  </div>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Number of openings</label>
+                    <input type="number" min="1" placeholder="e.g. 2" value={culvertOpenings} onChange={(e) => setCulvertOpenings(e.target.value)} className="mobile-input" />
+                  </div>
                 </div>
 
                 <div className="mobile-form-group">
@@ -3091,12 +3669,25 @@ export default function App() {
                 </div>
 
                 <div className="mobile-form-group">
-                  <label className="mobile-label">Condition State</label>
-                  <select value={shelvetCondition} onChange={(e) => setShelvetCondition(e.target.value)} className="mobile-select">
-                    <option value="good">Good (Dry/Solid)</option>
-                    <option value="corroded">Corroded / Rusty</option>
-                    <option value="collapsed">Collapsed structural frame</option>
+                  <label className="mobile-label">Serviceability</label>
+                  <select value={shelvetServiceability} onChange={(e) => setShelvetServiceability(e.target.value)} className="mobile-select">
+                    <option value="good">Good</option>
+                    <option value="fair">Fair</option>
+                    <option value="poor">Poor</option>
+                    <option value="blocked">Blocked</option>
+                    <option value="damaged">Damaged</option>
                   </select>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Size (m²)</label>
+                    <input type="number" step="any" placeholder="e.g. 1.5" value={shelvetSizeM2} onChange={(e) => setShelvetSizeM2(e.target.value)} className="mobile-input" />
+                  </div>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Number of openings</label>
+                    <input type="number" min="1" placeholder="e.g. 1" value={shelvetOpenings} onChange={(e) => setShelvetOpenings(e.target.value)} className="mobile-input" />
+                  </div>
                 </div>
               </fieldset>
             )}
@@ -3106,53 +3697,45 @@ export default function App() {
               <fieldset style={{ border: "1px solid var(--border-color)", padding: "12px", borderRadius: "var(--radius-md)", display: "flex", flexDirection: "column", gap: "10px" }}>
                 <legend style={{ fontSize: "10px", fontWeight: "700", textTransform: "uppercase", color: "var(--text-accent)", padding: "0 6px" }}>Sealed Road Properties</legend>
 
-                <div className="mobile-form-group">
-                  <label className="mobile-label">Sealed Road Name</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Harare - Masvingo Highway Section"
-                    value={sealedName}
-                    onChange={(e) => setSealedName(e.target.value)}
-                    className="mobile-input"
-                  />
-                </div>
-
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                  <div className="mobile-form-group">
-                    <label className="mobile-label">Route Number</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. A4"
-                      value={sealedRoute}
-                      onChange={(e) => setSealedRoute(e.target.value)}
-                      className="mobile-input"
-                    />
-                  </div>
                   <div className="mobile-form-group">
                     <label className="mobile-label">Road Class</label>
                     <select value={sealedClass} onChange={(e) => setSealedClass(e.target.value)} className="mobile-select">
-                      <option value="primary">Primary</option>
-                      <option value="secondary">Secondary</option>
-                      <option value="tertiary_feeder">Tertiary Feeder</option>
-                      <option value="tertiary_access">Tertiary Access</option>
-                      <option value="urban_arterial">Urban Arterial</option>
-                      <option value="urban_collector">Urban Collector</option>
-                      <option value="urban_local">Urban Local</option>
-                      <option value="industrial">Industrial</option>
+                      {SEALED_ROAD_CLASS_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Road Type</label>
+                    <select value={sealedType} onChange={(e) => setSealedType(e.target.value)} className="mobile-select">
+                      {SEALED_ROAD_TYPE_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
                     </select>
                   </div>
                 </div>
 
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                   <div className="mobile-form-group">
-                    <label className="mobile-label">Road Type</label>
-                    <select value={sealedType} onChange={(e) => setSealedType(e.target.value)} className="mobile-select">
-                      <option value="wide_mat_ss">Wide Mat SS</option>
-                      <option value="wide_mat_gs">Wide Mat GS</option>
-                      <option value="narrow_mat">Narrow Mat</option>
-                      <option value="strip">Strip</option>
+                    <label className="mobile-label">Surface Type</label>
+                    <select value={sealedSurfaceType} onChange={(e) => setSealedSurfaceType(e.target.value)} className="mobile-select">
+                      {SURFACE_TYPE_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
                     </select>
                   </div>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Pothole Density</label>
+                    <select value={sealedPotholeDensity} onChange={(e) => setSealedPotholeDensity(e.target.value)} className="mobile-select">
+                      {POTHOLE_DENSITY_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                   <div className="mobile-form-group">
                     <label className="mobile-label">Climate Region</label>
                     <select value={sealedClimate} onChange={(e) => setSealedClimate(e.target.value)} className="mobile-select">
@@ -3162,9 +3745,6 @@ export default function App() {
                       <option value="very_wet">Very Wet</option>
                     </select>
                   </div>
-                </div>
-
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                   <div className="mobile-form-group">
                     <label className="mobile-label">Terrain Type</label>
                     <select value={sealedTerrain} onChange={(e) => setSealedTerrain(e.target.value)} className="mobile-select">
@@ -3173,50 +3753,52 @@ export default function App() {
                       <option value="mountainous">Mountainous</option>
                     </select>
                   </div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                   <div className="mobile-form-group">
                     <label className="mobile-label">Authority Name</label>
-                    <SelectWithOther
-                      value={sealedAuthority}
-                      onChange={setSealedAuthority}
-                      options={AUTHORITY_OPTIONS}
-                    />
+                    <SelectWithOther value={sealedAuthority} onChange={setSealedAuthority} options={AUTHORITY_OPTIONS} />
+                  </div>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Cycle Track</label>
+                    <select value={sealedCycleTrack} onChange={(e) => setSealedCycleTrack(e.target.value)} className="mobile-select">
+                      {YES_NO_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
                   </div>
                 </div>
 
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                   <div className="mobile-form-group">
                     <label className="mobile-label">Road Length (km)</label>
-                    <input
-                      type="number"
-                      step="any"
-                      placeholder="e.g. 15.5"
-                      value={sealedLength}
-                      onChange={(e) => setSealedLength(e.target.value)}
-                      className="mobile-input"
-                    />
+                    <input type="number" step="any" placeholder="e.g. 15.5" value={sealedLength} onChange={(e) => setSealedLength(e.target.value)} className="mobile-input" />
                   </div>
                   <div className="mobile-form-group">
                     <label className="mobile-label">Road Width (m)</label>
-                    <input
-                      type="number"
-                      step="any"
-                      placeholder="e.g. 7.2"
-                      value={sealedWidth}
-                      onChange={(e) => setSealedWidth(e.target.value)}
-                      className="mobile-input"
-                    />
+                    <input type="number" step="any" placeholder="e.g. 7.2" value={sealedWidth} onChange={(e) => setSealedWidth(e.target.value)} className="mobile-input" />
                   </div>
                 </div>
 
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                   <div className="mobile-form-group">
-                    <label className="mobile-label">Drainage Type</label>
-                    <select value={sealedDrainageType} onChange={(e) => setSealedDrainageType(e.target.value)} className="mobile-select">
-                      <option value="no_drain">No drain</option>
-                      <option value="v_drain">V-drain</option>
-                      <option value="trapezoidal">Trapezoidal</option>
-                      <option value="piped_kerb">Piped Kerb</option>
-                      <option value="fnfc">fnfc</option>
+                    <label className="mobile-label">Lanes per Carriage</label>
+                    <input type="number" min="1" placeholder="e.g. 2" value={sealedLanesPerCarriage} onChange={(e) => setSealedLanesPerCarriage(e.target.value)} className="mobile-input" />
+                  </div>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Shoulder Width (m)</label>
+                    <input type="number" step="any" placeholder="e.g. 1.5" value={sealedShoulderWidth} onChange={(e) => setSealedShoulderWidth(e.target.value)} className="mobile-input" />
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Median Type</label>
+                    <select value={sealedMedianType} onChange={(e) => setSealedMedianType(e.target.value)} className="mobile-select">
+                      {MEDIAN_TYPE_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
                     </select>
                   </div>
                   <div className="mobile-form-group">
@@ -3232,70 +3814,22 @@ export default function App() {
 
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                   <div className="mobile-form-group">
-                    <label className="mobile-label">Narrow Cracks</label>
-                    <select value={sealedNarrowCracks} onChange={(e) => setSealedNarrowCracks(e.target.value)} className="mobile-select">
-                      <option value="no_cracks">No cracks</option>
-                      <option value="faint_cracks">Faint cracks</option>
-                      <option value="distinct_cracks_up_to_1mm">Distinct cracks up to 1mm</option>
-                      <option value="mixed">Mixed</option>
+                    <label className="mobile-label">Survey Side</label>
+                    <select value={sealedSurveySide} onChange={(e) => setSealedSurveySide(e.target.value)} className="mobile-select">
+                      {SURVEY_SIDE_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
                     </select>
                   </div>
                   <div className="mobile-form-group">
-                    <label className="mobile-label">Wide Cracks</label>
-                    <select value={sealedWideCracks} onChange={(e) => setSealedWideCracks(e.target.value)} className="mobile-select">
-                      <option value="no_cracks">No cracks</option>
-                      <option value="cracks_3_5mm">Cracks 3-5mm</option>
-                      <option value="cracks_5_10mm">Cracks 5-10mm</option>
-                      <option value="mixed">Mixed</option>
-                    </select>
+                    <label className="mobile-label">Survey Direction</label>
+                    <input type="text" placeholder="e.g. Northbound" value={sealedSurveyDirection} onChange={(e) => setSealedSurveyDirection(e.target.value)} className="mobile-input" />
                   </div>
                 </div>
 
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                   <div className="mobile-form-group">
-                    <label className="mobile-label">Pothole / Patches</label>
-                    <SelectWithOther
-                      value={sealedPotholesPatches}
-                      onChange={setSealedPotholesPatches}
-                      options={CONDITION_GFPM}
-                      includeOther={false}
-                    />
-                  </div>
-                  <div className="mobile-form-group">
-                    <label className="mobile-label">Rutting Degree</label>
-                    <select value={sealedRutting} onChange={(e) => setSealedRutting(e.target.value)} className="mobile-select">
-                      <option value="no_rutting__5mm">No rutting &lt;5mm</option>
-                      <option value="discernible_5_15mm">Discernible 5-15mm</option>
-                      <option value="large_15_25mm">Large 15-25mm</option>
-                      <option value="mixed">Mixed</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                  <div className="mobile-form-group">
-                    <label className="mobile-label">Edge Breaks Degree</label>
-                    <select value={sealedEdgeBreaks} onChange={(e) => setSealedEdgeBreaks(e.target.value)} className="mobile-select">
-                      <option value="no_edge_break">No edge break</option>
-                      <option value="up_to_50mm">Up to 50mm</option>
-                      <option value="50_100mm_break">50-100mm break</option>
-                      <option value="__100mm">&gt; 100mm</option>
-                    </select>
-                  </div>
-                  <div className="mobile-form-group">
-                    <label className="mobile-label">Edge Drop Degree</label>
-                    <select value={sealedEdgeDrop} onChange={(e) => setSealedEdgeDrop(e.target.value)} className="mobile-select">
-                      <option value="no_edge_break">No edge break</option>
-                      <option value="up_to_50mm">Up to 50mm</option>
-                      <option value="50_100mm_break">50-100mm break</option>
-                      <option value="__100mm">&gt; 100mm</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                  <div className="mobile-form-group">
-                    <label className="mobile-label">Drainage status</label>
+                    <label className="mobile-label">Drainage</label>
                     <select value={sealedDrainage} onChange={(e) => setSealedDrainage(e.target.value)} className="mobile-select">
                       <option value="good">Good</option>
                       <option value="fair">Fair</option>
@@ -3304,28 +3838,272 @@ export default function App() {
                     </select>
                   </div>
                   <div className="mobile-form-group">
-                    <label className="mobile-label">Ravelling Degree</label>
-                    <select value={sealedRavelling} onChange={(e) => setSealedRavelling(e.target.value)} className="mobile-select">
-                      <option value="none">None</option>
-                      <option value="minor">Minor</option>
-                      <option value="major">Major</option>
+                    <label className="mobile-label">Drainage Type</label>
+                    <select value={sealedDrainageType} onChange={(e) => setSealedDrainageType(e.target.value)} className="mobile-select">
+                      {DRAINAGE_TYPE_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
                     </select>
                   </div>
                 </div>
 
+                <div className="mobile-form-group">
+                  <label className="mobile-label">Drainage Lining</label>
+                  <select value={sealedDrainageLining} onChange={(e) => setSealedDrainageLining(e.target.value)} className="mobile-select">
+                    {DRAINAGE_LINING_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {!isDualCarriageway(sealedType) && (
+                  <>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                      <div className="mobile-form-group">
+                        <label className="mobile-label">Narrow Cracks</label>
+                        <select value={sealedNarrowCracks} onChange={(e) => setSealedNarrowCracks(e.target.value)} className="mobile-select">
+                          <option value="no_cracks">No cracks</option>
+                          <option value="faint_cracks">Faint cracks</option>
+                          <option value="distinct_cracks_up_to_1mm">Distinct cracks up to 1mm</option>
+                          <option value="mixed">Mixed</option>
+                        </select>
+                      </div>
+                      <div className="mobile-form-group">
+                        <label className="mobile-label">Wide Cracks</label>
+                        <select value={sealedWideCracks} onChange={(e) => setSealedWideCracks(e.target.value)} className="mobile-select">
+                          <option value="no_cracks">No cracks</option>
+                          <option value="cracks_3_5mm">Cracks 3-5mm</option>
+                          <option value="cracks_5_10mm">Cracks 5-10mm</option>
+                          <option value="mixed">Mixed</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                      <div className="mobile-form-group">
+                        <label className="mobile-label">Pothole / Patches</label>
+                        <SelectWithOther value={sealedPotholesPatches} onChange={setSealedPotholesPatches} options={POTHOLE_PATCHES_OPTIONS} includeOther={false} />
+                      </div>
+                      <div className="mobile-form-group">
+                        <label className="mobile-label">Rutting Degree</label>
+                        <select value={sealedRutting} onChange={(e) => setSealedRutting(e.target.value)} className="mobile-select">
+                          <option value="no_rutting__5mm">No rutting &lt;5mm</option>
+                          <option value="discernible_5_15mm">Discernible 5-15mm</option>
+                          <option value="large_15_25mm">Large 15-25mm</option>
+                          <option value="mixed">Mixed</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                      <div className="mobile-form-group">
+                        <label className="mobile-label">Edge Breaks</label>
+                        <select value={sealedEdgeBreaks} onChange={(e) => setSealedEdgeBreaks(e.target.value)} className="mobile-select">
+                          <option value="no_edge_break">No edge break</option>
+                          <option value="up_to_50mm">Up to 50mm</option>
+                          <option value="50_100mm_break">50-100mm break</option>
+                          <option value="__100mm">&gt; 100mm</option>
+                        </select>
+                      </div>
+                      <div className="mobile-form-group">
+                        <label className="mobile-label">Edge Drop</label>
+                        <select value={sealedEdgeDrop} onChange={(e) => setSealedEdgeDrop(e.target.value)} className="mobile-select">
+                          <option value="no_edge_break">No edge drop</option>
+                          <option value="up_to_50mm">Up to 50mm</option>
+                          <option value="50_100mm_break">50-100mm drop</option>
+                          <option value="__100mm">&gt; 100mm</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                      <div className="mobile-form-group">
+                        <label className="mobile-label">Ravelling Degree</label>
+                        <select value={sealedRavelling} onChange={(e) => setSealedRavelling(e.target.value)} className="mobile-select">
+                          <option value="none">None</option>
+                          <option value="minor">Minor</option>
+                          <option value="major">Major</option>
+                        </select>
+                      </div>
+                      <div className="mobile-form-group">
+                        <label className="mobile-label" style={{ color: "var(--text-accent)" }}>Riding Quality</label>
+                        <SelectWithOther value={sealedRidingQuality} onChange={setSealedRidingQuality} options={CONDITION_GFPM_CONSTRUCTION} includeOther={false} style={{ borderColor: "var(--accent-emerald)" }} />
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {isDualCarriageway(sealedType) && (
+                  <>
+                    <fieldset style={{ border: "1px dashed var(--border-color)", padding: "10px", borderRadius: "var(--radius-sm)", display: "flex", flexDirection: "column", gap: "8px" }}>
+                      <legend style={{ fontSize: "10px", fontWeight: 700, color: "var(--text-accent)", padding: "0 4px" }}>Carriage 1</legend>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                        <div className="mobile-form-group">
+                          <label className="mobile-label">Narrow Cracks</label>
+                          <select value={sealedC1NarrowCracks} onChange={(e) => setSealedC1NarrowCracks(e.target.value)} className="mobile-select">
+                            <option value="no_cracks">No cracks</option>
+                            <option value="faint_cracks">Faint cracks</option>
+                            <option value="distinct_cracks_up_to_1mm">Distinct cracks up to 1mm</option>
+                            <option value="mixed">Mixed</option>
+                          </select>
+                        </div>
+                        <div className="mobile-form-group">
+                          <label className="mobile-label">Wide Cracks</label>
+                          <select value={sealedC1WideCracks} onChange={(e) => setSealedC1WideCracks(e.target.value)} className="mobile-select">
+                            <option value="no_cracks">No cracks</option>
+                            <option value="cracks_3_5mm">Cracks 3-5mm</option>
+                            <option value="cracks_5_10mm">Cracks 5-10mm</option>
+                            <option value="mixed">Mixed</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                        <div className="mobile-form-group">
+                          <label className="mobile-label">Pothole / Patches</label>
+                          <SelectWithOther value={sealedC1Potholes} onChange={setSealedC1Potholes} options={POTHOLE_PATCHES_OPTIONS} includeOther={false} />
+                        </div>
+                        <div className="mobile-form-group">
+                          <label className="mobile-label">Rutting</label>
+                          <select value={sealedC1Rutting} onChange={(e) => setSealedC1Rutting(e.target.value)} className="mobile-select">
+                            <option value="no_rutting__5mm">No rutting &lt;5mm</option>
+                            <option value="discernible_5_15mm">Discernible 5-15mm</option>
+                            <option value="large_15_25mm">Large 15-25mm</option>
+                            <option value="mixed">Mixed</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                        <div className="mobile-form-group">
+                          <label className="mobile-label">Edge Breaks</label>
+                          <select value={sealedC1EdgeBreaks} onChange={(e) => setSealedC1EdgeBreaks(e.target.value)} className="mobile-select">
+                            <option value="no_edge_break">No edge break</option>
+                            <option value="up_to_50mm">Up to 50mm</option>
+                            <option value="50_100mm_break">50-100mm break</option>
+                            <option value="__100mm">&gt; 100mm</option>
+                          </select>
+                        </div>
+                        <div className="mobile-form-group">
+                          <label className="mobile-label">Edge Drop</label>
+                          <select value={sealedC1EdgeDrop} onChange={(e) => setSealedC1EdgeDrop(e.target.value)} className="mobile-select">
+                            <option value="no_edge_break">No edge drop</option>
+                            <option value="up_to_50mm">Up to 50mm</option>
+                            <option value="50_100mm_break">50-100mm drop</option>
+                            <option value="__100mm">&gt; 100mm</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                        <div className="mobile-form-group">
+                          <label className="mobile-label">Ravelling</label>
+                          <select value={sealedC1Ravelling} onChange={(e) => setSealedC1Ravelling(e.target.value)} className="mobile-select">
+                            <option value="none">None</option>
+                            <option value="minor">Minor</option>
+                            <option value="major">Major</option>
+                          </select>
+                        </div>
+                        <div className="mobile-form-group">
+                          <label className="mobile-label">Riding Quality</label>
+                          <SelectWithOther value={sealedC1RidingQuality} onChange={setSealedC1RidingQuality} options={CONDITION_GFPM_CONSTRUCTION} includeOther={false} />
+                        </div>
+                      </div>
+                    </fieldset>
+                    <fieldset style={{ border: "1px dashed var(--border-color)", padding: "10px", borderRadius: "var(--radius-sm)", display: "flex", flexDirection: "column", gap: "8px" }}>
+                      <legend style={{ fontSize: "10px", fontWeight: 700, color: "var(--text-accent)", padding: "0 4px" }}>Carriage 2</legend>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                        <div className="mobile-form-group">
+                          <label className="mobile-label">Narrow Cracks</label>
+                          <select value={sealedC2NarrowCracks} onChange={(e) => setSealedC2NarrowCracks(e.target.value)} className="mobile-select">
+                            <option value="no_cracks">No cracks</option>
+                            <option value="faint_cracks">Faint cracks</option>
+                            <option value="distinct_cracks_up_to_1mm">Distinct cracks up to 1mm</option>
+                            <option value="mixed">Mixed</option>
+                          </select>
+                        </div>
+                        <div className="mobile-form-group">
+                          <label className="mobile-label">Wide Cracks</label>
+                          <select value={sealedC2WideCracks} onChange={(e) => setSealedC2WideCracks(e.target.value)} className="mobile-select">
+                            <option value="no_cracks">No cracks</option>
+                            <option value="cracks_3_5mm">Cracks 3-5mm</option>
+                            <option value="cracks_5_10mm">Cracks 5-10mm</option>
+                            <option value="mixed">Mixed</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                        <div className="mobile-form-group">
+                          <label className="mobile-label">Pothole / Patches</label>
+                          <SelectWithOther value={sealedC2Potholes} onChange={setSealedC2Potholes} options={POTHOLE_PATCHES_OPTIONS} includeOther={false} />
+                        </div>
+                        <div className="mobile-form-group">
+                          <label className="mobile-label">Rutting</label>
+                          <select value={sealedC2Rutting} onChange={(e) => setSealedC2Rutting(e.target.value)} className="mobile-select">
+                            <option value="no_rutting__5mm">No rutting &lt;5mm</option>
+                            <option value="discernible_5_15mm">Discernible 5-15mm</option>
+                            <option value="large_15_25mm">Large 15-25mm</option>
+                            <option value="mixed">Mixed</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                        <div className="mobile-form-group">
+                          <label className="mobile-label">Edge Breaks</label>
+                          <select value={sealedC2EdgeBreaks} onChange={(e) => setSealedC2EdgeBreaks(e.target.value)} className="mobile-select">
+                            <option value="no_edge_break">No edge break</option>
+                            <option value="up_to_50mm">Up to 50mm</option>
+                            <option value="50_100mm_break">50-100mm break</option>
+                            <option value="__100mm">&gt; 100mm</option>
+                          </select>
+                        </div>
+                        <div className="mobile-form-group">
+                          <label className="mobile-label">Edge Drop</label>
+                          <select value={sealedC2EdgeDrop} onChange={(e) => setSealedC2EdgeDrop(e.target.value)} className="mobile-select">
+                            <option value="no_edge_break">No edge drop</option>
+                            <option value="up_to_50mm">Up to 50mm</option>
+                            <option value="50_100mm_break">50-100mm drop</option>
+                            <option value="__100mm">&gt; 100mm</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                        <div className="mobile-form-group">
+                          <label className="mobile-label">Ravelling</label>
+                          <select value={sealedC2Ravelling} onChange={(e) => setSealedC2Ravelling(e.target.value)} className="mobile-select">
+                            <option value="none">None</option>
+                            <option value="minor">Minor</option>
+                            <option value="major">Major</option>
+                          </select>
+                        </div>
+                        <div className="mobile-form-group">
+                          <label className="mobile-label">Riding Quality</label>
+                          <SelectWithOther value={sealedC2RidingQuality} onChange={setSealedC2RidingQuality} options={CONDITION_GFPM_CONSTRUCTION} includeOther={false} />
+                        </div>
+                      </div>
+                    </fieldset>
+                  </>
+                )}
+
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                   <div className="mobile-form-group">
-                    <label className="mobile-label">Road markings</label>
+                    <label className="mobile-label">Road Markings</label>
                     <select value={sealedRoadMarkings} onChange={(e) => setSealedRoadMarkings(e.target.value)} className="mobile-select">
-                      <option value="yes">Yes</option>
-                      <option value="no">No</option>
+                      {YES_NO_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
                     </select>
                   </div>
+                  {sealedRoadMarkings === "yes" && (
+                    <div className="mobile-form-group">
+                      <label className="mobile-label">Markings Visible</label>
+                      <select value={sealedRoadMarkingsVisible} onChange={(e) => setSealedRoadMarkingsVisible(e.target.value)} className="mobile-select">
+                        {YES_NO_OPTIONS.map((o) => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                   <div className="mobile-form-group">
-                    <label className="mobile-label">Road studs</label>
+                    <label className="mobile-label">Road Studs</label>
                     <select value={sealedRoadStuds} onChange={(e) => setSealedRoadStuds(e.target.value)} className="mobile-select">
-                      <option value="yes">Yes</option>
-                      <option value="no">No</option>
+                      {YES_NO_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
                     </select>
                   </div>
                 </div>
@@ -3335,43 +4113,14 @@ export default function App() {
                     <label className="mobile-label">Passability</label>
                     <select value={sealedPassability} onChange={(e) => setSealedPassability(e.target.value)} className="mobile-select">
                       <option value="all_year_round">All year round</option>
-                      <option value="dry_season_only">Dry season only</option>
-                      <option value="wet_season_only">Wet Season only</option>
+                      <option value="dry_season_only">Dry season</option>
                       <option value="rupture">Rupture</option>
                       <option value="under_construction">Under construction / rehabilitation (detour)</option>
                     </select>
                   </div>
                   <div className="mobile-form-group">
-                    <label className="mobile-label">Grid</label>
-                    <SelectWithOther
-                      value={sealedGrid}
-                      onChange={setSealedGrid}
-                      options={CONDITION_GFPM}
-                      includeOther={false}
-                    />
-                  </div>
-                </div>
-
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                  <div className="mobile-form-group">
                     <label className="mobile-label">Year Sealed</label>
-                    <input
-                      type="number"
-                      placeholder="e.g. 2015"
-                      value={sealedYearConstructed}
-                      onChange={(e) => setSealedYearConstructed(e.target.value)}
-                      className="mobile-input"
-                    />
-                  </div>
-                  <div className="mobile-form-group">
-                    <label className="mobile-label" style={{ color: "var(--text-accent)" }}>Riding Quality</label>
-                    <SelectWithOther
-                      value={sealedRidingQuality}
-                      onChange={setSealedRidingQuality}
-                      options={CONDITION_GFPM_CONSTRUCTION}
-                      includeOther={false}
-                      style={{ borderColor: "var(--accent-emerald)" }}
-                    />
+                    <input type="number" placeholder="e.g. 2015" value={sealedYearConstructed} onChange={(e) => setSealedYearConstructed(e.target.value)} className="mobile-input" />
                   </div>
                 </div>
               </fieldset>
@@ -3383,40 +4132,12 @@ export default function App() {
                 <legend style={{ fontSize: "10px", fontWeight: "700", textTransform: "uppercase", color: "var(--text-accent)", padding: "0 6px" }}>Gravel Road Properties</legend>
 
                 <div className="mobile-form-group">
-                  <label className="mobile-label">Gravel Road Name</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Delport Gravel Road"
-                    value={gravelName}
-                    onChange={(e) => setGravelName(e.target.value)}
-                    className="mobile-input"
-                  />
-                </div>
-
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                  <div className="mobile-form-group">
-                    <label className="mobile-label">Route Number</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Route 3"
-                      value={gravelRoute}
-                      onChange={(e) => setGravelRoute(e.target.value)}
-                      className="mobile-input"
-                    />
-                  </div>
-                  <div className="mobile-form-group">
-                    <label className="mobile-label">Road Class</label>
-                    <select value={gravelClass} onChange={(e) => setGravelClass(e.target.value)} className="mobile-select">
-                      <option value="primary">Primary</option>
-                      <option value="secondary">Secondary</option>
-                      <option value="tertiary_feeder">Tertiary Feeder</option>
-                      <option value="tertiary_access">Tertiary Access</option>
-                      <option value="urban_arterial">Urban Arterial</option>
-                      <option value="urban_collector">Urban Collector</option>
-                      <option value="urban_local">Urban Local</option>
-                      <option value="industrial">Industrial</option>
-                    </select>
-                  </div>
+                  <label className="mobile-label">Road Class</label>
+                  <select value={gravelClass} onChange={(e) => setGravelClass(e.target.value)} className="mobile-select">
+                    {SEALED_ROAD_CLASS_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
                 </div>
 
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
@@ -3488,11 +4209,9 @@ export default function App() {
                   <div className="mobile-form-group">
                     <label className="mobile-label">Drainage Type</label>
                     <select value={gravelDrainageType} onChange={(e) => setGravelDrainageType(e.target.value)} className="mobile-select">
-                      <option value="no_drain">No drain</option>
-                      <option value="v_drain">V-drain</option>
-                      <option value="trapezoidal">Trapezoidal</option>
-                      <option value="piped_kerb">Piped Kerb</option>
-                      <option value="fnfc">fnfc</option>
+                      {DRAINAGE_TYPE_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
                     </select>
                   </div>
                   <div className="mobile-form-group">
@@ -3547,11 +4266,57 @@ export default function App() {
 
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                   <div className="mobile-form-group">
+                    <label className="mobile-label">Corrugations Severity</label>
+                    <select value={gravelCorrugationsSeverity} onChange={(e) => setGravelCorrugationsSeverity(e.target.value)} className="mobile-select">
+                      {DEFECT_SEVERITY_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Cross Section Severity</label>
+                    <select value={gravelCrossSectionSeverity} onChange={(e) => setGravelCrossSectionSeverity(e.target.value)} className="mobile-select">
+                      {DEFECT_SEVERITY_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Drainage Condition Severity</label>
+                    <select value={gravelDrainageSeverity} onChange={(e) => setGravelDrainageSeverity(e.target.value)} className="mobile-select">
+                      {DEFECT_SEVERITY_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Potholes Severity</label>
+                    <select value={gravelPotholesSeverity} onChange={(e) => setGravelPotholesSeverity(e.target.value)} className="mobile-select">
+                      {DEFECT_SEVERITY_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="mobile-form-group">
+                  <label className="mobile-label">Riding Quality Severity</label>
+                  <select value={gravelRidingSeverity} onChange={(e) => setGravelRidingSeverity(e.target.value)} className="mobile-select">
+                    {DEFECT_SEVERITY_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                  <div className="mobile-form-group">
                     <label className="mobile-label">Passability</label>
                     <select value={gravelPassability} onChange={(e) => setGravelPassability(e.target.value)} className="mobile-select">
                       <option value="all_year_round">All year round</option>
-                      <option value="dry_season_only">Dry season only</option>
-                      <option value="wet_season_only">Wet Season only</option>
+                      <option value="dry_season_only">Dry season</option>
                       <option value="rupture">Rupture</option>
                       <option value="under_construction">Under construction / rehabilitation (detour)</option>
                     </select>
@@ -3585,10 +4350,6 @@ export default function App() {
             {assetCategory === "earth" && segmentGeometry && (
               <fieldset style={{ border: "1px solid var(--border-color)", padding: "12px", borderRadius: "var(--radius-md)", display: "flex", flexDirection: "column", gap: "10px" }}>
                 <legend style={{ fontSize: "10px", fontWeight: "700", textTransform: "uppercase", color: "var(--text-accent)", padding: "0 6px" }}>Earth Road Properties</legend>
-                <div className="mobile-form-group">
-                  <label className="mobile-label">Earth Road Name</label>
-                  <input type="text" placeholder="e.g. Chivake - Mupfure Earth Road" value={earthName} onChange={(e) => setEarthName(e.target.value)} className="mobile-input" />
-                </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                   <div className="mobile-form-group">
                     <label className="mobile-label">Road Class</label>
@@ -3641,9 +4402,9 @@ export default function App() {
                   <div className="mobile-form-group">
                     <label className="mobile-label">Drainage Type</label>
                     <select value={earthDrainageType} onChange={(e) => setEarthDrainageType(e.target.value)} className="mobile-select">
-                      <option value="no_drain">No drain</option>
-                      <option value="v_drain">V-drain</option>
-                      <option value="trapezoidal">Trapezoidal</option>
+                      {DRAINAGE_TYPE_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
                     </select>
                   </div>
                   <div className="mobile-form-group">
@@ -3660,7 +4421,7 @@ export default function App() {
                     <label className="mobile-label">Passability</label>
                     <select value={earthPassability} onChange={(e) => setEarthPassability(e.target.value)} className="mobile-select">
                       <option value="all_year_round">All Year Round</option>
-                      <option value="dry_season_only">Dry Season Only</option>
+                      <option value="dry_season_only">Dry season</option>
                       <option value="rupture">Rupture</option>
                       <option value="under_construction">Under construction / rehabilitation (detour)</option>
                     </select>
@@ -3679,6 +4440,41 @@ export default function App() {
                     includeOther={false}
                     style={{ borderColor: "var(--accent-emerald)" }}
                   />
+                </div>
+              </fieldset>
+            )}
+
+            {/* Conditional Form: Catchpit */}
+            {assetCategory === "catchpit" && (
+              <fieldset style={{ border: "1px solid var(--border-color)", padding: "12px", borderRadius: "var(--radius-md)", display: "flex", flexDirection: "column", gap: "10px" }}>
+                <legend style={{ fontSize: "10px", fontWeight: "700", textTransform: "uppercase", color: "var(--text-accent)", padding: "0 6px" }}>Catchpit Properties</legend>
+                <div className="mobile-form-group">
+                  <label className="mobile-label">Catchpit Condition</label>
+                  <select value={catchpitCondition} onChange={(e) => setCatchpitCondition(e.target.value)} className="mobile-select">
+                    <option value="good">Good</option>
+                    <option value="fair">Fair</option>
+                    <option value="poor">Poor</option>
+                    <option value="blocked">Blocked</option>
+                  </select>
+                </div>
+              </fieldset>
+            )}
+
+            {/* Conditional Form: Traffic Calming */}
+            {assetCategory === "traffic_calming" && (
+              <fieldset style={{ border: "1px solid var(--border-color)", padding: "12px", borderRadius: "var(--radius-md)", display: "flex", flexDirection: "column", gap: "10px" }}>
+                <legend style={{ fontSize: "10px", fontWeight: "700", textTransform: "uppercase", color: "var(--text-accent)", padding: "0 6px" }}>Traffic Calming Properties</legend>
+                <div className="mobile-form-group">
+                  <label className="mobile-label">Type</label>
+                  <SelectWithOther value={trafficCalmingType} onChange={setTrafficCalmingType} options={TRAFFIC_CALMING_TYPES} />
+                </div>
+                <div className="mobile-form-group">
+                  <label className="mobile-label">Condition</label>
+                  <select value={trafficCalmingCondition} onChange={(e) => setTrafficCalmingCondition(e.target.value)} className="mobile-select">
+                    <option value="good">Good</option>
+                    <option value="fair">Fair</option>
+                    <option value="poor">Poor</option>
+                  </select>
                 </div>
               </fieldset>
             )}
@@ -3770,9 +4566,9 @@ export default function App() {
                   <div className="mobile-form-group">
                     <label className="mobile-label">Road Class</label>
                     <select value={railCrossingRoadClass} onChange={(e) => setRailCrossingRoadClass(e.target.value)} className="mobile-select">
-                      <option value="primary">Primary</option>
-                      <option value="secondary">Secondary</option>
-                      <option value="tertiary_feeder">Tertiary Feeder</option>
+                      {ROAD_CLASS_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
                     </select>
                   </div>
                   <div className="mobile-form-group">
@@ -3807,6 +4603,24 @@ export default function App() {
                   <div className="mobile-form-group">
                     <label className="mobile-label">No. of Lanes</label>
                     <input type="number" min="1" placeholder="e.g. 4" value={tollgateLanes} onChange={(e) => setTollgateLanes(e.target.value)} className="mobile-input" />
+                  </div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Dualisation</label>
+                    <select value={tollgateDualisation} onChange={(e) => setTollgateDualisation(e.target.value)} className="mobile-select">
+                      <option value="yes">Yes</option>
+                      <option value="no">No</option>
+                    </select>
+                  </div>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Servitude Vegetation</label>
+                    <select value={tollgateVegetation} onChange={(e) => setTollgateVegetation(e.target.value)} className="mobile-select">
+                      <option value="none">None</option>
+                      <option value="light">Light</option>
+                      <option value="medium">Medium</option>
+                      <option value="dense">Dense</option>
+                    </select>
                   </div>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
@@ -3851,6 +4665,29 @@ export default function App() {
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                   <div className="mobile-form-group">
+                    <label className="mobile-label">Width (m)</label>
+                    <input type="number" step="any" placeholder="e.g. 4.0" value={laybyWidth} onChange={(e) => setLaybyWidth(e.target.value)} className="mobile-input" />
+                  </div>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Street furniture condition</label>
+                    <select value={laybyFurniture} onChange={(e) => setLaybyFurniture(e.target.value)} className="mobile-select">
+                      <option value="good">Good</option>
+                      <option value="fair">Fair</option>
+                      <option value="poor">Poor</option>
+                      <option value="none">None</option>
+                    </select>
+                  </div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Refuse bin</label>
+                    <select value={laybyRefuseBin} onChange={(e) => setLaybyRefuseBin(e.target.value)} className="mobile-select">
+                      <option value="yes">Yes</option>
+                      <option value="no">No</option>
+                      <option value="damaged">Damaged</option>
+                    </select>
+                  </div>
+                  <div className="mobile-form-group">
                     <label className="mobile-label">Drainage</label>
                     <select value={laybyDrainage} onChange={(e) => setLaybyDrainage(e.target.value)} className="mobile-select">
                       <option value="good">Good</option>
@@ -3894,6 +4731,24 @@ export default function App() {
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                   <div className="mobile-form-group">
+                    <label className="mobile-label">Furniture condition</label>
+                    <select value={busstopFurnitureCondition} onChange={(e) => setBusstopFurnitureCondition(e.target.value)} className="mobile-select">
+                      <option value="good">Good</option>
+                      <option value="fair">Fair</option>
+                      <option value="poor">Poor</option>
+                    </select>
+                  </div>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Refuse bin</label>
+                    <select value={busstopRefuseBin} onChange={(e) => setBusstopRefuseBin(e.target.value)} className="mobile-select">
+                      <option value="yes">Yes</option>
+                      <option value="no">No</option>
+                      <option value="damaged">Damaged</option>
+                    </select>
+                  </div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                  <div className="mobile-form-group">
                     <label className="mobile-label">Drainage</label>
                     <select value={busstopDrainage} onChange={(e) => setBusstopDrainage(e.target.value)} className="mobile-select">
                       <option value="good">Good</option>
@@ -3922,6 +4777,7 @@ export default function App() {
                     <label className="mobile-label">Junction Type</label>
                     <select value={junctionType} onChange={(e) => setJunctionType(e.target.value)} className="mobile-select">
                       <option value="t_junction">T-Junction</option>
+                      <option value="y_junction">Y-Junction</option>
                       <option value="crossroads">Crossroads</option>
                       <option value="roundabout">Roundabout</option>
                       <option value="interchange">Interchange</option>
@@ -3947,11 +4803,11 @@ export default function App() {
                     </select>
                   </div>
                   <div className="mobile-form-group">
-                    <label className="mobile-label">Signage Present</label>
+                    <label className="mobile-label">Signage Condition</label>
                     <select value={junctionSignage} onChange={(e) => setJunctionSignage(e.target.value)} className="mobile-select">
-                      <option value="yes">Yes</option>
-                      <option value="partial">Partial</option>
-                      <option value="no">No</option>
+                      {CONDITION_GFP.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
                     </select>
                   </div>
                 </div>
@@ -3970,13 +4826,17 @@ export default function App() {
             {assetCategory === "sign" && (
               <fieldset style={{ border: "1px solid var(--border-color)", padding: "12px", borderRadius: "var(--radius-md)", display: "flex", flexDirection: "column", gap: "10px" }}>
                 <legend style={{ fontSize: "10px", fontWeight: "700", textTransform: "uppercase", color: "var(--text-accent)", padding: "0 6px" }}>Road Sign Properties</legend>
+                <div className="mobile-form-group">
+                  <label className="mobile-label">Sign Name</label>
+                  <input type="text" placeholder="e.g. Speed Limit 80" value={signName} onChange={(e) => setSignName(e.target.value)} className="mobile-input" />
+                </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                   <div className="mobile-form-group">
                     <label className="mobile-label">Sign Type</label>
                     <select value={signType} onChange={(e) => setSignType(e.target.value)} className="mobile-select">
                       <option value="warning">Warning</option>
                       <option value="regulatory">Regulatory</option>
-                      <option value="informatory">Informatory</option>
+                      <option value="informatory">Informative</option>
                       <option value="direction">Direction</option>
                       <option value="speed_limit">Speed Limit</option>
                     </select>
@@ -3993,9 +4853,14 @@ export default function App() {
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                   <div className="mobile-form-group">
                     <label className="mobile-label">SADC Compliant</label>
-                    <select value={signSadcCompliant} onChange={(e) => setSignSadcCompliant(e.target.value)} className="mobile-select">
+                    <select
+                      value={signSadcCompliant}
+                      onChange={(e) => setSignSadcCompliant(e.target.value as "yes" | "no" | "mixed")}
+                      className="mobile-select"
+                    >
                       <option value="yes">Yes</option>
                       <option value="no">No</option>
+                      <option value="mixed">Mixed</option>
                     </select>
                   </div>
                   <div className="mobile-form-group">
@@ -4021,6 +4886,38 @@ export default function App() {
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                   <div className="mobile-form-group">
+                    <label className="mobile-label">Causeway type</label>
+                    <select value={causewayType} onChange={(e) => setCausewayType(e.target.value)} className="mobile-select">
+                      <option value="boxed">Boxed</option>
+                      <option value="piped">Piped</option>
+                    </select>
+                  </div>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Condition</label>
+                    <select value={causewayCondition} onChange={(e) => setCausewayCondition(e.target.value)} className="mobile-select">
+                      <option value="good">Good</option>
+                      <option value="fair">Fair</option>
+                      <option value="poor">Poor</option>
+                    </select>
+                  </div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px" }}>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Length (m)</label>
+                    <input type="number" step="any" placeholder="e.g. 12" value={causewayLength} onChange={(e) => setCausewayLength(e.target.value)} className="mobile-input" />
+                  </div>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Number of openings</label>
+                    <input type="number" min="1" placeholder="e.g. 2" value={causewayOpenings} onChange={(e) => setCausewayOpenings(e.target.value)} className="mobile-input" />
+                  </div>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Box size (m²)</label>
+                    <input type="number" step="any" placeholder={causewayType === "boxed" ? "e.g. 1.2" : "N/A for piped"} value={causewayBoxSize} onChange={(e) => setCausewayBoxSize(e.target.value)} className="mobile-input" disabled={causewayType !== "boxed"} />
+                  </div>
+                </div>
+                {causewayType === "piped" && (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                  <div className="mobile-form-group">
                     <label className="mobile-label">Pipe Material</label>
                     <select value={causewayPipeMaterial} onChange={(e) => setCausewayPipeMaterial(e.target.value)} className="mobile-select">
                       <option value="concrete">Concrete</option>
@@ -4038,6 +4935,7 @@ export default function App() {
                     </select>
                   </div>
                 </div>
+                )}
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                   <div className="mobile-form-group">
                     <label className="mobile-label">Drainage</label>
@@ -4070,12 +4968,27 @@ export default function App() {
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                   <div className="mobile-form-group">
+                    <label className="mobile-label">Drift type</label>
+                    <select value={driftType} onChange={(e) => setDriftType(e.target.value)} className="mobile-select">
+                      <option value="concrete">Concrete</option>
+                      <option value="masonry">Masonry</option>
+                      <option value="earth">Earth</option>
+                      <option value="rock">Rock</option>
+                    </select>
+                  </div>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Length (m)</label>
+                    <input type="number" step="any" placeholder="e.g. 8.0" value={driftLength} onChange={(e) => setDriftLength(e.target.value)} className="mobile-input" />
+                  </div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                  <div className="mobile-form-group">
                     <label className="mobile-label">Surface Type</label>
                     <select value={driftSurface} onChange={(e) => setDriftSurface(e.target.value)} className="mobile-select">
                       <option value="concrete">Concrete</option>
                       <option value="masonry">Masonry</option>
                       <option value="earth">Earth</option>
-                      <option value="natural">Natural Rock</option>
+                      <option value="rock">Rock</option>
                     </select>
                   </div>
                   <div className="mobile-form-group">
@@ -4130,6 +5043,25 @@ export default function App() {
                     </select>
                   </div>
                 </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Serviceability</label>
+                    <select value={gridServiceability} onChange={(e) => setGridServiceability(e.target.value)} className="mobile-select">
+                      <option value="good">Good</option>
+                      <option value="fair">Fair</option>
+                      <option value="poor">Poor</option>
+                      <option value="failed">Failed</option>
+                    </select>
+                  </div>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Passability</label>
+                    <select value={gridPassability} onChange={(e) => setGridPassability(e.target.value)} className="mobile-select">
+                      <option value="all_year_round">All Year Round</option>
+                      <option value="dry_season_only">Dry Season Only</option>
+                      <option value="seasonal">Seasonal</option>
+                    </select>
+                  </div>
+                </div>
                 <div className="mobile-form-group">
                   <label className="mobile-label" style={{ color: "var(--text-accent)" }}>Grid Condition</label>
                   <select value={gridCondition} onChange={(e) => setGridCondition(e.target.value)} className="mobile-select" style={{ borderColor: "var(--accent-emerald)" }}>
@@ -4154,17 +5086,25 @@ export default function App() {
                     <label className="mobile-label">Signal Type</label>
                     <select value={trafficLightsType} onChange={(e) => setTrafficLightsType(e.target.value)} className="mobile-select">
                       <option value="standard">Standard LED</option>
-                      <option value="solar">Solar Powered</option>
                       <option value="pedestrian">Pedestrian Signal</option>
                       <option value="flashing">Flashing Amber</option>
                     </select>
                   </div>
                   <div className="mobile-form-group">
-                    <label className="mobile-label">No. of Phases</label>
+                    <label className="mobile-label">No. of Phases (max 6)</label>
                     <input type="number" min="2" max="6" placeholder="e.g. 3" value={trafficLightsPhases} onChange={(e) => setTrafficLightsPhases(e.target.value)} className="mobile-input" />
                   </div>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Power source</label>
+                    <select value={trafficLightsPowerSource} onChange={(e) => setTrafficLightsPowerSource(e.target.value)} className="mobile-select">
+                      <option value="grid">Grid</option>
+                      <option value="solar">Solar</option>
+                      <option value="generator">Generator</option>
+                      <option value="hybrid">Hybrid</option>
+                    </select>
+                  </div>
                   <div className="mobile-form-group">
                     <label className="mobile-label">Operational</label>
                     <select value={trafficLightsOperational} onChange={(e) => setTrafficLightsOperational(e.target.value)} className="mobile-select">
@@ -4218,7 +5158,7 @@ export default function App() {
                     </select>
                   </div>
                   <div className="mobile-form-group">
-                    <label className="mobile-label">No. of Streetlights</label>
+                    <label className="mobile-label">Number of lamps</label>
                     <input type="number" min="1" placeholder="e.g. 12" value={streetlightCount} onChange={(e) => setStreetlightCount(e.target.value)} className="mobile-input" />
                   </div>
                 </div>
@@ -4431,9 +5371,6 @@ export default function App() {
                         <span className="queue-subtitle">
                           {draft.road_name.split(" (")[0]}
                         </span>
-                        <span style={{ fontSize: "9px", color: "var(--text-accent)", marginTop: "2px" }}>
-                          Surveyed on {draft.survey_date}
-                        </span>
                       </div>
                       <div style={{ display: "flex", gap: "6px" }}>
                         <button
@@ -4462,6 +5399,8 @@ export default function App() {
           /* Settings tab content */
           <div className="mobile-settings" style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
             <h2 style={{ fontSize: "14px", fontWeight: "700" }}>System Settings</h2>
+
+            <SurveyProgressPanel drafts={drafts} />
             
             {/* Server Settings Hidden from regular users, unlocked via Dev Mode */}
             {showDevSettings && (
@@ -4624,36 +5563,10 @@ export default function App() {
                 <Info size={14} color="var(--accent-emerald)" />
                 <span style={{ fontWeight: 700, fontSize: "11px", textTransform: "uppercase", color: "var(--text-accent)" }}>Developer Information</span>
               </div>
-              
+
               <div style={{ fontSize: "11px", lineHeight: "1.5", color: "var(--text-primary)" }}>
                 This application was developed by the <strong>Zimbabwe National Geospatial and Space Agency (ZINGSA)</strong>.
               </div>
-
-              <button
-                type="button"
-                onClick={() => window.open("https://wa.me/263773807928", "_blank")}
-                className="mobile-btn"
-                style={{
-                  width: "100%",
-                  height: "38px",
-                  padding: 0,
-                  background: "#25D366", // WhatsApp Official Green
-                  color: "#ffffff",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: "8px",
-                  fontWeight: 700,
-                  border: "none",
-                  borderRadius: "var(--radius-sm)",
-                  cursor: "pointer"
-                }}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.724-1.455L0 24zm6.59-4.846c1.6.95 3.188 1.449 4.825 1.451 5.436 0 9.86-4.37 9.864-9.799.002-2.63-1.023-5.101-2.885-6.965C16.488 1.977 14.03 .953 11.469.953c-5.442 0-9.866 4.372-9.87 9.802 0 1.63.45 3.22 1.302 4.621L1.87 21.325l6.096-1.597zM18.667 15.11c-.347-.171-2.046-1.002-2.364-1.117-.317-.115-.549-.171-.78.171-.23.343-.89 1.117-1.091 1.346-.202.228-.405.257-.752.086-2.023-1.004-3.327-2.37-4.664-4.646-.35-.597.35-.554 1.003-1.848.1-.2.05-.375-.025-.547-.075-.171-.78-1.868-1.068-2.559-.28-.674-.564-.582-.78-.593-.2-.01-.43-.012-.662-.012-.23 0-.606.086-.924.429-.317.343-1.214 1.173-1.214 2.862 0 1.688 1.242 3.322 1.415 3.55 1.73 2.247 3.3 3.447 5.228 4.195.952.37 1.848.423 2.535.32 1.096-.164 2.364-.954 2.696-1.876.33-.923.33-1.714.23-1.876-.1-.162-.367-.257-.714-.428z"/>
-                </svg>
-                <span>Contact Developer Support</span>
-              </button>
             </div>
           </div>
         )}

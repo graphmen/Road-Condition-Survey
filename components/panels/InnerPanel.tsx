@@ -581,7 +581,9 @@ export default function InnerPanel({ module, records, selectedRecord, onSelectRe
             </div>
             <p style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.45, marginBottom: 12 }}>
               Share this download link with field collectors to install the offline-ready Android APK surveyor application.
+              You can also preview the collector forms in your browser before installing.
             </p>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             <a
               href="/download"
               target="_blank"
@@ -601,6 +603,27 @@ export default function InnerPanel({ module, records, selectedRecord, onSelectRe
             >
               <ExternalLink size={13} /> Open Download Page
             </a>
+            <a
+              href="/collector"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                background: "rgba(0,102,51,0.08)",
+                color: "#006633",
+                textDecoration: "none",
+                borderRadius: 8,
+                padding: "8px 14px",
+                fontSize: 11.5,
+                fontWeight: 700,
+                border: "1px solid rgba(0,102,51,0.2)",
+              }}
+            >
+              <Smartphone size={13} /> Preview in Browser
+            </a>
+            </div>
           </div>
 
         </div>
@@ -635,6 +658,8 @@ export default function InnerPanel({ module, records, selectedRecord, onSelectRe
             <option value="piped_causeway">Piped Causeways</option>
             <option value="shelvet">Shelverts</option>
             <option value="grid">Cattle Grids</option>
+            <option value="catchpit">Catchpits</option>
+            <option value="traffic_calming">Traffic Calming</option>
             <option value="layby">Laybys</option>
             <option value="busstop">Bus Stops</option>
             <option value="junction">Junctions</option>

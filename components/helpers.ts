@@ -190,7 +190,22 @@ export function normalizePhotos(r: any): string[] {
   const addPhoto = (item: any) => {
     if (!item) return;
     if (typeof item === "string" && item.trim().length > 0) {
-      photos.push(item.trim());
+      const s = item.trim();
+      // Postgres JSONB occasionally arrives as a stringified array
+      if (s.startsWith("[") && s.endsWith("]")) {
+        try {
+          const parsed = JSON.parse(s);
+          if (Array.isArray(parsed)) {
+            parsed.forEach(addPhoto);
+            return;
+          }
+        } catch {
+          /* keep as single URL/data URL */
+        }
+      }
+      photos.push(s);
+    } else if (Array.isArray(item)) {
+      item.forEach(addPhoto);
     } else if (typeof item === "object") {
       const url = item.download_url || item.url || item.path || item.filename;
       if (typeof url === "string" && url.trim().length > 0) {
@@ -199,31 +214,38 @@ export function normalizePhotos(r: any): string[] {
     }
   };
 
-  // 1. Direct photo fields
-  if (Array.isArray(r.photos)) r.photos.forEach(addPhoto);
-  else addPhoto(r.photos);
-
+  // Dedicated multi-photo column (Supabase JSONB)
+  addPhoto(r.photos);
+  addPhoto(r._allPhotos);
   addPhoto(r.photo);
   addPhoto(r.image);
   if (Array.isArray(r.images)) r.images.forEach(addPhoto);
 
-  // 2. Raw data fields
   const raw = r.raw_data;
   if (raw && typeof raw === "object") {
-    if (Array.isArray(raw.photos)) raw.photos.forEach(addPhoto);
-    else addPhoto(raw.photos);
-
+    addPhoto(raw.photos);
     addPhoto(raw.photo);
     addPhoto(raw.image);
     if (Array.isArray(raw.images)) raw.images.forEach(addPhoto);
-
-    if (Array.isArray(raw._attachments)) {
-      raw._attachments.forEach(addPhoto);
-    }
+    if (Array.isArray(raw._attachments)) raw._attachments.forEach(addPhoto);
   }
 
-  // Deduplicate and return ONLY authentic photos captured for this specific record during field survey data collection
   return Array.from(new Set(photos));
+}
+
+/** Merge multiple photo lists (deduped, stable order). */
+export function mergePhotoLists(...lists: (string[] | undefined | null)[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const list of lists) {
+    if (!list) continue;
+    for (const p of list) {
+      if (!p || seen.has(p)) continue;
+      seen.add(p);
+      out.push(p);
+    }
+  }
+  return out;
 }
 
 export function getSadcValue(r: any): "yes" | "no" | "mixed" | "" {
@@ -240,6 +262,9 @@ export function getSadcValue(r: any): "yes" | "no" | "mixed" | "" {
 
 export function getRecordStatus(record: any): RecordStatus {
   if (!record) return "good";
+
+  if (record.catchpit_condition) return normalizeConditionValue(record.catchpit_condition);
+  if (record.traffic_calming_condition) return normalizeConditionValue(record.traffic_calming_condition);
 
   if (record.bridge_condition) return normalizeConditionValue(record.bridge_condition);
   if (record.footbridge_condition) return normalizeConditionValue(record.footbridge_condition);
@@ -306,6 +331,8 @@ export function getAssetType(record: any): string {
       piped_causeway: "Piped Causeway",
       drift: "Drift",
       grid: "Grid",
+      catchpit: "Catchpit",
+      traffic_calming: "Traffic Calming",
       traffic_lights: "Traffic Lights",
       streetlight: "Streetlight",
     };
@@ -403,6 +430,14 @@ export function getAssetName(record: any): string {
       const jt = pick("junction_type");
       return jt ? `Junction (${titleCase(jt)})` : roadBit ? `${roadBit} Junction` : "Junction";
     }
+    case "grid":
+      return grid || (roadBit ? `${roadBit} Grid` : "Grid");
+    case "catchpit":
+      return roadBit ? `${roadBit} Catchpit` : "Catchpit";
+    case "traffic_calming": {
+      const t = pick("traffic_calming_type");
+      return t ? `Traffic Calming (${titleCase(t)})` : roadBit ? `${roadBit} Traffic Calming` : "Traffic Calming";
+    }
     case "sign": {
       const st = pick("sign_type");
       if (signName) return signName;
@@ -421,8 +456,6 @@ export function getAssetName(record: any): string {
       return causeway || (roadBit ? `${roadBit} Piped Causeway` : "Piped Causeway");
     case "drift":
       return drift || (roadBit ? `${roadBit} Drift` : "Drift");
-    case "grid":
-      return grid || (roadBit ? `${roadBit} Grid` : "Cattle Grid");
     case "traffic_lights":
       return lights || (roadBit ? `${roadBit} Traffic Lights` : "Traffic Lights");
     case "streetlight": {
@@ -483,6 +516,8 @@ export function getCategoryKey(record: any): string {
   if (type === "Piped Causeway") return "piped_causeway";
   if (type === "Drift") return "drift";
   if (type === "Grid") return "grid";
+  if (type === "Catchpit") return "catchpit";
+  if (type === "Traffic Calming") return "traffic_calming";
   if (type === "Traffic Lights") return "traffic_lights";
   if (type === "Streetlight" || type === "Street Light") return "streetlight";
   return "unknown";

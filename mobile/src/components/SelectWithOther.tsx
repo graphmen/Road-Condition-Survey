@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 
-type Option = { value: string; label: string };
+export type Option = { value: string; label: string };
 
 type Props = {
   value: string;

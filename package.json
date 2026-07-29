@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "publish:apk": "powershell -ExecutionPolicy Bypass -File scripts/publish-apk.ps1"
+    "publish:apk": "powershell -ExecutionPolicy Bypass -File scripts/publish-apk.ps1",
+    "build:collector": "npm run build --prefix mobile && powershell -ExecutionPolicy Bypass -File scripts/build-collector.ps1",
+    "dev:mobile": "npm run dev --prefix mobile"
   },
   "dependencies": {
     "framer-motion": "^11.2.10",

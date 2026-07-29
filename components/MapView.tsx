@@ -184,6 +184,8 @@ const INITIAL_VISIBLE_PARAMS: Record<string, boolean> = {
   piped_causeway: true,
   drift: true,
   grid: true,
+  catchpit: true,
+  traffic_calming: true,
   traffic_lights: true,
   streetlight: true,
   unknown: true,
@@ -214,7 +216,8 @@ const PARAMETER_GROUPS = [
       { key: "culvert", label: "Culverts", emoji: "🕳️" },
       { key: "piped_causeway", label: "Piped Causeways", emoji: "🌁" },
       { key: "shelvet", label: "Shelverts", emoji: "🧱" },
-      { key: "grid", label: "Cattle Grids", emoji: "🐄" }
+      { key: "grid", label: "Cattle Grids", emoji: "🐄" },
+      { key: "catchpit", label: "Catchpits", emoji: "🕳️" }
     ]
   },
   {
@@ -229,6 +232,7 @@ const PARAMETER_GROUPS = [
     label: "Traffic & Lighting",
     items: [
       { key: "sign", label: "Road Signs", emoji: "⚠️" },
+      { key: "traffic_calming", label: "Traffic Calming", emoji: "🛑" },
       { key: "traffic_lights", label: "Traffic Lights", emoji: "🚦" },
       { key: "streetlight", label: "Streetlights", emoji: "💡" }
     ]

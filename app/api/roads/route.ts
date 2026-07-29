@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import roadsData from "@/public/roads-data.json";
+import { mergePhotoLists, normalizePhotos } from "@/components/helpers";
 import fs from "fs";
 import path from "path";
 
@@ -300,11 +301,14 @@ function normaliseRecord(record: any) {
     }
   }
 
-  // Ensure photo and photos array are normalized on output
-  if (!out.photos || !Array.isArray(out.photos) || out.photos.length === 0) {
-    if (out.photo) {
-      out.photos = [out.photo];
-    }
+  // Normalize multi-photo fields from every source (column, raw_data, legacy)
+  const allPhotos = normalizePhotos(out);
+  if (allPhotos.length > 0) {
+    out.photos = allPhotos;
+    out.photo = allPhotos[0];
+    out._allPhotos = allPhotos;
+  } else if (out.photo && (!out.photos || out.photos.length === 0)) {
+    out.photos = [out.photo];
   }
 
   return out;
@@ -545,6 +549,8 @@ function inferAssetCategory(record: any): string {
   if (record.causeway_name) return "piped_causeway";
   if (record.drift_name || record.drift_condition) return "drift";
   if (record.grid_name || record.grid_condition) return "grid";
+  if (record.catchpit_condition) return "catchpit";
+  if (record.traffic_calming_type || record.traffic_calming_condition) return "traffic_calming";
   if (record.traffic_lights_location || record.traffic_lights_condition) return "traffic_lights";
   if (record.streetlight_type || record.streetlight_condition || record.Status_001) return "streetlight";
   if (record.gravel_road_name || record.gravel_condition) return "gravel";
@@ -557,6 +563,22 @@ const SUPABASE_URL = "https://kchmhpwmyubesocdssga.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_XVL14JBx0YdcbqXlUEsN7w_8xhPeA4W";
 const FIREBASE_PROJECT = "road-condition-survey";
 const FIREBASE_DB = "road-condition-survey";
+
+/** Build photo column + slim raw_data (photos live in `photos`, not duplicated in raw_data). */
+function buildPhotoPayload(draft: any): { photo: string | null; photos: string[]; raw_data: any } {
+  const photos = normalizePhotos(draft);
+  const raw_data =
+    draft && typeof draft === "object"
+      ? Object.fromEntries(
+          Object.entries(draft).filter(([k]) => k !== "photo" && k !== "photos")
+        )
+      : draft;
+  return {
+    photo: photos[0] || null,
+    photos,
+    raw_data,
+  };
+}
 
 const categoryToTable: Record<string, string> = {
   sealed: "survey_sealed_roads",
@@ -575,11 +597,14 @@ const categoryToTable: Record<string, string> = {
   piped_causeway: "survey_piped_causeways",
   drift: "survey_drifts",
   grid: "survey_grids",
+  catchpit: "survey_catchpits",
+  traffic_calming: "survey_traffic_calming",
   traffic_lights: "survey_traffic_lights",
   streetlight: "survey_streetlights"
 };
 
 const mapDraftToSupabaseTable = (draft: any, tableName: string) => {
+  const photoPayload = buildPhotoPayload(draft);
   const row: any = {
     survey_id:            draft.id || draft._id,
     asset_category:       draft.asset_category || Object.keys(categoryToTable).find(k => categoryToTable[k] === tableName) || null,
@@ -587,10 +612,11 @@ const mapDraftToSupabaseTable = (draft: any, tableName: string) => {
     section_name:         draft.section_name || null,
     surveyor_name:        draft.surveyor_name || null,
     survey_date:          draft.survey_date || null,
-    gps_point:            draft.gps || null,
+    gps_point:            draft.gps || draft.gps_point || null,
     image_sadc_compliant: draft.image_SADC_compliant || draft.image_sadc_compliant || "yes",
-    photo:                draft.photo || (Array.isArray(draft.photos) && draft.photos[0]) || null,
-    raw_data:             draft,
+    photo:                photoPayload.photo,
+    photos:               photoPayload.photos.length > 0 ? photoPayload.photos : null,
+    raw_data:             photoPayload.raw_data,
     source:               draft.source || "dashboard"
   };
 
@@ -646,6 +672,32 @@ const mapDraftToSupabaseTable = (draft: any, tableName: string) => {
     row.grid = draft.grid || draft.Grid || null;
     row.year_constructed_to_sealed_standard = draft.year_constructed_to_sealed_standard !== undefined ? Number(draft.year_constructed_to_sealed_standard) : (draft.Year_constructed_to_sealed_standard !== undefined ? Number(draft.Year_constructed_to_sealed_standard) : null);
     row.last_surface_year = draft.last_surface_year !== undefined ? Number(draft.last_surface_year) : (draft.Last_surface_year !== undefined ? Number(draft.Last_surface_year) : null);
+    row.surface_type = draft.surface_type || draft.Surface_type || null;
+    row.pothole_density = draft.pothole_density || draft.Pothole_density || null;
+    row.cycle_track = draft.cycle_track || draft.Cycle_track || null;
+    row.survey_side = draft.survey_side || draft.Survey_side || null;
+    row.survey_direction = draft.survey_direction || draft.Survey_direction || null;
+    row.drainage_lining = draft.drainage_lining || draft.Drainage_lining || null;
+    row.road_markings_visible = draft.road_markings_visible || draft.Road_markings_visible || null;
+    row.median_type = draft.median_type || draft.Median_type || null;
+    row.carriage1_narrow_cracks = draft.carriage1_narrow_cracks || draft.Carriage1_Narrow_cracks || null;
+    row.carriage1_wide_cracks = draft.carriage1_wide_cracks || draft.Carriage1_Wide_cracks || null;
+    row.carriage1_pothole_patches = draft.carriage1_pothole_patches || draft.Carriage1_Pothole_patches || null;
+    row.carriage1_rutting = draft.carriage1_rutting || draft.Carriage1_Rutting || null;
+    row.carriage1_edge_breaks = draft.carriage1_edge_breaks || draft.Carriage1_Edge_breaks || null;
+    row.carriage1_edge_drop = draft.carriage1_edge_drop || draft.Carriage1_Edge_drop || null;
+    row.carriage1_ravelling = draft.carriage1_ravelling || draft.Carriage1_Ravelling || null;
+    row.carriage1_riding_quality = draft.carriage1_riding_quality || draft.Carriage1_Riding_quality || null;
+    row.carriage2_narrow_cracks = draft.carriage2_narrow_cracks || draft.Carriage2_Narrow_cracks || null;
+    row.carriage2_wide_cracks = draft.carriage2_wide_cracks || draft.Carriage2_Wide_cracks || null;
+    row.carriage2_pothole_patches = draft.carriage2_pothole_patches || draft.Carriage2_Pothole_patches || null;
+    row.carriage2_rutting = draft.carriage2_rutting || draft.Carriage2_Rutting || null;
+    row.carriage2_edge_breaks = draft.carriage2_edge_breaks || draft.Carriage2_Edge_breaks || null;
+    row.carriage2_edge_drop = draft.carriage2_edge_drop || draft.Carriage2_Edge_drop || null;
+    row.carriage2_ravelling = draft.carriage2_ravelling || draft.Carriage2_Ravelling || null;
+    row.carriage2_riding_quality = draft.carriage2_riding_quality || draft.Carriage2_Riding_quality || null;
+    if (draft.chainage_from_km !== undefined) row.chainage_from_km_002 = Number(draft.chainage_from_km);
+    if (draft.chainage_to_km !== undefined) row.chainage_to_km_002 = Number(draft.chainage_to_km);
   } else if (tableName === "survey_gravel_roads") {
     row.road_condition = draft.gravel_condition || null;
     row.road_class = draft.gravel_road_class || null;
@@ -679,6 +731,11 @@ const mapDraftToSupabaseTable = (draft: any, tableName: string) => {
     row.age_in_years = draft.age_in_years !== undefined ? Number(draft.age_in_years) : (draft.Age_in_Years !== undefined ? Number(draft.Age_in_Years) : null);
     row.last_year_of_re_gravelling = draft.last_year_of_re_gravelling !== undefined ? Number(draft.last_year_of_re_gravelling) : (draft.Last_year_of_re_gravelling !== undefined ? Number(draft.Last_year_of_re_gravelling) : null);
     row.drainage_condition_raw = draft.drainage_condition_raw || draft.Drainage_condition || null;
+    row.gravel_corrugations_severity = draft.gravel_corrugations_severity || null;
+    row.gravel_cross_section_severity = draft.gravel_cross_section_severity || null;
+    row.gravel_drainage_severity = draft.gravel_drainage_severity || null;
+    row.gravel_potholes_severity = draft.gravel_potholes_severity || null;
+    row.gravel_riding_severity = draft.gravel_riding_severity || null;
   } else if (tableName === "survey_earth_roads") {
     row.road_condition = draft.earth_road_condition || null;
     row.road_class = draft.earth_road_class || null;
@@ -695,6 +752,8 @@ const mapDraftToSupabaseTable = (draft: any, tableName: string) => {
     row.earth_climate = draft.earth_climate || null;
     row.earth_authority = draft.earth_authority || null;
     row.earth_year_constructed = draft.earth_year_constructed !== undefined ? Number(draft.earth_year_constructed) : null;
+    if (draft.chainage_from_km !== undefined) row.chainage_from_km = Number(draft.chainage_from_km);
+    if (draft.chainage_to_km !== undefined) row.chainage_to_km = Number(draft.chainage_to_km);
   } else if (tableName === "survey_bridges") {
     row.bridge = draft.bridge || null;
     row.bridge_crossing = draft.bridge_crossing || null;
@@ -780,6 +839,13 @@ const mapDraftToSupabaseTable = (draft: any, tableName: string) => {
     row.traffic_lights_operational = draft.traffic_lights_operational || null;
     row.traffic_lights_type = draft.traffic_lights_type || null;
     row.traffic_lights_phases = draft.traffic_lights_phases !== undefined ? Number(draft.traffic_lights_phases) : null;
+  } else if (tableName === "survey_catchpits") {
+    row.catchpit_condition = draft.catchpit_condition || null;
+    row.road_condition = draft.catchpit_condition || null;
+  } else if (tableName === "survey_traffic_calming") {
+    row.traffic_calming_type = draft.traffic_calming_type || null;
+    row.traffic_calming_condition = draft.traffic_calming_condition || null;
+    row.road_condition = draft.traffic_calming_condition || null;
   } else if (tableName === "survey_streetlights") {
     row.streetlight_type = draft.streetlight_type || null;
     row.streetlight_condition = draft.streetlight_condition || null;
@@ -796,18 +862,19 @@ let _cachedRecords: any[] | null = null;
 let _cacheTimestamp = 0;
 const CACHE_TTL_MS = 60_000; // 60 seconds
 
-/** Persist merged records to roads-data.json (strips base64 photos to keep file small) */
+/** Persist merged records to roads-data.json — keep full photos[] for dashboard gallery. */
 function writeLocalCache(records: any[]): void {
   try {
     const cachePath = path.resolve(process.cwd(), "public", "roads-data.json");
     const slim = records.map((r: any) => {
-      // Keep photo field in cache so panel can display it; only strip raw_data photo blobs
-      const { photos, ...rest } = r; // eslint-disable-line @typescript-eslint/no-unused-vars
-      // Keep raw_data metadata but drop embedded base64 photos from raw_data to limit cache size
+      const photos = normalizePhotos(r);
+      const rest = { ...r, photos, photo: photos[0] || r.photo || null, _allPhotos: photos };
+      // Drop duplicate blobs from raw_data; top-level photos[] is canonical
       if (rest.raw_data && typeof rest.raw_data === "object") {
         const { photo: rp, photos: rps, ...rawRest } = rest.raw_data;
         rest.raw_data = rawRest;
-        void rp; void rps;
+        void rp;
+        void rps;
       }
       return rest;
     });
@@ -826,14 +893,21 @@ const VIEW_COLUMNS = [
   "raw_data",
   "segment_geojson",
   "segment_length_m", "segment_point_count", "segment_avg_accuracy",
-  "segment_start_time", "segment_end_time", "photo", "created_at", "source"
+  "segment_start_time", "segment_end_time", "photo", "photos", "created_at", "source"
 ].join(",");
 
 // Columns present on EVERY category table (roads + points)
 const TABLE_COMMON_COLUMNS = [
   "survey_id", "asset_category", "road_name", "section_name",
   "surveyor_name", "survey_date", "gps_point", "image_sadc_compliant",
-  "source", "created_at"
+  "photo", "photos", "source", "created_at", "raw_data"
+].join(",");
+
+/** Fallback when `photos` JSONB column is not migrated yet. */
+const TABLE_COMMON_FALLBACK_COLUMNS = [
+  "survey_id", "asset_category", "road_name", "section_name",
+  "surveyor_name", "survey_date", "gps_point", "image_sadc_compliant",
+  "photo", "source", "created_at", "raw_data"
 ].join(",");
 
 // Extra columns only on linear road tables
@@ -859,6 +933,8 @@ const CATEGORY_EXTRA: Record<string, string> = {
   piped_causeway: "causeway_name,causeway_condition,causeway_serviceability",
   drift: "drift_name,drift_condition",
   grid: "grid_name,grid_condition",
+  catchpit: "catchpit_condition",
+  traffic_calming: "traffic_calming_type,traffic_calming_condition",
   traffic_lights: "traffic_lights_location,traffic_lights_condition",
   streetlight: "streetlight_type,streetlight_condition,streetlight_power_source",
 };
@@ -887,8 +963,11 @@ async function fetchTable(tableName: string, columns: string, signal: AbortSigna
       console.warn(`fetchTable ${tableName} failed: ${res.status} ${errText.slice(0, 200)}`);
       // Retry once with only common columns if select listed a missing column
       if (res.status === 400 || res.status === 500) {
+        const fallbackCols = cleanCols.includes("photos")
+          ? TABLE_COMMON_FALLBACK_COLUMNS
+          : TABLE_COMMON_COLUMNS;
         const retry = await fetch(
-          `${SUPABASE_URL}/rest/v1/${tableName}?select=${TABLE_COMMON_COLUMNS}&order=created_at.desc`,
+          `${SUPABASE_URL}/rest/v1/${tableName}?select=${fallbackCols.replace(/\s+/g, "")}&order=created_at.desc`,
           { headers, cache: "no-store", signal }
         );
         if (retry.ok) {
@@ -985,13 +1064,6 @@ async function fetchAllCategoryTables(signal: AbortSignal): Promise<any[]> {
 function rowToRecord(row: any, cat: string): any {
   const cond = row.road_condition || "good";
   const raw = row.raw_data && typeof row.raw_data === "object" ? row.raw_data : null;
-  const rowPhotos = Array.isArray(row.photos) ? row.photos.filter((p: unknown) => typeof p === "string" && p.length > 0) : [];
-  const photosFromRaw = rowPhotos.length > 0 ? rowPhotos : (raw && Array.isArray(raw.photos) ? raw.photos.filter((p: unknown) => typeof p === "string") : []);
-  const photo =
-    row.photo ||
-    photosFromRaw[0] ||
-    (typeof raw?.photo === "string" ? raw.photo : null) ||
-    null;
 
   const record: any = {
     id:             row.survey_id,
@@ -1002,9 +1074,6 @@ function rowToRecord(row: any, cat: string): any {
     surveyor_name:  row.surveyor_name,
     survey_date:    row.survey_date,
     gps:            row.gps_point,
-    photo,
-    photos:         photosFromRaw.length > 0 ? photosFromRaw : (photo ? [photo] : undefined),
-    _allPhotos:     photosFromRaw,
     image_sadc_compliant: row.image_sadc_compliant || raw?.image_SADC_compliant || raw?.image_sadc_compliant || undefined,
     image_SADC_compliant: row.image_sadc_compliant || raw?.image_SADC_compliant || raw?.image_sadc_compliant || undefined,
     raw_data:       raw || undefined,
@@ -1015,6 +1084,11 @@ function rowToRecord(row: any, cat: string): any {
     road_segment_start_time:     row.segment_start_time,
     road_segment_end_time:       row.segment_end_time,
   };
+
+  const allPhotos = normalizePhotos({ ...record, photo: row.photo, photos: row.photos, raw_data: raw || row.raw_data });
+  record.photo = allPhotos[0] || null;
+  record.photos = allPhotos;
+  record._allPhotos = allPhotos;
 
   // Merge useful detail fields from raw_data so names/inspector see mobile values
   if (raw) {
@@ -1046,6 +1120,8 @@ function rowToRecord(row: any, cat: string): any {
     piped_causeway: ["causeway_name"],
     drift: ["drift_name"],
     grid: ["grid_name"],
+    catchpit: ["catchpit_condition"],
+    traffic_calming: ["traffic_calming_type"],
     traffic_lights: ["traffic_lights_location"],
     busstop: ["busstop_type"],
     junction: ["junction_type"],
@@ -1073,9 +1149,56 @@ function rowToRecord(row: any, cat: string): any {
   else if (cat === "piped_causeway"){ record.causeway_condition   = record.causeway_condition || cond; }
   else if (cat === "drift")         { record.drift_condition      = record.drift_condition || cond; }
   else if (cat === "grid")          { record.grid_condition       = record.grid_condition || cond; }
+  else if (cat === "catchpit")      { record.catchpit_condition   = record.catchpit_condition || cond; }
+  else if (cat === "traffic_calming") { record.traffic_calming_condition = record.traffic_calming_condition || cond; }
   else if (cat === "traffic_lights"){ record.traffic_lights_condition = record.traffic_lights_condition || cond; }
   else if (cat === "streetlight")   { record.streetlight_condition   = record.streetlight_condition || cond; }
   return normaliseRecord(record);
+}
+
+/** Fetch all photos for a survey from category tables (authoritative source). */
+async function fetchPhotosForSurveyId(surveyId: string): Promise<{ photo: string | null; photos: string[] }> {
+  const headers: Record<string, string> = {
+    apikey: SUPABASE_ANON_KEY,
+    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+  };
+  const tables = Array.from(new Set(Object.values(categoryToTable)));
+  for (const table of tables) {
+    try {
+      const res = await fetch(
+        `${SUPABASE_URL}/rest/v1/${table}?survey_id=eq.${encodeURIComponent(surveyId)}&select=photo,photos,raw_data&limit=1`,
+        { headers, cache: "no-store" }
+      );
+      if (!res.ok) continue;
+      const rows = await res.json();
+      if (!Array.isArray(rows) || rows.length === 0) continue;
+      const photos = normalizePhotos(rows[0]);
+      if (photos.length > 0) {
+        return { photo: photos[0], photos };
+      }
+    } catch {
+      /* try next table */
+    }
+  }
+  // Fallback: unified view
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/road_surveys?survey_id=eq.${encodeURIComponent(surveyId)}&select=photo,photos,raw_data&limit=1`,
+      { headers, cache: "no-store" }
+    );
+    if (res.ok) {
+      const rows = await res.json();
+      if (rows.length > 0) {
+        const photos = normalizePhotos(rows[0]);
+        if (photos.length > 0) {
+          return { photo: photos[0], photos };
+        }
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return { photo: null, photos: [] };
 }
 
 export async function GET(req: Request) {
@@ -1086,32 +1209,8 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const photoFor = url.searchParams.get("photoFor");
   if (photoFor) {
-    try {
-      const res = await fetch(
-        `${SUPABASE_URL}/rest/v1/road_surveys?survey_id=eq.${photoFor}&select=photo,raw_data`,
-        {
-          headers: {
-            "apikey": SUPABASE_ANON_KEY,
-            "Authorization": `Bearer ${SUPABASE_ANON_KEY}`
-          },
-          cache: "no-store"
-        }
-      );
-      if (res.ok) {
-        const rows = await res.json();
-        if (rows.length > 0) {
-          const r = rows[0];
-          const raw = r.raw_data && typeof r.raw_data === "object" ? r.raw_data : {};
-          const photos = Array.isArray(raw.photos) && raw.photos.length > 0
-            ? raw.photos
-            : (r.photo ? [r.photo] : (raw.photo ? [raw.photo] : []));
-          return NextResponse.json({ photo: r.photo || raw.photo || null, photos });
-        }
-      }
-    } catch (e: any) {
-      console.warn("photoFor fetch failed:", e?.message || e);
-    }
-    return NextResponse.json({ photo: null, photos: [] });
+    const result = await fetchPhotosForSurveyId(photoFor);
+    return NextResponse.json(result);
   }
 
   const forceRefresh = url.searchParams.get("refresh") === "1";

@@ -43,6 +43,8 @@ category_to_table = {
     "piped_causeway": "survey_piped_causeways",
     "drift": "survey_drifts",
     "grid": "survey_grids",
+    "catchpit": "survey_catchpits",
+    "traffic_calming": "survey_traffic_calming",
     "traffic_lights": "survey_traffic_lights",
     "streetlight": "survey_streetlights"
 }
@@ -191,7 +193,8 @@ def _build_row(record: dict, table_name: str) -> dict:
         "photo":                inner.get("photo") or (
                                     (inner.get("photos") or [None])[0] if isinstance(inner.get("photos"), list) and inner.get("photos") else None
                                 ),
-        "raw_data":             inner,
+        "photos":               inner.get("photos") if isinstance(inner.get("photos"), list) and inner.get("photos") else None,
+        "raw_data":             {k: v for k, v in inner.items() if k not in ("photo", "photos")},
         "source":               inner.get("source") or "mobile_app",
     }
 

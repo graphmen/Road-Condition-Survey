@@ -5,7 +5,7 @@ import {
   ResponsiveContainer, PieChart, Pie, Cell, Legend,
   BarChart, Bar, XAxis, YAxis, Tooltip as ChartTooltip,
 } from "recharts";
-import { getRecordStatus, getAssetType, getAssetName, formatStatusLabel, getStatusColor, normalizePhotos, getSadcValue, AUTHORITY_OPTIONS, CONDITION_WITH_CONSTRUCTION_OPTIONS } from "@/components/helpers";
+import { getRecordStatus, getAssetType, getAssetName, formatStatusLabel, getStatusColor, normalizePhotos, mergePhotoLists, getSadcValue, AUTHORITY_OPTIONS, CONDITION_WITH_CONSTRUCTION_OPTIONS } from "@/components/helpers";
 
 interface RightPanelProps {
   records: any[];
@@ -152,14 +152,14 @@ export default function RightPanel({ records, selectedRecord, onClose }: RightPa
   const [fetchedPhotos, setFetchedPhotos] = React.useState<string[]>([]);
   const [loadingPhotos, setLoadingPhotos] = React.useState<boolean>(false);
 
-  const initialPhotos = selectedRecord ? normalizePhotos(selectedRecord) : [];
-  const selectedPhotos = initialPhotos.length > 0 ? initialPhotos : fetchedPhotos;
+  const selectedPhotos = React.useMemo(
+    () => mergePhotoLists(selectedRecord ? normalizePhotos(selectedRecord) : [], fetchedPhotos),
+    [selectedRecord, fetchedPhotos]
+  );
 
   React.useEffect(() => {
     setFetchedPhotos([]);
     if (!selectedRecord) return;
-    const initial = normalizePhotos(selectedRecord);
-    if (initial.length > 0) return;
 
     const id = selectedRecord.id || selectedRecord._id || selectedRecord.survey_id;
     if (!id) return;
@@ -168,11 +168,10 @@ export default function RightPanel({ records, selectedRecord, onClose }: RightPa
     fetch(`/api/roads?photoFor=${encodeURIComponent(id)}`)
       .then(res => res.json())
       .then(data => {
-        if (Array.isArray(data.photos) && data.photos.length > 0) {
-          setFetchedPhotos(data.photos);
-        } else if (data.photo) {
-          setFetchedPhotos([data.photo]);
-        }
+        const remote = Array.isArray(data.photos) && data.photos.length > 0
+          ? data.photos
+          : (data.photo ? [data.photo] : []);
+        if (remote.length > 0) setFetchedPhotos(remote);
       })
       .catch(() => {})
       .finally(() => setLoadingPhotos(false));
