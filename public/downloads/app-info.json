@@ -2,11 +2,11 @@
     "available":  true,
     "minAndroid":  "7.0 (API 24)",
     "fileName":  "motid-road-survey.apk",
-    "releasedAt":  "2026-07-30T06:13:51.2726591Z",
+    "releasedAt":  "2026-07-30T06:20:00.0000000Z",
     "packageId":  "zw.gov.motid.roadsurvey",
     "sizeBytes":  7019907,
-    "versionCode":  10,
-    "versionName":  "1.6.3",
-    "changelog":  "Keep screen on during segment GPS recording for more reliable linear survey capture.",
+    "versionCode":  11,
+    "versionName":  "1.6.4",
+    "changelog":  "Fix survey and photo sync to dashboard: slimmer payloads, upsert on retry, reliable photo fetch.",
     "appName":  "MOTID Road Survey"
 }
