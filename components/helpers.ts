@@ -228,6 +228,10 @@ export function normalizePhotos(r: any): string[] {
     addPhoto(raw.image);
     if (Array.isArray(raw.images)) raw.images.forEach(addPhoto);
     if (Array.isArray(raw._attachments)) raw._attachments.forEach(addPhoto);
+    // Legacy / mobile field names (Bridge_Photo, Road_Photo, etc.)
+    for (const [key, val] of Object.entries(raw)) {
+      if (/photo|image|picture|attachment/i.test(key)) addPhoto(val);
+    }
   }
 
   return Array.from(new Set(photos));

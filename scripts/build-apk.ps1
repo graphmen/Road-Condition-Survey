@@ -4,9 +4,9 @@
 #   powershell -ExecutionPolicy Bypass -File scripts/build-apk.ps1
 
 param(
-  [string]$Version = "1.6.3",
-  [int]$VersionCode = 10,
-  [string]$Changelog = "Keep screen on during segment GPS recording for more reliable linear survey capture."
+  [string]$Version = "1.6.4",
+  [int]$VersionCode = 11,
+  [string]$Changelog = "Fix survey and photo sync to dashboard: slimmer payloads, upsert on retry, reliable photo fetch."
 )
 
 $ErrorActionPreference = "Stop"

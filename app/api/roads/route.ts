@@ -484,7 +484,7 @@ function flattenAndNormaliseRecords(rawSubmissions: any[]): any[] {
       if (!flat.province) flat.province = "Harare";
       if (!flat.district) flat.district = "Harare";
 
-      flatRecords.push(flat);
+      flatRecords.push(normaliseRecord(flat));
     }
   }
 
@@ -565,12 +565,19 @@ const FIREBASE_PROJECT = "road-condition-survey";
 const FIREBASE_DB = "road-condition-survey";
 
 /** Build photo column + slim raw_data (photos live in `photos`, not duplicated in raw_data). */
+const RAW_DATA_OMIT = new Set([
+  "photo", "photos",
+  "road_segment_points", "road_segment_geojson",
+  "road_segment_length_m", "road_segment_start_time", "road_segment_end_time",
+  "road_segment_avg_accuracy_m", "road_segment_point_count",
+]);
+
 function buildPhotoPayload(draft: any): { photo: string | null; photos: string[]; raw_data: any } {
   const photos = normalizePhotos(draft);
   const raw_data =
     draft && typeof draft === "object"
       ? Object.fromEntries(
-          Object.entries(draft).filter(([k]) => k !== "photo" && k !== "photos")
+          Object.entries(draft).filter(([k]) => !RAW_DATA_OMIT.has(k))
         )
       : draft;
   return {
@@ -579,6 +586,13 @@ function buildPhotoPayload(draft: any): { photo: string | null; photos: string[]
     raw_data,
   };
 }
+
+const SUPABASE_WRITE_HEADERS: Record<string, string> = {
+  "Content-Type": "application/json",
+  "apikey": SUPABASE_ANON_KEY,
+  "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+  "Prefer": "return=minimal,resolution=merge-duplicates",
+};
 
 const categoryToTable: Record<string, string> = {
   sealed: "survey_sealed_roads",
@@ -862,6 +876,11 @@ let _cachedRecords: any[] | null = null;
 let _cacheTimestamp = 0;
 const CACHE_TTL_MS = 60_000; // 60 seconds
 
+function invalidateServerCache() {
+  _cachedRecords = null;
+  _cacheTimestamp = 0;
+}
+
 /** Persist merged records to roads-data.json — keep full photos[] for dashboard gallery. */
 function writeLocalCache(records: any[]): void {
   try {
@@ -945,44 +964,39 @@ const ROAD_TABLES = new Set([
 
 /** Fetch one Supabase table with a timeout, return [] on failure */
 async function fetchTable(tableName: string, columns: string, signal: AbortSignal): Promise<any[]> {
-  const cleanCols = columns.replace(/\s+/g, "");
+  const roadExtras = ROAD_TABLES.has(tableName) ? `,${ROAD_EXTRA_COLUMNS}` : "";
+  const stableCols = `${TABLE_COMMON_COLUMNS}${roadExtras}`.replace(/\s+/g, "");
+  const attempts = Array.from(new Set([
+    columns.replace(/\s+/g, ""),
+    stableCols,
+    TABLE_COMMON_FALLBACK_COLUMNS.replace(/\s+/g, ""),
+  ]));
+
   const headers: Record<string, string> = {
     "apikey": SUPABASE_ANON_KEY,
     "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
     "Prefer": "count=none",
-    // Explicit range so project max-rows settings cannot silently truncate to 1
     "Range": "0-9999",
   };
-  try {
-    const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/${tableName}?select=${cleanCols}&order=created_at.desc`,
-      { headers, cache: "no-store", signal }
-    );
-    if (!res.ok) {
-      const errText = await res.text().catch(() => "");
-      console.warn(`fetchTable ${tableName} failed: ${res.status} ${errText.slice(0, 200)}`);
-      // Retry once with only common columns if select listed a missing column
-      if (res.status === 400 || res.status === 500) {
-        const fallbackCols = cleanCols.includes("photos")
-          ? TABLE_COMMON_FALLBACK_COLUMNS
-          : TABLE_COMMON_COLUMNS;
-        const retry = await fetch(
-          `${SUPABASE_URL}/rest/v1/${tableName}?select=${fallbackCols.replace(/\s+/g, "")}&order=created_at.desc`,
-          { headers, cache: "no-store", signal }
-        );
-        if (retry.ok) {
-          const data = await retry.json();
-          return Array.isArray(data) ? data : [];
-        }
+
+  for (const cleanCols of attempts) {
+    try {
+      const res = await fetch(
+        `${SUPABASE_URL}/rest/v1/${tableName}?select=${cleanCols}&order=created_at.desc`,
+        { headers, cache: "no-store", signal }
+      );
+      if (!res.ok) {
+        const errText = await res.text().catch(() => "");
+        console.warn(`fetchTable ${tableName} (${cleanCols.slice(0, 60)}…) failed: ${res.status} ${errText.slice(0, 120)}`);
+        continue;
       }
-      return [];
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
+    } catch (e: any) {
+      console.warn(`fetchTable ${tableName} error:`, e?.message || e);
     }
-    const data = await res.json();
-    return Array.isArray(data) ? data : [];
-  } catch (e: any) {
-    console.warn(`fetchTable ${tableName} error:`, e?.message || e);
-    return [];
   }
+  return [];
 }
 
 
@@ -1026,11 +1040,9 @@ async function fetchAllCategoryTables(signal: AbortSignal): Promise<any[]> {
   const entries = Object.entries(categoryToTable);
   const results = await Promise.all(
     entries.map(async ([cat, table]) => {
-      const extras = CATEGORY_EXTRA[cat] || "";
       const roadExtras = ROAD_TABLES.has(table) ? `,${ROAD_EXTRA_COLUMNS}` : "";
-      const cols = extras
-        ? `${TABLE_COMMON_COLUMNS}${roadExtras},${extras}`
-        : `${TABLE_COMMON_COLUMNS}${roadExtras}`;
+      // Stable column set — category-specific fields live in raw_data + typed columns on row merge
+      const cols = `${TABLE_COMMON_COLUMNS}${roadExtras}`;
       const rows = await fetchTable(table, cols, signal);
       console.log(`  ${table}: ${rows.length} rows`);
       return rows.map((row) => rowToRecord(row, row.asset_category || cat));
@@ -1062,7 +1074,6 @@ async function fetchAllCategoryTables(signal: AbortSignal): Promise<any[]> {
 
 /** Normalise a row from any individual category table into a dashboard record */
 function rowToRecord(row: any, cat: string): any {
-  const cond = row.road_condition || "good";
   const raw = row.raw_data && typeof row.raw_data === "object" ? row.raw_data : null;
 
   const record: any = {
@@ -1083,7 +1094,22 @@ function rowToRecord(row: any, cat: string): any {
     road_segment_avg_accuracy_m: row.segment_avg_accuracy,
     road_segment_start_time:     row.segment_start_time,
     road_segment_end_time:       row.segment_end_time,
+    source: row.source || raw?.source,
   };
+
+  // Merge typed table columns (condition, names, etc.) before raw_data
+  const ROW_SKIP = new Set([
+    "survey_id", "raw_data", "geom_point", "geom_segment", "created_at",
+    "segment_geojson", "gps_point",
+  ]);
+  for (const [key, val] of Object.entries(row)) {
+    if (ROW_SKIP.has(key)) continue;
+    if (val === null || val === undefined || val === "") continue;
+    if (typeof val === "string" && val.startsWith("data:image")) continue;
+    if (record[key] === undefined || record[key] === null || record[key] === "") {
+      record[key] = val;
+    }
+  }
 
   const allPhotos = normalizePhotos({ ...record, photo: row.photo, photos: row.photos, raw_data: raw || row.raw_data });
   record.photo = allPhotos[0] || null;
@@ -1099,42 +1125,37 @@ function rowToRecord(row: any, cat: string): any {
     for (const [key, val] of Object.entries(raw)) {
       if (skip.has(key)) continue;
       if (val === undefined || val === null) continue;
-      // Don't overwrite already-set top-level fields; don't copy huge base64 strings
-      if (record[key] !== undefined) continue;
+      if (record[key] !== undefined && record[key] !== null && record[key] !== "") continue;
       if (typeof val === "string" && val.startsWith("data:image")) continue;
       record[key] = val;
     }
   }
 
-  // Also pull common name columns that may exist as table columns (not only in raw_data)
-  const tableNames: Record<string, string[]> = {
-    sealed: ["paved_road_name"],
-    gravel: ["gravel_road_name"],
-    earth: ["earth_road_name"],
-    bridge: ["bridge"],
-    footbridge: ["footbridge_name"],
-    rail_crossing: ["rail_crossing_name"],
-    tollgate: ["tollgate_name"],
-    culvert: ["culvet_class"],
-    shelvet: ["shelvets_type"],
-    piped_causeway: ["causeway_name"],
-    drift: ["drift_name"],
-    grid: ["grid_name"],
-    catchpit: ["catchpit_condition"],
-    traffic_calming: ["traffic_calming_type"],
-    traffic_lights: ["traffic_lights_location"],
-    busstop: ["busstop_type"],
-    junction: ["junction_type"],
-    sign: ["sign_type", "sign_name"],
-    streetlight: ["streetlight_type"],
-    layby: ["layby_surface"],
-  };
-  for (const col of tableNames[cat] || []) {
-    if (row[col] != null && record[col] === undefined) record[col] = row[col];
-  }
+  const cond =
+    row.road_condition ||
+    row.bridge_condition ||
+    row.gravel_condition ||
+    row.earth_road_condition ||
+    row.footbridge_condition ||
+    row.rail_crossing_condition ||
+    row.tollgate_condition ||
+    row.layby_condition ||
+    row.busstop_condition ||
+    row.junction_condition ||
+    row.sign_condition ||
+    row.shelvet_condition ||
+    row.culvet_serviceability ||
+    row.causeway_condition ||
+    row.drift_condition ||
+    row.grid_condition ||
+    row.catchpit_condition ||
+    row.traffic_calming_condition ||
+    row.traffic_lights_condition ||
+    row.streetlight_condition ||
+    "good";
 
-  if (cat === "sealed")             { record.paved_road_condition = record.paved_road_condition || cond; record.paved_road_class  = row.road_class; }
-  else if (cat === "gravel")        { record.gravel_condition     = record.gravel_condition || cond; record.gravel_road_class = row.road_class; }
+  if (cat === "sealed")             { record.paved_road_condition = record.paved_road_condition || cond; record.paved_road_class  = record.paved_road_class || row.road_class; }
+  else if (cat === "gravel")        { record.gravel_condition     = record.gravel_condition || cond; record.gravel_road_class = record.gravel_road_class || row.road_class; }
   else if (cat === "earth")         { record.earth_road_condition = record.earth_road_condition || cond; }
   else if (cat === "bridge")        { record.bridge_condition     = record.bridge_condition || cond; }
   else if (cat === "footbridge")    { record.footbridge_condition = record.footbridge_condition || cond; }
@@ -1201,6 +1222,28 @@ async function fetchPhotosForSurveyId(surveyId: string): Promise<{ photo: string
   return { photo: null, photos: [] };
 }
 
+/** Backfill photos for records where list fetch omitted JSONB photo arrays. */
+async function hydrateMissingPhotos(records: any[]): Promise<void> {
+  const need = records.filter((r) => normalizePhotos(r).length === 0);
+  if (need.length === 0) return;
+
+  const cap = Math.min(need.length, 150);
+  console.log(`Hydrating photos for ${cap}/${need.length} records without images…`);
+
+  await Promise.all(
+    need.slice(0, cap).map(async (r) => {
+      const id = String(r.id || r._id || r.survey_id || "").trim();
+      if (!id) return;
+      const { photos } = await fetchPhotosForSurveyId(id);
+      if (photos.length > 0) {
+        r.photos = photos;
+        r.photo = photos[0];
+        r._allPhotos = photos;
+      }
+    })
+  );
+}
+
 export async function GET(req: Request) {
   if (OFFLINE_MODE) {
     return NextResponse.json(loadLocalFallback());
@@ -1237,6 +1280,7 @@ export async function GET(req: Request) {
 
     // Primary: fetch every category table (bridges, culverts, signs, roads, ...)
     let serverRecords = await fetchAllCategoryTables(controller.signal);
+    await hydrateMissingPhotos(serverRecords);
 
     // Segments fetched via ROAD_EXTRA_COLUMNS
 
@@ -1393,11 +1437,7 @@ export async function POST(req: Request) {
       // 1. Supabase write
       const supabaseRes = await fetch(`${SUPABASE_URL}/rest/v1/${tableName}`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "apikey": SUPABASE_ANON_KEY,
-          "Authorization": `Bearer ${SUPABASE_ANON_KEY}`
-        },
+        headers: SUPABASE_WRITE_HEADERS,
         body: JSON.stringify(supabaseRow)
       });
 
@@ -1405,6 +1445,8 @@ export async function POST(req: Request) {
         const errText = await supabaseRes.text();
         return NextResponse.json({ error: `Server write failed: ${errText}` }, { status: supabaseRes.status });
       }
+
+      invalidateServerCache();
 
       // 2. Firebase write
       try {
@@ -1611,6 +1653,7 @@ export async function PUT(req: Request) {
         }
 
         const updatedData = await res.json();
+        invalidateServerCache();
         return NextResponse.json({ success: true, record: updatedData[0] || record, source: "server" });
       } else {
         const errText = await res.text();

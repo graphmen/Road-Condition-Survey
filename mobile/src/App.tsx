@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { db } from "./lib/db";
 import type { SurveyDraft } from "./lib/db";
+import { slimRawData } from "./lib/slimRawData";
 import { assetUrl } from "./lib/assets";
 import { SegmentTracker, PAUSED_ROAD_CONTEXT_KEY, SEGMENT_SESSION_KEY } from "./components/SegmentTracker";
 import type { SegmentGeometry } from "./components/SegmentTracker";
@@ -2269,10 +2270,7 @@ export default function App() {
       if (Array.isArray(draft.photos)) draft.photos.forEach(addPhoto);
       addPhoto(draft.photo);
       const uniquePhotos = Array.from(new Set(photoList));
-      const rawWithoutPhotos =
-        draft && typeof draft === "object"
-          ? Object.fromEntries(Object.entries(draft).filter(([k]) => k !== "photo" && k !== "photos"))
-          : draft;
+      const rawWithoutPhotos = slimRawData(draft as Record<string, unknown>);
 
       const row: any = {
         survey_id:            draft.id,
@@ -2578,26 +2576,51 @@ export default function App() {
       try {
         const category = draft.asset_category || "sealed";
         const tableName = categoryToTable[category] || "survey_sealed_roads";
-        const supabaseRow = mapDraftToSupabaseTable(draft, tableName);
 
-        // 1. Upload directly to Supabase PostgREST API
-        const supabaseRes = await fetch(`${SUPABASE_URL}/rest/v1/${tableName}`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "apikey": SUPABASE_ANON_KEY,
-            "Authorization": `Bearer ${SUPABASE_ANON_KEY}`
-          },
-          body: JSON.stringify(supabaseRow)
-        });
+        // Prefer dashboard API when configured (same mapper + cache invalidation)
+        const apiBase = (serverUrl || localStorage.getItem("roads_server_url") || "").replace(/\/$/, "");
+        let synced = false;
 
-        if (!supabaseRes.ok) {
-          const errText = await supabaseRes.text();
-          throw new Error(`Supabase write failed: ${errText}`);
+        if (apiBase && !apiBase.includes("localhost") && !apiBase.includes("127.0.0.1")) {
+          try {
+            const apiRes = await fetch(`${apiBase}/api/roads`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ record: { ...draft, source: "mobile_app" } }),
+            });
+            if (apiRes.ok) {
+              synced = true;
+            } else {
+              console.warn("Dashboard API sync failed, falling back to Supabase:", await apiRes.text());
+            }
+          } catch (apiErr) {
+            console.warn("Dashboard API unreachable, falling back to Supabase:", apiErr);
+          }
         }
 
-        // 2. Upload directly to Firebase Firestore REST API
+        if (!synced) {
+          const supabaseRow = mapDraftToSupabaseTable(draft, tableName);
+
+          const supabaseRes = await fetch(`${SUPABASE_URL}/rest/v1/${tableName}`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "apikey": SUPABASE_ANON_KEY,
+              "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+              "Prefer": "return=minimal,resolution=merge-duplicates",
+            },
+            body: JSON.stringify(supabaseRow)
+          });
+
+          if (!supabaseRes.ok) {
+            const errText = await supabaseRes.text();
+            throw new Error(`Supabase write failed: ${errText}`);
+          }
+        }
+
+        // Mirror to Firebase (best-effort)
         try {
+          const supabaseRow = mapDraftToSupabaseTable(draft, tableName);
           const firestoreDoc = toFirestoreDocument(supabaseRow);
           const firebaseRes = await fetch(
             `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT}/databases/${FIREBASE_DB}/documents/${tableName}?documentId=${draft.id}`,

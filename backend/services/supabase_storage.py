@@ -194,7 +194,12 @@ def _build_row(record: dict, table_name: str) -> dict:
                                     (inner.get("photos") or [None])[0] if isinstance(inner.get("photos"), list) and inner.get("photos") else None
                                 ),
         "photos":               inner.get("photos") if isinstance(inner.get("photos"), list) and inner.get("photos") else None,
-        "raw_data":             {k: v for k, v in inner.items() if k not in ("photo", "photos")},
+        "raw_data":             {k: v for k, v in inner.items() if k not in (
+            "photo", "photos",
+            "road_segment_points", "road_segment_geojson",
+            "road_segment_length_m", "road_segment_start_time", "road_segment_end_time",
+            "road_segment_avg_accuracy_m", "road_segment_point_count",
+        )},
         "source":               inner.get("source") or "mobile_app",
     }
 

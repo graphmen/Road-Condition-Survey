@@ -77,7 +77,7 @@ const formatValue = (val: any): string => {
 
 
 // -- Photos Section Component -------------------------------------------------
-function PhotosSection({ photos }: { photos: string[] }) {
+function PhotosSection({ photos, loading }: { photos: string[]; loading?: boolean }) {
   const [lightbox, setLightbox] = React.useState<number | null>(null);
   return (
     <div style={{ marginBottom: 12 }}>
@@ -86,10 +86,14 @@ function PhotosSection({ photos }: { photos: string[] }) {
           Photos Collected
         </span>
         <span style={{ fontSize: 10, fontWeight: 600, background: photos.length > 0 ? "rgba(0,102,51,0.12)" : "rgba(0,0,0,0.06)", color: photos.length > 0 ? "#006633" : "var(--text-muted)", borderRadius: 20, padding: "1px 8px" }}>
-          {photos.length} photo{photos.length !== 1 ? "s" : ""}
+          {loading ? "…" : `${photos.length} photo${photos.length !== 1 ? "s" : ""}`}
         </span>
       </div>
-      {photos.length === 0 ? (
+      {loading ? (
+        <div style={{ textAlign: "center", padding: "14px 0", color: "var(--text-muted)", fontSize: 10.5, background: "rgba(0,0,0,0.025)", borderRadius: 8, border: "1px dashed rgba(0,0,0,0.1)" }}>
+          Loading photos from server…
+        </div>
+      ) : photos.length === 0 ? (
         <div style={{ textAlign: "center", padding: "14px 0", color: "var(--text-muted)", fontSize: 10.5, background: "rgba(0,0,0,0.025)", borderRadius: 8, border: "1px dashed rgba(0,0,0,0.1)" }}>
           No photos captured for this asset
         </div>
@@ -236,7 +240,7 @@ export default function RightPanel({ records, selectedRecord, onClose }: RightPa
               </div>
 
               {/* --- Photos Section --------------------------------- */}
-              <PhotosSection photos={selectedPhotos} />
+              <PhotosSection photos={selectedPhotos} loading={loadingPhotos} />
 
 
               <div className="detail-rows">
