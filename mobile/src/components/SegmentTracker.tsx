@@ -7,6 +7,7 @@ import "leaflet/dist/leaflet.css";
 import "leaflet-textpath";
 import { MapPin, Navigation, Square, Plus, CheckCircle2, Activity, Gauge, Clock, Wifi, Pause, Play, MapPinned, Camera } from "lucide-react";
 import { assetUrl } from "../lib/assets";
+import { disableScreenAwake, enableScreenAwake } from "../lib/screenAwake";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -401,6 +402,7 @@ export function SegmentTracker({
     setCurrentAcc(last.acc);
 
     if (restoredPhase === "tracking") {
+      void enableScreenAwake();
       setTimeout(() => {
         if (reconnectTrackingRef.current) reconnectTrackingRef.current(restoredPoints.length);
       }, 400);
@@ -409,6 +411,7 @@ export function SegmentTracker({
         // Auto-resume path after returning from point-asset collection
         setPhase("tracking");
         phaseRef.current = "tracking";
+        void enableScreenAwake();
         persistSession(restoredPoints, startTimeRef.current, trackingModeRef.current, "tracking");
         if (reconnectTrackingRef.current) reconnectTrackingRef.current(restoredPoints.length);
       }, 500);
@@ -426,8 +429,11 @@ export function SegmentTracker({
     const attachListener = async () => {
       try {
         listenerHandle = await CapApp.addListener("appStateChange", ({ isActive }) => {
-          if (isActive && phaseRef.current === "tracking" && watchIdRef.current !== "active") {
-            if (reconnectTrackingRef.current) reconnectTrackingRef.current(pointsRef.current.length);
+          if (isActive && phaseRef.current === "tracking") {
+            void enableScreenAwake();
+            if (watchIdRef.current !== "active") {
+              if (reconnectTrackingRef.current) reconnectTrackingRef.current(pointsRef.current.length);
+            }
           }
           // When going to background, do a final persist of all current points
           if (!isActive && phaseRef.current === "tracking") {
@@ -447,6 +453,13 @@ export function SegmentTracker({
       }
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Release screen wake lock if this component unmounts mid-recording
+  useEffect(() => {
+    return () => {
+      void disableScreenAwake();
+    };
+  }, []);
 
   // Fetch offline roads dataset on mount
   useEffect(() => {
@@ -825,6 +838,7 @@ export function SegmentTracker({
     limitAutoEndTriggeredRef.current = false;
     setPhase("tracking");
     phaseRef.current = "tracking";
+    void enableScreenAwake();
 
     // Write initial empty session so recovery works even before first point
     persistSession([], startTimeRef.current, trackingModeRef.current);
@@ -847,6 +861,7 @@ export function SegmentTracker({
       setStatusMsg(`Failed to start GPS: ${(e as Error).message}`);
       setPhase("idle");
       phaseRef.current = "idle";
+      void disableScreenAwake();
       clearSession();
     }
   };
@@ -912,6 +927,7 @@ export function SegmentTracker({
     persistSession(pts, startTimeRef.current, trackingModeRef.current, "paused");
     setPhase("paused");
     phaseRef.current = "paused";
+    void disableScreenAwake();
     setStatusMsg("⏸ Segment paused — GPS points kept. Resume anytime or collect a point asset.");
 
     const info = { pointCount: pts.length, length_m: totalDistance(pts) };
@@ -937,6 +953,7 @@ export function SegmentTracker({
     lastAutoAddRef.current = 0;
     setPhase("tracking");
     phaseRef.current = "tracking";
+    void enableScreenAwake();
     persistSession(pts, startTimeRef.current, trackingModeRef.current, "tracking");
     setStatusMsg("▶ Resuming segment recording from last point…");
     await reconnectTracking(pts.length);
@@ -965,6 +982,7 @@ export function SegmentTracker({
       watchIdRef.current = null;
     }
     if (timerRef.current) clearInterval(timerRef.current);
+    void disableScreenAwake();
 
     // Add final position as last point unless we already hit the length limit
     if (!opts?.skipFinalPoint && currentPos) {
@@ -1174,6 +1192,7 @@ export function SegmentTracker({
           <p style={{ fontSize: "10px", color: "var(--text-muted)", margin: 0, lineHeight: 1.8 }}>
             <strong style={{ color: "var(--text-accent)" }}>High-precision tracking:</strong><br />
             🛰 Points auto-added every 3 s when accuracy ≤ {accuracyThreshold.toFixed(1)} m<br />
+            📱 Screen stays on while recording for reliable GPS<br />
             📍 Tap <em>Add Point Now</em> (requires accuracy ≤ {accuracyThreshold.toFixed(1)} m)<br />
             🌳 Operate outdoors under clear skies for sub-{accuracyThreshold.toFixed(0)}m accuracy
           </p>
@@ -1425,7 +1444,7 @@ export function SegmentTracker({
           }}>
             {isReconnecting
               ? "Reconnecting GPS…"
-              : "📡 Recording in background — collection continues when app is minimised"}
+              : "📡 Recording — screen kept on for GPS accuracy"}
           </span>
         </div>
 
@@ -1697,6 +1716,7 @@ export function SegmentTracker({
         type="button"
         onClick={() => {
           clearSession(); // Remove persisted session when intentionally re-recording
+          void disableScreenAwake();
           setPhase("idle");
           setPoints([]);
           pointsRef.current = [];

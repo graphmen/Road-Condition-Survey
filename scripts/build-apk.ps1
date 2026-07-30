@@ -4,9 +4,9 @@
 #   powershell -ExecutionPolicy Bypass -File scripts/build-apk.ps1
 
 param(
-  [string]$Version = "1.6.2",
-  [int]$VersionCode = 9,
-  [string]$Changelog = "Auto-stop segment recording at urban/rural length limit so surveys can be completed and queued for sync."
+  [string]$Version = "1.6.3",
+  [int]$VersionCode = 10,
+  [string]$Changelog = "Keep screen on during segment GPS recording for more reliable linear survey capture."
 )
 
 $ErrorActionPreference = "Stop"
