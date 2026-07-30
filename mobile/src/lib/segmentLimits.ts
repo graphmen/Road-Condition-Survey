@@ -2,6 +2,8 @@
 export const SEGMENT_MIN_M = 0;
 export const SEGMENT_MAX_URBAN_M = 500;
 export const SEGMENT_MAX_RURAL_M = 5000;
+/** Allow small GPS overshoot when auto-stopping at the limit. */
+export const SEGMENT_LENGTH_TOLERANCE_M = 75;
 
 export function segmentMaxLengthM(roadClass: string): number {
   const urban =
@@ -18,7 +20,7 @@ export function validateSegmentLengthM(
   if (lengthM < SEGMENT_MIN_M) {
     return { ok: false, message: `Segment must be at least ${SEGMENT_MIN_M} m.` };
   }
-  if (lengthM > max) {
+  if (lengthM > max + SEGMENT_LENGTH_TOLERANCE_M) {
     const kind = max === SEGMENT_MAX_URBAN_M ? "urban" : "rural";
     return {
       ok: false,

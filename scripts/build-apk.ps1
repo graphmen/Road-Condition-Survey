@@ -4,9 +4,9 @@
 #   powershell -ExecutionPolicy Bypass -File scripts/build-apk.ps1
 
 param(
-  [string]$Version = "1.6.1",
-  [int]$VersionCode = 8,
-  [string]$Changelog = "Fix white screen on install by using relative asset paths in the native APK build."
+  [string]$Version = "1.6.2",
+  [int]$VersionCode = 9,
+  [string]$Changelog = "Auto-stop segment recording at urban/rural length limit so surveys can be completed and queued for sync."
 )
 
 $ErrorActionPreference = "Stop"

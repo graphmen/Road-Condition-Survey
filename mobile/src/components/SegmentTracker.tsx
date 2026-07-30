@@ -48,7 +48,7 @@ interface Props {
   onAddPhoto?: () => void | Promise<void>;
   photoCount?: number;
   maxPhotos?: number;
-  /** Max allowed segment length in metres (urban/rural). Blocks End Segment when exceeded. */
+  /** Max allowed segment length in metres (urban/rural). Auto-stops recording at limit. */
   maxSegmentLengthM?: number;
   segmentLimitHint?: string;
 }
@@ -322,6 +322,10 @@ export function SegmentTracker({
   const pointsRef = useRef<SegmentPoint[]>(initial.points);
   const offlineRoadsDataRef = useRef<any>(null);
   const offlineRoadsLayerRef = useRef<L.LayerGroup | null>(null);
+  const limitAutoEndTriggeredRef = useRef(false);
+  const endSegmentRef = useRef<
+    (opts?: { skipFinalPoint?: boolean; autoLimit?: boolean }) => Promise<void>
+  >(async () => {});
   
   // Snapping settings & unsnapped line rendering
   const [snapToRoads, setSnapToRoads] = useState<boolean>(true);
@@ -673,6 +677,13 @@ export function SegmentTracker({
   const addPoint = useCallback((pos: SegmentPoint, isManual: boolean): boolean => {
     const current = pointsRef.current;
 
+    if (limitAutoEndTriggeredRef.current) return false;
+
+    if (maxSegmentLengthM != null && current.length >= 2) {
+      const currentDist = totalDistance(current);
+      if (currentDist >= maxSegmentLengthM) return false;
+    }
+
     // Strict accuracy threshold check for both auto and manual points
     if (pos.acc > accuracyThreshold) {
       if (isManual) {
@@ -733,10 +744,22 @@ export function SegmentTracker({
         persistSession(updated, startTimeRef.current, trackingModeRef.current);
       }
 
+      if (
+        maxSegmentLengthM != null &&
+        updated.length >= 2 &&
+        totalDistance(updated) >= maxSegmentLengthM &&
+        !limitAutoEndTriggeredRef.current
+      ) {
+        limitAutoEndTriggeredRef.current = true;
+        setTimeout(() => {
+          void endSegmentRef.current({ skipFinalPoint: true, autoLimit: true });
+        }, 0);
+      }
+
       return updated;
     });
     return true;
-  }, [snapToRoads, accuracyThreshold, persistSession]);
+  }, [snapToRoads, accuracyThreshold, persistSession, maxSegmentLengthM]);
 
   // ── Start tracking ─────────────────────────────────────────────────────────
 
@@ -799,6 +822,7 @@ export function SegmentTracker({
     setManualAdded(0);
     lastAutoAddRef.current = 0;
     pointsSinceLastPersistRef.current = 0;
+    limitAutoEndTriggeredRef.current = false;
     setPhase("tracking");
     phaseRef.current = "tracking";
 
@@ -897,6 +921,14 @@ export function SegmentTracker({
 
   const resumeSegment = async () => {
     const pts = pointsRef.current;
+    if (maxSegmentLengthM != null && totalDistance(pts) >= maxSegmentLengthM && pts.length >= 2) {
+      setStatusMsg(
+        `✓ Segment limit reached (${fmtDist(maxSegmentLengthM)}). Finishing segment…`
+      );
+      limitAutoEndTriggeredRef.current = true;
+      await endSegmentRef.current({ skipFinalPoint: true, autoLimit: true });
+      return;
+    }
     const last = pts.length > 0 ? pts[pts.length - 1] : null;
     if (last) {
       setCurrentPos(last);
@@ -923,7 +955,7 @@ export function SegmentTracker({
 
   // ── End segment ────────────────────────────────────────────────────────────
 
-  const endSegment = async () => {
+  const endSegment = async (opts?: { skipFinalPoint?: boolean; autoLimit?: boolean }) => {
     if (watchIdRef.current) {
       try {
         await BackgroundGeolocation.stop();
@@ -934,8 +966,12 @@ export function SegmentTracker({
     }
     if (timerRef.current) clearInterval(timerRef.current);
 
-    // Add final position as last point
-    if (currentPos) addPoint({ ...currentPos, ts: Date.now() }, true);
+    // Add final position as last point unless we already hit the length limit
+    if (!opts?.skipFinalPoint && currentPos) {
+      const dist = totalDistance(pointsRef.current);
+      const underLimit = maxSegmentLengthM == null || dist < maxSegmentLengthM;
+      if (underLimit) addPoint({ ...currentPos, ts: Date.now() }, true);
+    }
 
     // Allow state to flush
     await new Promise<void>((res) => setTimeout(res, 150));
@@ -960,9 +996,18 @@ export function SegmentTracker({
 
     setCompletedGeo(geo);
     setPhase("completed");
+    if (opts?.autoLimit && maxSegmentLengthM != null) {
+      setStatusMsg(
+        `✓ Segment limit reached (${fmtDist(maxSegmentLengthM)}). Recording stopped — complete attributes and queue for sync.`
+      );
+    } else {
+      setStatusMsg("");
+    }
     clearSession(); // Remove active session — tracking complete
     onSegmentComplete(geo);
   };
+
+  endSegmentRef.current = endSegment;
 
   const confirmEndSegment = () => {
     const finalPts = pointsRef.current.length > 0 ? pointsRef.current : points;
@@ -970,14 +1015,13 @@ export function SegmentTracker({
 
     const length_m = totalDistance(finalPts);
     if (maxSegmentLengthM != null && length_m > maxSegmentLengthM) {
-      setStatusMsg(
-        `⚠ Segment ${fmtDist(length_m)} exceeds limit (${fmtDist(maxSegmentLengthM)}). End here and start a new segment.`
-      );
-      window.alert(
-        `Segment length ${fmtDist(length_m)} exceeds the allowed maximum of ${fmtDist(maxSegmentLengthM)}.\n\n` +
+      const proceed = window.confirm(
+        `Segment length ${fmtDist(length_m)} is above the ${fmtDist(maxSegmentLengthM)} limit.\n\n` +
           (segmentLimitHint ? `${segmentLimitHint}\n\n` : "") +
-          "Pause or end recording and start a new segment for the remainder of the road."
+          "End this segment now with the recorded distance?"
       );
+      if (!proceed) return;
+      void endSegment({ skipFinalPoint: true });
       return;
     }
 
@@ -1016,6 +1060,11 @@ export function SegmentTracker({
       : `±${currentAcc.toFixed(1)} m — Poor 🔴 (locked: must be ≤${accuracyThreshold.toFixed(1)}m)`;
 
   const runningDist = totalDistance(points);
+  const limitProgress =
+    maxSegmentLengthM != null
+      ? Math.min(100, Math.round((runningDist / maxSegmentLengthM) * 100))
+      : null;
+  const nearLimit = maxSegmentLengthM != null && runningDist >= maxSegmentLengthM * 0.85;
 
   // ─── RENDER ──────────────────────────────────────────────────────────────────
 
@@ -1295,8 +1344,10 @@ export function SegmentTracker({
               label: "Points",
             },
             {
-              icon: <Activity size={12} color="#f59e0b" />,
-              value: fmtDist(runningDist),
+              icon: <Activity size={12} color={nearLimit ? "#ef4444" : "#f59e0b"} />,
+              value: maxSegmentLengthM != null
+                ? `${fmtDist(runningDist)} / ${fmtDist(maxSegmentLengthM)}`
+                : fmtDist(runningDist),
               label: "Distance",
             },
             {
@@ -1327,6 +1378,27 @@ export function SegmentTracker({
             </div>
           ))}
         </div>
+
+        {maxSegmentLengthM != null && (
+          <div
+            style={{
+              height: 6,
+              borderRadius: 999,
+              background: "var(--bg-app)",
+              border: "1px solid var(--border-color)",
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                height: "100%",
+                width: `${limitProgress ?? 0}%`,
+                background: nearLimit ? "#ef4444" : "var(--accent-emerald)",
+                transition: "width 0.4s ease",
+              }}
+            />
+          </div>
+        )}
 
         {/* 📡 Background Recording Badge */}
         <div
@@ -1586,7 +1658,7 @@ export function SegmentTracker({
             Segment Recorded
           </p>
           <p style={{ fontSize: "10px", color: "var(--text-muted)", margin: "2px 0 0" }}>
-            Scroll down to fill in road attributes, then save.
+            Scroll down to fill in road attributes, then save or queue for sync.
           </p>
         </div>
       </div>
