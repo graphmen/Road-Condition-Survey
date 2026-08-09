@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { UserProfile, UserRole, ROLE_LABELS, canProvisionRole } from "@/components/helpers";
+import { UserProfile, UserRole, ROLE_LABELS, canProvisionRole, isSuperAdmin } from "@/components/helpers";
+import { authFetch } from "@/lib/authClient";
 import { Users, UserPlus, Shield, MapPin, CheckCircle, AlertCircle, RefreshCw, Key, Lock } from "lucide-react";
 
 interface UserManagementPanelProps {
@@ -46,6 +47,8 @@ export default function UserManagementPanel({ currentUser, onToast }: UserManage
   const [province, setProvince] = useState(currentUser.province || "Harare");
   const [district, setDistrict] = useState(currentUser.district || "Harare");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [lastTempPassword, setLastTempPassword] = useState<{ email: string; password: string } | null>(null);
+  const [resettingId, setResettingId] = useState<string | null>(null);
 
   // Auto-lock location fields based on supervisor scope
   useEffect(() => {
@@ -58,21 +61,20 @@ export default function UserManagementPanel({ currentUser, onToast }: UserManage
       setTargetRole("data_collector");
     } else if (currentUser.role === "national_coordinator") {
       setTargetRole("provincial_coordinator");
+    } else if (isSuperAdmin(currentUser) || currentUser.role === "master_admin") {
+      setTargetRole("ict_admin");
     }
   }, [currentUser]);
 
   const fetchUsers = async () => {
     setIsLoading(true);
     try {
-      const query = new URLSearchParams({
-        role: currentUser.role,
-        province: currentUser.province || "",
-        district: currentUser.district || ""
-      });
-      const res = await fetch(`/api/users?${query}`);
+      const res = await authFetch("/api/users");
       const data = await res.json();
       if (data.success) {
         setUsers(data.users || []);
+      } else if (res.status === 401) {
+        onToast("Session expired. Please sign in again.", "error");
       }
     } catch (e) {
       console.error("Error loading users:", e);
@@ -94,22 +96,23 @@ export default function UserManagementPanel({ currentUser, onToast }: UserManage
 
     setIsSubmitting(true);
     try {
-      const res = await fetch("/api/users", {
+      const res = await authFetch("/api/users", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           full_name: fullName,
           email,
           phone_number: phone,
           role: targetRole,
-          province: targetRole === "master_admin" || targetRole === "national_coordinator" ? null : province,
+          province: targetRole === "master_admin" || targetRole === "ict_admin" || targetRole === "national_coordinator" ? null : province,
           district: targetRole === "district_coordinator" || targetRole === "data_collector" ? district : null,
-          creator_role: currentUser.role
-        })
+        }),
       });
       const data = await res.json();
       if (data.success) {
-        onToast(`Account created! Activation link sent to ${email}`, "success");
+        if (data.temporary_password) {
+          setLastTempPassword({ email, password: data.temporary_password });
+        }
+        onToast(`Account created for ${email}. Copy the temporary password shown below.`, "success");
         setShowCreateModal(false);
         setFullName("");
         setEmail("");
@@ -125,9 +128,40 @@ export default function UserManagementPanel({ currentUser, onToast }: UserManage
     }
   };
 
+  const handleResetPassword = async (userId: string, email: string) => {
+    if (!window.confirm(`Reset password for ${email}? A new temporary password will be generated.`)) return;
+    setResettingId(userId);
+    try {
+      const res = await authFetch("/api/auth/reset-password", {
+        method: "POST",
+        body: JSON.stringify({ user_id: userId }),
+      });
+      const data = await res.json();
+      if (data.success && data.temporary_password) {
+        setLastTempPassword({ email, password: data.temporary_password });
+        onToast(`Password reset for ${email}`, "success");
+      } else {
+        onToast(data.error || "Reset failed", "error");
+      }
+    } catch (e: unknown) {
+      onToast((e as Error).message || "Reset failed", "error");
+    } finally {
+      setResettingId(null);
+    }
+  };
+
+  const roleOptions: UserRole[] = [];
+  if (isSuperAdmin(currentUser)) roleOptions.push("master_admin", "ict_admin");
+  else if (currentUser.role === "master_admin") roleOptions.push("ict_admin");
+  if (canProvisionRole(currentUser, "national_coordinator")) roleOptions.push("national_coordinator");
+  if (canProvisionRole(currentUser, "provincial_coordinator")) roleOptions.push("provincial_coordinator");
+  if (canProvisionRole(currentUser, "district_coordinator")) roleOptions.push("district_coordinator");
+  if (canProvisionRole(currentUser, "data_collector")) roleOptions.push("data_collector");
+
   const getRoleBadgeStyle = (role: UserRole) => {
     switch (role) {
       case "master_admin": return { bg: "rgba(220,38,38,0.1)", color: "#dc2626", border: "1px solid rgba(220,38,38,0.2)" };
+      case "ict_admin": return { bg: "rgba(190,24,93,0.1)", color: "#be185d", border: "1px solid rgba(190,24,93,0.2)" };
       case "national_coordinator": return { bg: "rgba(124,58,237,0.1)", color: "#7c3aed", border: "1px solid rgba(124,58,237,0.2)" };
       case "provincial_coordinator": return { bg: "rgba(37,99,235,0.1)", color: "#2563eb", border: "1px solid rgba(37,99,235,0.2)" };
       case "district_coordinator": return { bg: "rgba(217,119,6,0.1)", color: "#d97706", border: "1px solid rgba(217,119,6,0.2)" };
@@ -179,6 +213,15 @@ export default function UserManagementPanel({ currentUser, onToast }: UserManage
         </div>
       </div>
 
+      {lastTempPassword && (
+        <div style={{ margin: "0 24px", padding: 12, background: "#fffbeb", border: "1px solid #fcd34d", borderRadius: 8, fontSize: 11 }}>
+          <strong>Temporary password for {lastTempPassword.email}:</strong>
+          <code style={{ display: "block", marginTop: 6, fontSize: 13, fontWeight: 800, color: "#92400e" }}>{lastTempPassword.password}</code>
+          <span style={{ color: "#78716c", fontSize: 10 }}>Share securely. User must change password on first login.</span>
+          <button type="button" onClick={() => setLastTempPassword(null)} style={{ marginTop: 8, fontSize: 10, cursor: "pointer" }}>Dismiss</button>
+        </div>
+      )}
+
       {/* User Table Workspace */}
       <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
         {isLoading ? (
@@ -202,6 +245,9 @@ export default function UserManagementPanel({ currentUser, onToast }: UserManage
                   <th style={{ padding: "12px 16px" }}>Assigned Jurisdiction</th>
                   <th style={{ padding: "12px 16px" }}>Contact</th>
                   <th style={{ padding: "12px 16px" }}>Status</th>
+                  {(currentUser.role === "master_admin" || currentUser.role === "ict_admin") && (
+                    <th style={{ padding: "12px 16px" }}>Actions</th>
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -235,7 +281,22 @@ export default function UserManagementPanel({ currentUser, onToast }: UserManage
                         <span style={{ background: u.is_active ? "rgba(0,102,51,0.1)" : "rgba(220,38,38,0.1)", color: u.is_active ? "#006633" : "#dc2626", padding: "3px 8px", borderRadius: 6, fontSize: 10, fontWeight: 800 }}>
                           {u.is_active ? "Active" : "Disabled"}
                         </span>
+                        {u.is_super_admin && <span style={{ marginLeft: 6, fontSize: 9, fontWeight: 800, color: "#dc2626" }}>SUPER</span>}
                       </td>
+                      {(currentUser.role === "master_admin" || currentUser.role === "ict_admin") && (
+                        <td style={{ padding: "14px 16px" }}>
+                          {!u.is_super_admin && u.id !== currentUser.id && (
+                            <button
+                              type="button"
+                              disabled={resettingId === u.id}
+                              onClick={() => handleResetPassword(u.id, u.email)}
+                              style={{ fontSize: 10, fontWeight: 700, padding: "4px 8px", borderRadius: 6, border: "1px solid var(--border)", background: "#fff", cursor: "pointer" }}
+                            >
+                              {resettingId === u.id ? "..." : "Reset pwd"}
+                            </button>
+                          )}
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
@@ -300,15 +361,14 @@ export default function UserManagementPanel({ currentUser, onToast }: UserManage
                   onChange={e => setTargetRole(e.target.value as UserRole)}
                   style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 11.5, background: "#fff", fontWeight: 700, boxSizing: "border-box" }}
                 >
-                  {currentUser.role === "master_admin" && <option value="national_coordinator">National Coordinator</option>}
-                  {(currentUser.role === "master_admin" || currentUser.role === "national_coordinator") && <option value="provincial_coordinator">Provincial Coordinator</option>}
-                  {(currentUser.role === "master_admin" || currentUser.role === "national_coordinator" || currentUser.role === "provincial_coordinator") && <option value="district_coordinator">District Coordinator</option>}
-                  <option value="data_collector">Data Collector (Field Surveyor)</option>
+                  {roleOptions.map((r) => (
+                    <option key={r} value={r}>{ROLE_LABELS[r]}</option>
+                  ))}
                 </select>
               </div>
 
               {/* Province Selector / Lock */}
-              {targetRole !== "master_admin" && targetRole !== "national_coordinator" && (
+              {targetRole !== "master_admin" && targetRole !== "ict_admin" && targetRole !== "national_coordinator" && (
                 <div>
                   <label style={{ fontSize: 10.5, fontWeight: 800, color: "var(--text-secondary)", display: "block", marginBottom: 4 }}>
                     Assigned Province {currentUser.role === "provincial_coordinator" || currentUser.role === "district_coordinator" ? "(Locked to Your Province)" : ""}
@@ -347,13 +407,13 @@ export default function UserManagementPanel({ currentUser, onToast }: UserManage
               )}
 
               <div style={{ background: "rgba(0,102,51,0.06)", border: "1px solid rgba(0,102,51,0.12)", padding: 12, borderRadius: 8, fontSize: 10.5, color: "var(--text-secondary)" }}>
-                <strong>🔒 Security Protocol:</strong> An activation link with temporary credentials will be sent to the registered email address. Mandatory strong password setup will be required on first login.
+                <strong>Security:</strong> A temporary password will be shown once after provisioning. The user must change it on first login (web or mobile).
               </div>
 
               <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 8 }}>
                 <button type="button" onClick={() => setShowCreateModal(false)} style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid var(--border)", background: "#fff", fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>Cancel</button>
                 <button type="submit" disabled={isSubmitting} style={{ padding: "8px 20px", borderRadius: 8, border: "none", background: "#006633", color: "#fff", fontSize: 11.5, fontWeight: 800, cursor: "pointer" }}>
-                  {isSubmitting ? "Provisioning..." : "Send Activation Link"}
+                  {isSubmitting ? "Provisioning..." : "Create Account"}
                 </button>
               </div>
             </form>

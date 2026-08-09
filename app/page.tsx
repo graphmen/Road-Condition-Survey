@@ -10,6 +10,7 @@ import FullPageModule from "@/components/panels/FullPageModule";
 import LoginModal from "@/components/LoginModal";
 import MapErrorBoundary from "@/components/MapErrorBoundary";
 import { useInactivityTimeout, clearInactivityTimestamp } from "@/hooks/useInactivityTimeout";
+import { validateStoredSession, clearAuthSession } from "@/lib/authClient";
 import {
   enrichRecordGeo,
   buildMapGoto,
@@ -17,9 +18,10 @@ import {
   getAssetName,
   type MapGotoDetail,
   type UserProfile,
-  type UserRole,
   ROLE_LABELS,
   filterRecordsByRoleScope,
+  canManageUsers,
+  canReviewDeletions,
 } from "@/components/helpers";
 
 const MapView = dynamic(() => import("@/components/MapView"), {
@@ -34,51 +36,15 @@ const MapView = dynamic(() => import("@/components/MapView"), {
   ),
 });
 
-// These modules open as a full-page overlay over the map
+// Full-page overlay modules
 const FULLPAGE_MODULES: NavModule[] = ["dashboard", "highways", "analytics", "survey", "database", "gallery", "reports", "documents", "export", "users", "approvals"];
 
-// Pre-configured simulation personas for live RBAC testing
-const SIMULATION_USERS: Record<UserRole, UserProfile> = {
-  master_admin: {
-    id: "usr-master-1",
-    email: "ict.admin@transport.gov.zw",
-    full_name: "Eng. T. Masango",
-    role: "master_admin",
-    is_active: true
-  },
-  national_coordinator: {
-    id: "usr-national-1",
-    email: "national.coordinator@transport.gov.zw",
-    full_name: "Eng. C. Moyo",
-    role: "national_coordinator",
-    is_active: true
-  },
-  provincial_coordinator: {
-    id: "usr-provincial-harare",
-    email: "harare.coord@transport.gov.zw",
-    full_name: "Eng. R. Ndlovu",
-    role: "provincial_coordinator",
-    province: "Harare",
-    is_active: true
-  },
-  district_coordinator: {
-    id: "usr-district-harare",
-    email: "harare.district@transport.gov.zw",
-    full_name: "Eng. S. Sibanda",
-    role: "district_coordinator",
-    province: "Harare",
-    district: "Harare",
-    is_active: true
-  },
-  data_collector: {
-    id: "usr-collector-1",
-    email: "field.surveyor1@transport.gov.zw",
-    full_name: "Eng. Z. Chitate",
-    role: "data_collector",
-    province: "Harare",
-    district: "Harare",
-    is_active: true
-  }
+const EMPTY_USER: UserProfile = {
+  id: "",
+  email: "",
+  full_name: "",
+  role: "data_collector",
+  is_active: false,
 };
 
 export default function Home() {
@@ -88,7 +54,7 @@ export default function Home() {
   const [sourceInfo, setSourceInfo] = useState("Loading...");
 
   // Active user session state
-  const [currentUser, setCurrentUser] = useState<UserProfile>(SIMULATION_USERS.master_admin);
+  const [currentUser, setCurrentUser] = useState<UserProfile>(EMPTY_USER);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
 
   const [activeModule, setActiveModule]       = useState<NavModule>("assets");
@@ -105,26 +71,22 @@ export default function Home() {
 
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
 
-  // Check saved session on mount
+  // Validate saved session on mount
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem("zim_roads_user");
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed && parsed.role) {
-          setCurrentUser(parsed);
-          setIsAuthenticated(true);
-          return;
-        }
+    validateStoredSession().then((user) => {
+      if (user) {
+        setCurrentUser(user);
+        setIsAuthenticated(true);
+      } else {
+        setIsAuthenticated(false);
       }
-    } catch (_) {}
-    setIsAuthenticated(false);
+    });
   }, []);
 
   const handleSignOut = () => {
-    localStorage.removeItem("zim_roads_user");
-    localStorage.removeItem("zim_roads_token");
+    clearAuthSession();
     clearInactivityTimestamp();
+    setCurrentUser(EMPTY_USER);
     setIsAuthenticated(false);
     setToast({ message: "You have been signed out.", type: "info" });
   };
@@ -134,9 +96,9 @@ export default function Home() {
     enabled: isAuthenticated === true,
     timeoutMs: 15 * 60 * 1000, // 15 minutes
     onTimeout: () => {
-      localStorage.removeItem("zim_roads_user");
-      localStorage.removeItem("zim_roads_token");
+      clearAuthSession();
       clearInactivityTimestamp();
+      setCurrentUser(EMPTY_USER);
       setIsAuthenticated(false);
       setToast({
         message: "Session expired due to 15 minutes of inactivity. Please log in again.",
@@ -305,6 +267,14 @@ export default function Home() {
   // - "assets" â†’ show inner panel (map mode)
   // - everything else â†’ open full-page overlay, hide inner panel
   const handleNavSelect = (m: NavModule) => {
+    if (m === "users" && !canManageUsers(currentUser)) {
+      setToast({ message: "You do not have permission to manage users.", type: "error" });
+      return;
+    }
+    if (m === "approvals" && !canReviewDeletions(currentUser)) {
+      setToast({ message: "You do not have permission to review deletions.", type: "error" });
+      return;
+    }
     setActiveModule(m);
     if (FULLPAGE_MODULES.includes(m)) {
       setFullPageModule(m);
@@ -345,7 +315,8 @@ export default function Home() {
         </div>
       )}
 
-      {/* --- Header ------------------------------------------------------------ */}
+      {/* --- Header (authenticated only) ---------------------------------------- */}
+      {isAuthenticated === true && (
       <header className="app-header">
         <div className="header-logo-zone">
           <img src="/coat_of_arms.png" alt="Zimbabwe Coat of Arms" className="header-coat" />
@@ -369,25 +340,9 @@ export default function Home() {
           <div className="user-chip" style={{ display: "flex", alignItems: "center", gap: 10, background: "rgba(0,0,0,0.25)", padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)" }}>
             <div style={{ textAlign: "right" }}>
               <div style={{ fontWeight: 700, fontSize: 11, color: "#fff" }}>{currentUser.full_name}</div>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end", marginTop: 2 }}>
-                <select
-                  value={currentUser.role}
-                  onChange={e => {
-                    const r = e.target.value as UserRole;
-                    setCurrentUser(SIMULATION_USERS[r]);
-                    setToast({ message: `Active Role Scope: ${ROLE_LABELS[r]}`, type: "info" });
-                  }}
-                  style={{
-                    background: "rgba(255,255,255,0.15)", color: "#FFD100", border: "1px solid rgba(255,255,255,0.25)",
-                    borderRadius: 4, padding: "2px 6px", fontSize: 9.5, fontWeight: 700, cursor: "pointer", outline: "none"
-                  }}
-                >
-                  <option value="master_admin" style={{ color: "#000" }}>🔑 Master Admin (Global Scope)</option>
-                  <option value="national_coordinator" style={{ color: "#000" }}>🇿🇼 National Coordinator (Global Scope)</option>
-                  <option value="provincial_coordinator" style={{ color: "#000" }}>📍 Provincial Coord (Harare)</option>
-                  <option value="district_coordinator" style={{ color: "#000" }}>🏢 District Coord (Harare Central)</option>
-                  <option value="data_collector" style={{ color: "#000" }}>📱 Data Collector (Personal Scope)</option>
-                </select>
+              <div style={{ fontSize: 9.5, fontWeight: 700, color: "#FFD100", marginTop: 2 }}>
+                {ROLE_LABELS[currentUser.role]}
+                {currentUser.is_super_admin ? " · Super Controller" : ""}
               </div>
             </div>
             <div className="user-avatar" style={{ background: "#FFD100", color: "#003d1f", fontWeight: 800 }}>
@@ -417,6 +372,7 @@ export default function Home() {
           </div>
         </div>
       </header>
+      )}
 
       {/* Render Login Screen Overlay when unauthenticated */}
       {isAuthenticated === false && (
@@ -424,11 +380,19 @@ export default function Home() {
           onLoginSuccess={(user) => {
             setCurrentUser(user);
             setIsAuthenticated(true);
-            setToast({ message: `Authenticated: Welcome back, ${user.full_name}!`, type: "success" });
+            setToast({ message: `Welcome back, ${user.full_name}!`, type: "success" });
           }}
         />
       )}
 
+      {isAuthenticated === null && (
+        <div style={{ position: "fixed", inset: 0, background: "#f0f2f1", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9998 }}>
+          <div style={{ width: 36, height: 36, border: "3px solid rgba(0,102,51,0.15)", borderTop: "3px solid #006633", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+        </div>
+      )}
+
+      {isAuthenticated === true && (
+      <>
       {/* --- Body -------------------------------------------------------------- */}
       <div className={`app-body${fullPageModule ? " fullpage-active" : ""}`}>
 
@@ -460,6 +424,7 @@ export default function Home() {
                 selectedRoad={selectedRoad}
                 onRoadFilter={setSelectedRoad}
                 onNavSelect={handleNavSelect}
+                currentUser={currentUser}
               />
             )}
           </div>
@@ -558,6 +523,8 @@ export default function Home() {
           <span>&copy; {new Date().getFullYear()} Roads Department, Zimbabwe. All rights reserved.</span>
         </div>
       </footer>
+      </>
+      )}
 
     </div>
   );

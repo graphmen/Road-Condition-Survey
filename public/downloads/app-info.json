@@ -2,11 +2,11 @@
     "available":  true,
     "minAndroid":  "7.0 (API 24)",
     "fileName":  "motid-road-survey.apk",
-    "releasedAt":  "2026-08-09T05:24:58.5013718Z",
+    "releasedAt":  "2026-08-09T05:52:12.9807226Z",
     "packageId":  "zw.gov.motid.roadsurvey",
-    "sizeBytes":  7021403,
-    "versionCode":  13,
-    "versionName":  "1.6.6",
-    "changelog":  "Sealed road dual collection: collect Road 1 and Road 2 sequentially on parallel carriageways.",
+    "sizeBytes":  7023819,
+    "versionCode":  14,
+    "versionName":  "1.6.7",
+    "changelog":  "Unified login for web and mobile, role-based access, ICT member registration, and Super Master Admin recovery.",
     "appName":  "MOTID Road Survey"
 }

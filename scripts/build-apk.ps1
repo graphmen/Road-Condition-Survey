@@ -4,9 +4,9 @@
 #   powershell -ExecutionPolicy Bypass -File scripts/build-apk.ps1
 
 param(
-  [string]$Version = "1.6.6",
-  [int]$VersionCode = 13,
-  [string]$Changelog = "Sealed road dual collection: collect Road 1 and Road 2 sequentially on parallel carriageways."
+  [string]$Version = "1.6.7",
+  [int]$VersionCode = 14,
+  [string]$Changelog = "Unified login for web and mobile, role-based access, ICT member registration, and Super Master Admin recovery."
 )
 
 $ErrorActionPreference = "Stop"

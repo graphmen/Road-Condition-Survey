@@ -2,6 +2,7 @@
 
 export type UserRole =
   | "master_admin"
+  | "ict_admin"
   | "national_coordinator"
   | "provincial_coordinator"
   | "district_coordinator"
@@ -18,6 +19,8 @@ export interface UserProfile {
   created_by?: string;
   is_active: boolean;
   must_change_password?: boolean;
+  /** Only one account — full system control; cannot be deactivated by others. */
+  is_super_admin?: boolean;
 }
 
 export interface DeletionRequest {
@@ -55,11 +58,50 @@ export interface AuditLog {
 
 export const ROLE_LABELS: Record<UserRole, string> = {
   master_admin: "Master Admin (National ICT)",
+  ict_admin: "ICT Team Member",
   national_coordinator: "National Coordinator",
   provincial_coordinator: "Provincial Coordinator",
   district_coordinator: "District Coordinator",
   data_collector: "Data Collector (Field Surveyor)",
 };
+
+export function isSuperAdmin(user: UserProfile | null | undefined): boolean {
+  return !!user && user.role === "master_admin" && !!user.is_super_admin;
+}
+
+/** Web dashboard access — coordinators and ICT; collectors see limited view. */
+export function canAccessWebDashboard(role: UserRole): boolean {
+  return role !== "data_collector";
+}
+
+/** Mobile field collector app — all authenticated roles may sign in; web-only roles use mobile for testing. */
+export function canAccessMobileApp(_role: UserRole): boolean {
+  return true;
+}
+
+/** User management panel — master admin, ICT team, and coordinators in hierarchy. */
+export function canManageUsers(user: UserProfile | null | undefined): boolean {
+  if (!user?.is_active) return false;
+  return (
+    user.role === "master_admin" ||
+    user.role === "ict_admin" ||
+    user.role === "national_coordinator" ||
+    user.role === "provincial_coordinator" ||
+    user.role === "district_coordinator"
+  );
+}
+
+/** Deletion approval queue — supervisors and ICT. */
+export function canReviewDeletions(user: UserProfile | null | undefined): boolean {
+  if (!user?.is_active) return false;
+  return (
+    user.role === "master_admin" ||
+    user.role === "ict_admin" ||
+    user.role === "national_coordinator" ||
+    user.role === "provincial_coordinator" ||
+    user.role === "district_coordinator"
+  );
+}
 
 /** Get immediate supervisor role for deletion approvals according to cascading hierarchy */
 export function getSupervisorRole(role: UserRole): UserRole {
@@ -68,6 +110,7 @@ export function getSupervisorRole(role: UserRole): UserRole {
     case "district_coordinator": return "provincial_coordinator";
     case "provincial_coordinator": return "national_coordinator";
     case "national_coordinator": return "master_admin";
+    case "ict_admin": return "master_admin";
     case "master_admin": return "master_admin";
   }
 }
@@ -75,7 +118,18 @@ export function getSupervisorRole(role: UserRole): UserRole {
 /** Check if user can create another user of targetRole */
 export function canProvisionRole(currentUser: UserProfile, targetRole: UserRole): boolean {
   if (!currentUser || !currentUser.is_active) return false;
-  if (currentUser.role === "master_admin") return true;
+  if (isSuperAdmin(currentUser)) return true;
+  if (currentUser.role === "master_admin") {
+    return targetRole !== "master_admin";
+  }
+  if (currentUser.role === "ict_admin") {
+    return (
+      targetRole === "national_coordinator" ||
+      targetRole === "provincial_coordinator" ||
+      targetRole === "district_coordinator" ||
+      targetRole === "data_collector"
+    );
+  }
   if (currentUser.role === "national_coordinator" && targetRole === "provincial_coordinator") return true;
   if (currentUser.role === "provincial_coordinator" && targetRole === "district_coordinator") return true;
   if (currentUser.role === "district_coordinator" && targetRole === "data_collector") return true;
@@ -89,8 +143,12 @@ export function filterRecordsByRoleScope(records: any[], user: UserProfile): any
   // 1. Exclude soft-deleted records for standard views
   const activeRecords = records.filter(r => !r.is_deleted && r.deletion_status !== "deleted");
 
-  // 2. Master Admin & National Coordinator see everything nationwide
-  if (user.role === "master_admin" || user.role === "national_coordinator") {
+  // 2. Master Admin, ICT team & National Coordinator see everything nationwide
+  if (
+    user.role === "master_admin" ||
+    user.role === "ict_admin" ||
+    user.role === "national_coordinator"
+  ) {
     return activeRecords;
   }
 
@@ -120,8 +178,7 @@ export function filterRecordsByRoleScope(records: any[], user: UserProfile): any
       if (sId && user.id && sId === user.id) return true;
       if (sName && user.full_name && sName.toLowerCase().includes(user.full_name.toLowerCase())) return true;
       if (sName && user.email && sName.toLowerCase().includes(user.email.split("@")[0].toLowerCase())) return true;
-      // Also match default field surveyor entries if none explicitly bound
-      return true;
+      return false;
     });
   }
 

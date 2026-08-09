@@ -5,6 +5,8 @@ import {
   formatGpsLabel,
 } from "@/components/helpers";
 import type { NavModule } from "./LeftNav";
+import type { UserProfile } from "@/components/helpers";
+import { canManageUsers, canReviewDeletions } from "@/components/helpers";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip as ChartTooltip, Cell,
   PieChart, Pie, Legend,
@@ -20,6 +22,7 @@ interface InnerPanelProps {
   selectedRoad: string;
   onRoadFilter: (road: string) => void;
   onNavSelect?: (m: NavModule) => void;
+  currentUser?: UserProfile;
 }
 
 const HIGHWAYS = [
@@ -349,7 +352,7 @@ function ExportInner({ records }: { records: any[] }) {
 // -----------------------------------------------------------
 // --- Main InnerPanel ---------------------------------------
 // -----------------------------------------------------------
-export default function InnerPanel({ module, records, selectedRecord, onSelectRecord, selectedRoad, onRoadFilter, onNavSelect }: InnerPanelProps) {
+export default function InnerPanel({ module, records, selectedRecord, onSelectRecord, selectedRoad, onRoadFilter, onNavSelect, currentUser }: InnerPanelProps) {
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
   const [condFilter, setCondFilter] = useState("all");
@@ -491,7 +494,9 @@ export default function InnerPanel({ module, records, selectedRecord, onSelectRe
           </div>
         </div>
         <div className="inner-panel-body" style={{ padding: 14, display: "flex", flexDirection: "column", gap: 14 }}>
-          
+
+          {canManageUsers(currentUser) && (
+          <>
           {/* User Provisioning & Access Control Card */}
           <div style={{
             background: "#fff",
@@ -528,7 +533,11 @@ export default function InnerPanel({ module, records, selectedRecord, onSelectRe
               <Users size={14} /> Open User Provisioning <ChevronRight size={14} />
             </button>
           </div>
+          </>
+          )}
 
+          {canReviewDeletions(currentUser) && (
+          <>
           {/* Soft-Delete Approvals & Audit Trail Card */}
           <div style={{
             background: "#fff",
@@ -565,6 +574,8 @@ export default function InnerPanel({ module, records, selectedRecord, onSelectRe
               <ShieldAlert size={14} /> Open Pending Approvals Queue <ChevronRight size={14} />
             </button>
           </div>
+          </>
+          )}
 
           {/* Mobile Collector App Card */}
           <div style={{

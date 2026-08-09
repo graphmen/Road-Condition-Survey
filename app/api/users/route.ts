@@ -1,157 +1,127 @@
 import { NextResponse } from "next/server";
-import fs from "fs";
-import path from "path";
-import { UserProfile, UserRole, canProvisionRole } from "@/components/helpers";
+import type { UserProfile, UserRole } from "@/components/helpers";
+import { canProvisionRole, isSuperAdmin } from "@/components/helpers";
+import {
+  authenticateRequest,
+  unauthorized,
+  forbidden,
+} from "@/lib/auth/requestAuth";
+import {
+  generateTempPassword,
+  hashPassword,
+} from "@/lib/auth/password";
+import {
+  getUsersStore,
+  writeUsersStore,
+  stripSecrets,
+  provisionableRoles,
+  type StoredUser,
+} from "@/lib/auth/usersStore";
 
-const USERS_FILE = path.resolve(process.cwd(), "public", "users-db.json");
-
-// Default initial system users matching all role scopes
-const INITIAL_USERS: UserProfile[] = [
-  {
-    id: "usr-master-1",
-    email: "ict.admin@transport.gov.zw",
-    full_name: "Eng. T. Masango (Master Admin)",
-    phone_number: "+263 77 100 0001",
-    role: "master_admin",
-    is_active: true,
-    must_change_password: false,
-  },
-  {
-    id: "usr-national-1",
-    email: "national.coordinator@transport.gov.zw",
-    full_name: "Eng. C. Moyo (National Coordinator)",
-    phone_number: "+263 77 200 0002",
-    role: "national_coordinator",
-    is_active: true,
-    must_change_password: false,
-  },
-  {
-    id: "usr-provincial-harare",
-    email: "harare.coord@transport.gov.zw",
-    full_name: "Eng. R. Ndlovu (Harare Provincial Coordinator)",
-    phone_number: "+263 77 300 0003",
-    role: "provincial_coordinator",
-    province: "Harare",
-    is_active: true,
-    must_change_password: false,
-  },
-  {
-    id: "usr-district-harare",
-    email: "harare.district@transport.gov.zw",
-    full_name: "Eng. S. Sibanda (Harare Central District Coordinator)",
-    phone_number: "+263 77 400 0004",
-    role: "district_coordinator",
-    province: "Harare",
-    district: "Harare",
-    is_active: true,
-    must_change_password: false,
-  },
-  {
-    id: "usr-collector-1",
-    email: "field.surveyor1@transport.gov.zw",
-    full_name: "Eng. Z. Chitate (Field Surveyor)",
-    phone_number: "+263 77 500 0005",
-    role: "data_collector",
-    province: "Harare",
-    district: "Harare",
-    is_active: true,
-    must_change_password: false,
+function scopeUsersForCaller(allUsers: StoredUser[], caller: UserProfile): UserProfile[] {
+  let scoped = allUsers.map(stripSecrets);
+  if (isSuperAdmin(caller) || caller.role === "master_admin" || caller.role === "ict_admin") {
+    return scoped;
   }
-];
-
-function getUsersStore(): UserProfile[] {
-  try {
-    if (fs.existsSync(USERS_FILE)) {
-      const data = fs.readFileSync(USERS_FILE, "utf-8");
-      const parsed = JSON.parse(data);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-    }
-  } catch (e) {
-    console.error("Error reading users-db.json:", e);
+  if (caller.role === "provincial_coordinator" && caller.province) {
+    scoped = scoped.filter(
+      (u) => !u.province || u.province.toLowerCase() === caller.province!.toLowerCase()
+    );
+  } else if (caller.role === "district_coordinator" && caller.district) {
+    scoped = scoped.filter(
+      (u) => !u.district || u.district.toLowerCase() === caller.district!.toLowerCase()
+    );
+  } else if (caller.role === "national_coordinator") {
+    return scoped;
+  } else {
+    scoped = [];
   }
-  // Initialize with seed users if file doesn't exist
-  fs.writeFileSync(USERS_FILE, JSON.stringify(INITIAL_USERS, null, 2), "utf-8");
-  return INITIAL_USERS;
+  return scoped;
 }
 
-function writeUsersStore(users: UserProfile[]): void {
-  try {
-    fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2), "utf-8");
-  } catch (e) {
-    console.error("Error writing users-db.json:", e);
-  }
-}
-
-/** GET /api/users — List users scoped by caller role */
+/** GET /api/users — List users (authenticated, scoped) */
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const callerRole = (searchParams.get("role") || "master_admin") as UserRole;
-  const callerProvince = searchParams.get("province") || "";
-  const callerDistrict = searchParams.get("district") || "";
+  const auth = authenticateRequest(request);
+  if (!auth) return unauthorized();
 
   const allUsers = getUsersStore();
+  const scopedUsers = scopeUsersForCaller(allUsers, auth.user);
 
-  // Scoped user list depending on caller role
-  let scopedUsers = allUsers;
-  if (callerRole === "provincial_coordinator" && callerProvince) {
-    scopedUsers = allUsers.filter(u => !u.province || u.province.toLowerCase() === callerProvince.toLowerCase());
-  } else if (callerRole === "district_coordinator" && callerDistrict) {
-    scopedUsers = allUsers.filter(u => !u.district || u.district.toLowerCase() === callerDistrict.toLowerCase());
-  } else if (callerRole === "data_collector") {
-    scopedUsers = [];
-  }
-
-  return NextResponse.json({ success: true, count: scopedUsers.length, users: scopedUsers });
+  return NextResponse.json({
+    success: true,
+    count: scopedUsers.length,
+    users: scopedUsers,
+    provisionable_roles: provisionableRoles(auth.user),
+  });
 }
 
-/** POST /api/users — Provision a new account */
+/** POST /api/users — Provision a new account with temporary password */
 export async function POST(request: Request) {
+  const auth = authenticateRequest(request);
+  if (!auth) return unauthorized();
+
   try {
     const body = await request.json();
-    const { full_name, email, phone_number, role, province, district, creator_role } = body;
+    const { full_name, email, phone_number, role, province, district } = body;
+    const targetRole = role as UserRole;
 
-    if (!full_name || !email || !role) {
-      return NextResponse.json({ success: false, error: "Missing required fields (full_name, email, role)" }, { status: 400 });
+    if (!full_name || !email || !targetRole) {
+      return NextResponse.json(
+        { success: false, error: "Missing required fields (full_name, email, role)" },
+        { status: 400 }
+      );
     }
 
-    // Role privilege verification
-    const creatorUser: UserProfile = {
-      id: "creator",
-      email: "creator@gov.zw",
-      full_name: "Creator",
-      role: (creator_role || "master_admin") as UserRole,
-      is_active: true,
-    };
+    if (!canProvisionRole(auth.user, targetRole)) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Your role cannot provision accounts with role '${targetRole}'.`,
+        },
+        { status: 403 }
+      );
+    }
 
-    if (!canProvisionRole(creatorUser, role as UserRole)) {
-      return NextResponse.json({
-        success: false,
-        error: `Role '${creator_role}' does not have authority to provision account with role '${role}'`
-      }, { status: 403 });
+    if (targetRole === "master_admin" && !isSuperAdmin(auth.user)) {
+      return forbidden("Only the Super Master Admin can create Master Admin accounts.");
+    }
+
+    if (targetRole === "ict_admin" && !isSuperAdmin(auth.user) && auth.user.role !== "master_admin") {
+      return forbidden("Only Master Admin can register ICT team members.");
     }
 
     const allUsers = getUsersStore();
-    if (allUsers.some(u => u.email.toLowerCase() === email.toLowerCase())) {
+    if (allUsers.some((u) => u.email.toLowerCase() === String(email).trim().toLowerCase())) {
       return NextResponse.json({ success: false, error: "User with this email already exists" }, { status: 400 });
     }
 
-    const newUser: UserProfile = {
+    const tempPassword = generateTempPassword();
+    const newUser: StoredUser = {
       id: `usr-${Date.now()}`,
-      email: email.trim(),
-      full_name: full_name.trim(),
+      email: String(email).trim(),
+      full_name: String(full_name).trim(),
       phone_number: phone_number || "",
-      role: role as UserRole,
+      role: targetRole,
       province: province || undefined,
       district: district || undefined,
+      created_by: auth.user.id,
       is_active: true,
       must_change_password: true,
+      is_super_admin: false,
+      password_hash: hashPassword(tempPassword),
     };
 
     allUsers.push(newUser);
     writeUsersStore(allUsers);
 
-    return NextResponse.json({ success: true, message: "Account created successfully", user: newUser });
-  } catch (e: any) {
-    return NextResponse.json({ success: false, error: e.message || "Failed to create user" }, { status: 500 });
+    return NextResponse.json({
+      success: true,
+      message: "Account created successfully",
+      user: stripSecrets(newUser),
+      temporary_password: tempPassword,
+    });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : "Failed to create user";
+    return NextResponse.json({ success: false, error: msg }, { status: 500 });
   }
 }

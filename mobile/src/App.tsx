@@ -6,6 +6,14 @@ import { assetUrl } from "./lib/assets";
 import { SegmentTracker, PAUSED_ROAD_CONTEXT_KEY, SEGMENT_SESSION_KEY } from "./components/SegmentTracker";
 import type { SegmentGeometry } from "./components/SegmentTracker";
 import { SurveyProgressPanel } from "./components/SurveyProgressPanel";
+import { LoginScreen } from "./components/LoginScreen";
+import {
+  getMobileUser,
+  clearMobileAuth,
+  validateMobileSession,
+  MOBILE_ROLE_LABELS,
+  type MobileUserProfile,
+} from "./lib/auth";
 import { AutocompleteInput } from "./components/AutocompleteInput";
 import { PhotoCapture, capturePhotoNativeOrNull } from "./components/PhotoCapture";
 import {
@@ -385,6 +393,24 @@ export default function App() {
   const [connectionStatus, setConnectionStatus] = useState<"unchecked" | "online" | "offline">("unchecked");
   const [showDevSettings, setShowDevSettings] = useState(false);
   const devClickCountRef = React.useRef(0);
+  const [authUser, setAuthUser] = useState<MobileUserProfile | null>(() => getMobileUser());
+  const [authChecked, setAuthChecked] = useState(false);
+
+  const handleAuthLogin = (user: MobileUserProfile) => {
+    setAuthUser(user);
+    setDefaultSurveyor(user.full_name);
+    setSurveyorName(user.full_name);
+    localStorage.setItem("default_surveyor_name", user.full_name);
+    setActiveTab("welcome");
+    setToast({ message: `Signed in as ${MOBILE_ROLE_LABELS[user.role]}`, type: "success" });
+  };
+
+  const handleAuthLogout = () => {
+    clearMobileAuth();
+    setAuthUser(null);
+    setActiveTab("welcome");
+    setToast({ message: "Signed out.", type: "info" });
+  };
 
   // Form Fields State
   const [assetCategory, setAssetCategory] = useState<"sealed" | "gravel" | "earth" | "bridge" | "footbridge" | "rail_crossing" | "tollgate" | "layby" | "busstop" | "junction" | "sign" | "shelvet" | "culvert" | "piped_causeway" | "drift" | "catchpit" | "grid" | "traffic_calming" | "traffic_lights" | "streetlight">("sealed");
@@ -828,6 +854,22 @@ export default function App() {
       window.removeEventListener("offline", handleOffline);
     };
   }, []);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const url = localStorage.getItem("roads_server_url") || serverUrl;
+      const user = await validateMobileSession(url);
+      if (!alive) return;
+      if (user) {
+        setAuthUser(user);
+        setDefaultSurveyor(user.full_name);
+        setSurveyorName(user.full_name);
+      }
+      setAuthChecked(true);
+    })();
+    return () => { alive = false; };
+  }, [serverUrl]);
 
   const applyPointGpsFix = React.useCallback((latitude: number, longitude: number, altitude: number | null, accuracy: number) => {
     if (!Number.isFinite(accuracy) || accuracy <= 0) return;
@@ -2881,6 +2923,18 @@ export default function App() {
       showToast("Sync failed. Check internet connection and database status.", "error");
     }
   };
+
+  if (!authChecked) {
+    return (
+      <div className="mobile-app-shell" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
+        <div className="spinner" />
+      </div>
+    );
+  }
+
+  if (!authUser) {
+    return <LoginScreen serverUrl={serverUrl} onLoginSuccess={handleAuthLogin} />;
+  }
 
   return (
     <div className="mobile-app-shell">
@@ -5569,6 +5623,24 @@ export default function App() {
           /* Settings tab content */
           <div className="mobile-settings" style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
             <h2 style={{ fontSize: "14px", fontWeight: "700" }}>System Settings</h2>
+
+            <div style={{ background: "var(--bg-card)", border: "1px solid var(--border-color)", borderRadius: "var(--radius-md)", padding: "16px", display: "flex", flexDirection: "column", gap: "10px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <User size={16} color="var(--accent-emerald)" />
+                <span style={{ fontWeight: 700, fontSize: "12px" }}>Signed in</span>
+              </div>
+              <div style={{ fontSize: "12px" }}>
+                <div style={{ fontWeight: 700 }}>{authUser.full_name}</div>
+                <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>{authUser.email}</div>
+                <div style={{ color: "var(--accent-emerald)", fontSize: "10px", fontWeight: 700, marginTop: 4 }}>
+                  {MOBILE_ROLE_LABELS[authUser.role]}
+                  {authUser.is_super_admin ? " · Super Controller" : ""}
+                </div>
+              </div>
+              <button type="button" onClick={handleAuthLogout} className="mobile-btn mobile-btn-outline mobile-btn-danger" style={{ height: 36 }}>
+                Sign Out
+              </button>
+            </div>
 
             <SurveyProgressPanel drafts={drafts} />
             
