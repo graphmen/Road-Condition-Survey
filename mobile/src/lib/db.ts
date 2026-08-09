@@ -285,6 +285,17 @@ export interface SurveyDraft {
   road_segment_end_time?: string;        // ISO 8601
   road_segment_avg_accuracy_m?: number;  // Mean GPS accuracy (metres)
   road_segment_point_count?: number;     // Total GPS waypoints collected
+  road_segment_points_2?: Array<{ lat: number; lng: number; alt?: number; acc: number; ts: number; orig_lat?: number; orig_lng?: number }>;
+  road_segment_geojson_2?: string;
+  road_segment_length_m_2?: number;
+  road_segment_start_time_2?: string;
+  road_segment_end_time_2?: string;
+  road_segment_avg_accuracy_m_2?: number;
+  road_segment_point_count_2?: number;
+
+  /** Sealed dual collection: sequential parallel carriageway surveys in one record. */
+  sealed_collection_mode?: "single" | "dual";
+  dual_road_phase?: 1 | 2;
 
   // Draft workflow status
   status?: "draft" | "queued";

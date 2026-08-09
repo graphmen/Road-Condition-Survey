@@ -1,4 +1,42 @@
 import type { Option } from "./components/SelectWithOther";
+import type { SegmentGeometry } from "./components/SegmentTracker";
+
+export type SealedCollectionMode = "single" | "dual";
+
+export const SEALED_COLLECTION_MODE_OPTIONS: Option[] = [
+  { value: "single", label: "Single road" },
+  { value: "dual", label: "Dual road (parallel carriageways)" },
+];
+
+export interface SealedLaneDefectSnapshot {
+  narrowCracks: string;
+  wideCracks: string;
+  potholesPatches: string;
+  rutting: string;
+  edgeBreaks: string;
+  edgeDrop: string;
+  ravelling: string;
+  ridingQuality: string;
+  drainage: string;
+}
+
+export interface DualRoadLaneSnapshot {
+  segmentGeometry: SegmentGeometry;
+  photos: string[];
+  defects: SealedLaneDefectSnapshot;
+}
+
+export const DEFAULT_SEALED_LANE_DEFECTS: SealedLaneDefectSnapshot = {
+  narrowCracks: "no_cracks",
+  wideCracks: "no_cracks",
+  potholesPatches: "no_potholes",
+  rutting: "no_rutting__5mm",
+  edgeBreaks: "no_edge_break",
+  edgeDrop: "no_edge_break",
+  ravelling: "none",
+  ridingQuality: "good",
+  drainage: "good",
+};
 
 export const SEALED_ROAD_CLASS_OPTIONS: Option[] = [
   { value: "primary", label: "Primary" },
@@ -93,6 +131,10 @@ export const TRAFFIC_CALMING_TYPES: Option[] = [
 
 export function isDualCarriageway(roadType: string): boolean {
   return roadType === "dual_carriageway";
+}
+
+export function isDualCollectionMode(mode: string): boolean {
+  return mode === "dual";
 }
 
 export function isUrbanRoadClass(roadClass: string): boolean {

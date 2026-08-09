@@ -9,6 +9,13 @@ const RAW_DATA_OMIT = new Set([
   "road_segment_end_time",
   "road_segment_avg_accuracy_m",
   "road_segment_point_count",
+  "road_segment_points_2",
+  "road_segment_geojson_2",
+  "road_segment_length_m_2",
+  "road_segment_start_time_2",
+  "road_segment_end_time_2",
+  "road_segment_avg_accuracy_m_2",
+  "road_segment_point_count_2",
 ]);
 
 export function slimRawData(draft: Record<string, unknown>): Record<string, unknown> {

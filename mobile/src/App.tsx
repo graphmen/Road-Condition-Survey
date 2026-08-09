@@ -21,7 +21,12 @@ import {
   YES_NO_OPTIONS,
   DEFECT_SEVERITY_OPTIONS,
   TRAFFIC_CALMING_TYPES,
-  isDualCarriageway,
+  SEALED_COLLECTION_MODE_OPTIONS,
+  DEFAULT_SEALED_LANE_DEFECTS,
+  isDualCollectionMode,
+  type SealedCollectionMode,
+  type SealedLaneDefectSnapshot,
+  type DualRoadLaneSnapshot,
 } from "./sealedRoadConfig";
 import { segmentMaxLengthM, fmtSegmentLimitHint, validateSegmentLengthM } from "./lib/segmentLimits";
 import {
@@ -496,6 +501,10 @@ export default function App() {
   const [sealedRoute, setSealedRoute] = useState("");
   const [sealedClass, setSealedClass] = useState("secondary");
   const [sealedType, setSealedType] = useState("wide_mat_ss");
+  const [sealedCollectionMode, setSealedCollectionMode] = useState<SealedCollectionMode>("single");
+  const [dualRoadPhase, setDualRoadPhase] = useState<1 | 2>(1);
+  const [dualRoad1Snapshot, setDualRoad1Snapshot] = useState<DualRoadLaneSnapshot | null>(null);
+  const [segmentTrackerKey, setSegmentTrackerKey] = useState(0);
   const [sealedClimate, setSealedClimate] = useState("moderate");
   const [sealedTerrain, setSealedTerrain] = useState("flat");
   const [sealedAuthority, setSealedAuthority] = useState("rdc");
@@ -542,6 +551,85 @@ export default function App() {
   const [sealedC2EdgeDrop, setSealedC2EdgeDrop] = useState("no_edge_break");
   const [sealedC2Ravelling, setSealedC2Ravelling] = useState("none");
   const [sealedC2RidingQuality, setSealedC2RidingQuality] = useState("good");
+
+  const sealedDualCollectionStarted =
+    assetCategory === "sealed" &&
+    (sealedCollectionMode === "dual") &&
+    (!!segmentGeometry || !!dualRoad1Snapshot);
+
+  const captureSealedLaneDefects = (): SealedLaneDefectSnapshot => ({
+    narrowCracks: sealedNarrowCracks,
+    wideCracks: sealedWideCracks,
+    potholesPatches: sealedPotholesPatches,
+    rutting: sealedRutting,
+    edgeBreaks: sealedEdgeBreaks,
+    edgeDrop: sealedEdgeDrop,
+    ravelling: sealedRavelling,
+    ridingQuality: sealedRidingQuality,
+    drainage: sealedDrainage,
+  });
+
+  const applySealedLaneDefects = (defects: SealedLaneDefectSnapshot) => {
+    setSealedNarrowCracks(defects.narrowCracks);
+    setSealedWideCracks(defects.wideCracks);
+    setSealedPotholesPatches(defects.potholesPatches);
+    setSealedRutting(defects.rutting);
+    setSealedEdgeBreaks(defects.edgeBreaks);
+    setSealedEdgeDrop(defects.edgeDrop);
+    setSealedRavelling(defects.ravelling);
+    setSealedRidingQuality(defects.ridingQuality);
+    setSealedDrainage(defects.drainage);
+  };
+
+  const resetSealedLaneDefects = () => applySealedLaneDefects(DEFAULT_SEALED_LANE_DEFECTS);
+
+  const resetSealedDualCollection = () => {
+    setSealedCollectionMode("single");
+    setDualRoadPhase(1);
+    setDualRoad1Snapshot(null);
+    setSegmentTrackerKey((k) => k + 1);
+  };
+
+  const handleCompleteRoad1 = () => {
+    if (sealedCollectionMode !== "dual" || dualRoadPhase !== 1) return;
+    if (!segmentGeometry || segmentGeometry.points.length === 0) {
+      showToast("Record Road 1 GPS segment first.", "error");
+      return;
+    }
+    if (!vegetation) {
+      showToast("Vegetation status is required before completing Road 1.", "error");
+      return;
+    }
+    const segCheck = validateSegmentLengthM(segmentGeometry.length_m, sealedClass);
+    if (!segCheck.ok) {
+      showToast(segCheck.message, "error");
+      return;
+    }
+
+    setDualRoad1Snapshot({
+      segmentGeometry,
+      photos: [...photos],
+      defects: captureSealedLaneDefects(),
+    });
+    setDualRoadPhase(2);
+    setSegmentGeometry(null);
+    setPhotos([]);
+    resetSealedLaneDefects();
+    setSegmentTrackerKey((k) => k + 1);
+    setAutoResumeSegment(false);
+    persistPausedRoadContext(null);
+    clearPausedRoadPhotos();
+    try {
+      localStorage.removeItem(SEGMENT_SESSION_KEY);
+    } catch { /* ignore */ }
+    showToast("Road 1 complete. Drive to the parallel carriageway and record Road 2.", "success");
+  };
+
+  useEffect(() => {
+    if (sealedCollectionMode === "dual") {
+      setSealedType("dual_carriageway");
+    }
+  }, [sealedCollectionMode]);
 
   // Conditional Gravel Roads Fields
   const [gravelName, setGravelName] = useState("");
@@ -1457,6 +1545,7 @@ export default function App() {
     setSealedC2EdgeDrop("no_edge_break");
     setSealedC2Ravelling("none");
     setSealedC2RidingQuality("good");
+    resetSealedDualCollection();
     setGravelCorrugationsSeverity("none");
     setGravelCrossSectionSeverity("none");
     setGravelDrainageSeverity("none");
@@ -1524,7 +1613,52 @@ export default function App() {
     setAssetCategory(category);
     setSelectedCategory(category);
 
-    if (draft.road_segment_points) {
+    const draftDualMode =
+      draft.sealed_collection_mode === "dual" ||
+      (draft.Road_Type === "dual_carriageway" && !!draft.road_segment_geojson_2);
+
+    if (category === "sealed" && draftDualMode && draft.road_segment_points) {
+      setSealedCollectionMode("dual");
+      setDualRoad1Snapshot({
+        segmentGeometry: {
+          points: draft.road_segment_points,
+          geojson: draft.road_segment_geojson || "",
+          length_m: draft.road_segment_length_m || 0,
+          start_time: draft.road_segment_start_time || "",
+          end_time: draft.road_segment_end_time || "",
+          avg_accuracy_m: draft.road_segment_avg_accuracy_m || 0,
+          point_count: draft.road_segment_point_count || 0,
+        },
+        photos: [],
+        defects: {
+          narrowCracks: draft.Carriage1_Narrow_cracks || draft.Narrow_cracks_degree || "no_cracks",
+          wideCracks: draft.Carriage1_Wide_cracks || draft.Wide_cracks_degree || "no_cracks",
+          potholesPatches: mapLegacyPotholePatches(draft.Carriage1_Pothole_patches || draft.Pothole_patches_degree),
+          rutting: draft.Carriage1_Rutting || draft.Rutting_degree || "no_rutting__5mm",
+          edgeBreaks: draft.Carriage1_Edge_breaks || draft.Edge_breaks_Degree || "no_edge_break",
+          edgeDrop: draft.Carriage1_Edge_drop || draft.Edge_Drop_Degree || "no_edge_break",
+          ravelling: draft.Carriage1_Ravelling || draft.Ravelling_Degree || "none",
+          ridingQuality: draft.Carriage1_Riding_quality || draft.Riding_quality_degree_001 || "good",
+          drainage: draft.Drainage_001 || "good",
+        },
+      });
+      if (draft.road_segment_points_2) {
+        setDualRoadPhase(2);
+        setSegmentGeometry({
+          points: draft.road_segment_points_2,
+          geojson: draft.road_segment_geojson_2 || "",
+          length_m: draft.road_segment_length_m_2 || 0,
+          start_time: draft.road_segment_start_time_2 || "",
+          end_time: draft.road_segment_end_time_2 || "",
+          avg_accuracy_m: draft.road_segment_avg_accuracy_m_2 || 0,
+          point_count: draft.road_segment_point_count_2 || 0,
+        });
+      } else {
+        setDualRoadPhase(draft.dual_road_phase === 1 ? 1 : 2);
+        setSegmentGeometry(null);
+      }
+      setSegmentTrackerKey((k) => k + 1);
+    } else if (draft.road_segment_points) {
       setSegmentGeometry({
         points: draft.road_segment_points,
         geojson: draft.road_segment_geojson || "",
@@ -1573,6 +1707,11 @@ export default function App() {
       setSealedRoute(draft.Route_number_004 || "");
       setSealedClass(draft.paved_road_class || "secondary");
       setSealedType(draft.paved_road_type || "wide_mat_ss");
+      if (draft.sealed_collection_mode) {
+        setSealedCollectionMode(draft.sealed_collection_mode);
+      } else if (draft.Road_Type === "dual_carriageway" && draft.road_segment_geojson_2) {
+        setSealedCollectionMode("dual");
+      }
       setSealedClimate(draft.Climate_Region_001 || "moderate");
       setSealedTerrain(draft.Terrain_Type_002 || "flat");
       setSealedAuthority(draft.Authority_Name_002 === "ddf" ? "rida" : (draft.Authority_Name_002 || "rdc"));
@@ -1619,6 +1758,21 @@ export default function App() {
       setSealedC2EdgeDrop(draft.Carriage2_Edge_drop || "no_edge_break");
       setSealedC2Ravelling(draft.Carriage2_Ravelling || "none");
       setSealedC2RidingQuality(draft.Carriage2_Riding_quality || "good");
+      if (draftDualMode && draft.road_segment_points_2) {
+        applySealedLaneDefects({
+          narrowCracks: draft.Carriage2_Narrow_cracks || "no_cracks",
+          wideCracks: draft.Carriage2_Wide_cracks || "no_cracks",
+          potholesPatches: mapLegacyPotholePatches(draft.Carriage2_Pothole_patches),
+          rutting: draft.Carriage2_Rutting || "no_rutting__5mm",
+          edgeBreaks: draft.Carriage2_Edge_breaks || "no_edge_break",
+          edgeDrop: draft.Carriage2_Edge_drop || "no_edge_break",
+          ravelling: draft.Carriage2_Ravelling || "none",
+          ridingQuality: draft.Carriage2_Riding_quality || "good",
+          drainage: draft.Drainage_001 || "good",
+        });
+      } else if (draftDualMode) {
+        resetSealedLaneDefects();
+      }
     } else if (category === "gravel") {
       setGravelName(draft.gravel_road_name || "");
       setGravelRoute(draft.Route_Number || "");
@@ -1786,6 +1940,15 @@ export default function App() {
           showToast("Sealed road name is required (use Highway Route)", "error");
           return;
         }
+        if (
+          assetCategory === "sealed" &&
+          isDualCollectionMode(sealedCollectionMode) &&
+          !saveAsDraft &&
+          (dualRoadPhase === 1 || !dualRoad1Snapshot)
+        ) {
+          showToast("Complete Road 1 first, then collect Road 2 before queueing.", "error");
+          return;
+        }
         if (assetCategory === "gravel" && !roadName.trim()) {
           showToast("Gravel road name is required (use Highway Route)", "error");
           return;
@@ -1897,20 +2060,40 @@ export default function App() {
       const finalSealedName = roadName.split(" (")[0] || roadName;
       const chainFrom = chainageFrom.trim() ? parseFloat(chainageFrom) : undefined;
       const chainTo = chainageTo.trim() ? parseFloat(chainageTo) : undefined;
+      const isDualPartial =
+        isDualCollectionMode(sealedCollectionMode) &&
+        !!dualRoad1Snapshot &&
+        !segmentGeometry;
+      const isDualSave =
+        isDualCollectionMode(sealedCollectionMode) &&
+        !!dualRoad1Snapshot &&
+        !!segmentGeometry;
+      const road1Defects =
+        isDualSave || isDualPartial ? dualRoad1Snapshot!.defects : captureSealedLaneDefects();
+      const road2Defects = isDualSave ? captureSealedLaneDefects() : null;
+      const combinedPhotos = isDualSave
+        ? [...dualRoad1Snapshot!.photos, ...photos].slice(0, MAX_ROAD_PHOTOS)
+        : isDualPartial
+          ? dualRoad1Snapshot!.photos
+          : photos;
+      const savedRoadType = isDualSave || isDualPartial ? "dual_carriageway" : sealedType;
+
       draftData = {
         ...baseData,
+        photo: combinedPhotos[0] || undefined,
+        photos: combinedPhotos.length > 0 ? combinedPhotos : undefined,
         paved_road_name: finalSealedName,
         paved_road_class: sealedClass,
-        paved_road_type: sealedType,
-        paved_road_condition: sealedRidingQuality,
-        pothole_patches: sealedPotholesPatches,
+        paved_road_type: savedRoadType,
+        paved_road_condition: isDualSave ? road2Defects!.ridingQuality : sealedRidingQuality,
+        pothole_patches: isDualSave ? road2Defects!.potholesPatches : sealedPotholesPatches,
         vegetation: sealedVegetation,
         chainage_from_km: chainFrom,
         chainage_to_km: chainTo,
         Road_Name_002: finalSealedName,
         Route_number_004: undefined,
         Road_Class_002: sealedClass,
-        Road_Type: sealedType,
+        Road_Type: savedRoadType,
         Climate_Region_001: sealedClimate,
         Terrain_Type_002: sealedTerrain,
         Authority_Name_002: sealedAuthority,
@@ -1918,15 +2101,15 @@ export default function App() {
         Road_width_m_002: sealedWidth ? parseFloat(sealedWidth) : undefined,
         Drainage_Type_002_001: sealedDrainageType,
         servitude_vegetation_001: sealedVegetation,
-        Narrow_cracks_degree: sealedNarrowCracks,
-        Wide_cracks_degree: sealedWideCracks,
-        Pothole_patches_degree: sealedPotholesPatches,
-        Rutting_degree: sealedRutting,
-        Edge_breaks_Degree: sealedEdgeBreaks,
-        Edge_Drop_Degree: sealedEdgeDrop,
-        Drainage_001: sealedDrainage,
-        Ravelling_Degree: sealedRavelling,
-        Riding_quality_degree_001: sealedRidingQuality,
+        Narrow_cracks_degree: road1Defects.narrowCracks,
+        Wide_cracks_degree: road1Defects.wideCracks,
+        Pothole_patches_degree: road1Defects.potholesPatches,
+        Rutting_degree: road1Defects.rutting,
+        Edge_breaks_Degree: road1Defects.edgeBreaks,
+        Edge_Drop_Degree: road1Defects.edgeDrop,
+        Drainage_001: isDualSave ? road2Defects!.drainage : sealedDrainage,
+        Ravelling_Degree: road1Defects.ravelling,
+        Riding_quality_degree_001: road1Defects.ridingQuality,
         Road_markings: sealedRoadMarkings,
         Road_studs: sealedRoadStuds,
         Passability_002: sealedPassability,
@@ -1943,22 +2126,24 @@ export default function App() {
         Road_markings_visible: sealedRoadMarkingsVisible,
         Chainage_from_km_002: chainFrom,
         Chainage_to_km_002: chainTo,
-        Carriage1_Narrow_cracks: sealedC1NarrowCracks,
-        Carriage1_Wide_cracks: sealedC1WideCracks,
-        Carriage1_Pothole_patches: sealedC1Potholes,
-        Carriage1_Rutting: sealedC1Rutting,
-        Carriage1_Edge_breaks: sealedC1EdgeBreaks,
-        Carriage1_Edge_drop: sealedC1EdgeDrop,
-        Carriage1_Ravelling: sealedC1Ravelling,
-        Carriage1_Riding_quality: sealedC1RidingQuality,
-        Carriage2_Narrow_cracks: sealedC2NarrowCracks,
-        Carriage2_Wide_cracks: sealedC2WideCracks,
-        Carriage2_Pothole_patches: sealedC2Potholes,
-        Carriage2_Rutting: sealedC2Rutting,
-        Carriage2_Edge_breaks: sealedC2EdgeBreaks,
-        Carriage2_Edge_drop: sealedC2EdgeDrop,
-        Carriage2_Ravelling: sealedC2Ravelling,
-        Carriage2_Riding_quality: sealedC2RidingQuality,
+        sealed_collection_mode: sealedCollectionMode,
+        dual_road_phase: isDualSave ? 2 : dualRoadPhase,
+        Carriage1_Narrow_cracks: road1Defects.narrowCracks,
+        Carriage1_Wide_cracks: road1Defects.wideCracks,
+        Carriage1_Pothole_patches: road1Defects.potholesPatches,
+        Carriage1_Rutting: road1Defects.rutting,
+        Carriage1_Edge_breaks: road1Defects.edgeBreaks,
+        Carriage1_Edge_drop: road1Defects.edgeDrop,
+        Carriage1_Ravelling: road1Defects.ravelling,
+        Carriage1_Riding_quality: road1Defects.ridingQuality,
+        Carriage2_Narrow_cracks: isDualSave ? road2Defects!.narrowCracks : sealedC2NarrowCracks,
+        Carriage2_Wide_cracks: isDualSave ? road2Defects!.wideCracks : sealedC2WideCracks,
+        Carriage2_Pothole_patches: isDualSave ? road2Defects!.potholesPatches : sealedC2Potholes,
+        Carriage2_Rutting: isDualSave ? road2Defects!.rutting : sealedC2Rutting,
+        Carriage2_Edge_breaks: isDualSave ? road2Defects!.edgeBreaks : sealedC2EdgeBreaks,
+        Carriage2_Edge_drop: isDualSave ? road2Defects!.edgeDrop : sealedC2EdgeDrop,
+        Carriage2_Ravelling: isDualSave ? road2Defects!.ravelling : sealedC2Ravelling,
+        Carriage2_Riding_quality: isDualSave ? road2Defects!.ridingQuality : sealedC2RidingQuality,
       };
     } else if (assetCategory === "gravel") {
       const finalGravelName = roadName.split(" (")[0] || roadName;
@@ -2163,15 +2348,54 @@ export default function App() {
 
     // Attach GPS line geometry for road survey types
     if (isRoadType && segmentGeometry) {
+      if (assetCategory === "sealed" && isDualCollectionMode(sealedCollectionMode) && dualRoad1Snapshot) {
+        const r1 = dualRoad1Snapshot.segmentGeometry;
+        const r2 = segmentGeometry;
+        draftData = {
+          ...draftData,
+          road_segment_points: r1.points,
+          road_segment_geojson: r1.geojson,
+          road_segment_length_m: r1.length_m,
+          road_segment_start_time: r1.start_time,
+          road_segment_end_time: r1.end_time,
+          road_segment_avg_accuracy_m: r1.avg_accuracy_m,
+          road_segment_point_count: r1.point_count,
+          road_segment_points_2: r2.points,
+          road_segment_geojson_2: r2.geojson,
+          road_segment_length_m_2: r2.length_m,
+          road_segment_start_time_2: r2.start_time,
+          road_segment_end_time_2: r2.end_time,
+          road_segment_avg_accuracy_m_2: r2.avg_accuracy_m,
+          road_segment_point_count_2: r2.point_count,
+        };
+      } else {
+        draftData = {
+          ...draftData,
+          road_segment_points: segmentGeometry.points,
+          road_segment_geojson: segmentGeometry.geojson,
+          road_segment_length_m: segmentGeometry.length_m,
+          road_segment_start_time: segmentGeometry.start_time,
+          road_segment_end_time: segmentGeometry.end_time,
+          road_segment_avg_accuracy_m: segmentGeometry.avg_accuracy_m,
+          road_segment_point_count: segmentGeometry.point_count,
+        };
+      }
+    } else if (
+      assetCategory === "sealed" &&
+      isDualCollectionMode(sealedCollectionMode) &&
+      dualRoad1Snapshot &&
+      saveAsDraft
+    ) {
+      const r1 = dualRoad1Snapshot.segmentGeometry;
       draftData = {
         ...draftData,
-        road_segment_points: segmentGeometry.points,
-        road_segment_geojson: segmentGeometry.geojson,
-        road_segment_length_m: segmentGeometry.length_m,
-        road_segment_start_time: segmentGeometry.start_time,
-        road_segment_end_time: segmentGeometry.end_time,
-        road_segment_avg_accuracy_m: segmentGeometry.avg_accuracy_m,
-        road_segment_point_count: segmentGeometry.point_count,
+        road_segment_points: r1.points,
+        road_segment_geojson: r1.geojson,
+        road_segment_length_m: r1.length_m,
+        road_segment_start_time: r1.start_time,
+        road_segment_end_time: r1.end_time,
+        road_segment_avg_accuracy_m: r1.avg_accuracy_m,
+        road_segment_point_count: r1.point_count,
       };
     }
 
@@ -3344,11 +3568,59 @@ export default function App() {
               }
             />
 
+            {assetCategory === "sealed" && (
+              <div className="mobile-form-group">
+                <label className="mobile-label">Collection Mode</label>
+                <select
+                  value={sealedCollectionMode}
+                  onChange={(e) => {
+                    const mode = e.target.value as SealedCollectionMode;
+                    setSealedCollectionMode(mode);
+                    if (mode === "single") setSealedType("wide_mat_ss");
+                  }}
+                  className="mobile-select"
+                  disabled={sealedDualCollectionStarted}
+                >
+                  {SEALED_COLLECTION_MODE_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+                <span style={{ fontSize: "9px", color: "var(--text-muted)", marginTop: "4px", display: "block" }}>
+                  {isDualCollectionMode(sealedCollectionMode)
+                    ? "Dual mode: collect Road 1 fully, then return to the parallel carriageway for Road 2."
+                    : "Single road is the default — one GPS segment and one attribute form."}
+                </span>
+              </div>
+            )}
+
+            {assetCategory === "sealed" && isDualCollectionMode(sealedCollectionMode) && (
+              <div
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: "var(--radius-md)",
+                  border: "1px solid var(--accent-emerald)",
+                  background: "rgba(16, 185, 129, 0.08)",
+                  fontSize: "11px",
+                  color: "var(--text-accent)",
+                }}
+              >
+                <strong>Road {dualRoadPhase} of 2</strong>
+                {dualRoadPhase === 1
+                  ? " — Record this carriageway, fill in attributes, then tap Complete Road 1."
+                  : dualRoad1Snapshot
+                    ? ` — Road 1 recorded (${Math.round(dualRoad1Snapshot.segmentGeometry.length_m)} m). Record the parallel carriageway below.`
+                    : " — Record the parallel carriageway below."}
+              </div>
+            )}
+
             {/* GPS Segment Tracker — Sealed / Gravel / Earth roads only */}
             {isRoadType && (
               <SegmentTracker
+                key={`segment-tracker-${segmentTrackerKey}`}
                 roadLabel={
-                  assetCategory === "sealed" ? "Sealed Road"
+                  assetCategory === "sealed" && isDualCollectionMode(sealedCollectionMode)
+                    ? `Sealed Road ${dualRoadPhase}`
+                  : assetCategory === "sealed" ? "Sealed Road"
                   : assetCategory === "gravel" ? "Gravel Road"
                   : "Earth Road"
                 }
@@ -3719,7 +3991,9 @@ export default function App() {
             {/* Conditional Form: Sealed Road */}
             {assetCategory === "sealed" && segmentGeometry && (
               <fieldset style={{ border: "1px solid var(--border-color)", padding: "12px", borderRadius: "var(--radius-md)", display: "flex", flexDirection: "column", gap: "10px" }}>
-                <legend style={{ fontSize: "10px", fontWeight: "700", textTransform: "uppercase", color: "var(--text-accent)", padding: "0 6px" }}>Sealed Road Properties</legend>
+                <legend style={{ fontSize: "10px", fontWeight: "700", textTransform: "uppercase", color: "var(--text-accent)", padding: "0 6px" }}>
+                  Sealed Road Properties{isDualCollectionMode(sealedCollectionMode) ? ` — Road ${dualRoadPhase}` : ""}
+                </legend>
 
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                   <div className="mobile-form-group">
@@ -3732,7 +4006,12 @@ export default function App() {
                   </div>
                   <div className="mobile-form-group">
                     <label className="mobile-label">Road Type</label>
-                    <select value={sealedType} onChange={(e) => setSealedType(e.target.value)} className="mobile-select">
+                    <select
+                      value={sealedType}
+                      onChange={(e) => setSealedType(e.target.value)}
+                      className="mobile-select"
+                      disabled={isDualCollectionMode(sealedCollectionMode)}
+                    >
                       {SEALED_ROAD_TYPE_OPTIONS.map((o) => (
                         <option key={o.value} value={o.value}>{o.label}</option>
                       ))}
@@ -3880,228 +4159,75 @@ export default function App() {
                   </select>
                 </div>
 
-                {!isDualCarriageway(sealedType) && (
-                  <>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                      <div className="mobile-form-group">
-                        <label className="mobile-label">Narrow Cracks</label>
-                        <select value={sealedNarrowCracks} onChange={(e) => setSealedNarrowCracks(e.target.value)} className="mobile-select">
-                          <option value="no_cracks">No cracks</option>
-                          <option value="faint_cracks">Faint cracks</option>
-                          <option value="distinct_cracks_up_to_1mm">Distinct cracks up to 1mm</option>
-                          <option value="mixed">Mixed</option>
-                        </select>
-                      </div>
-                      <div className="mobile-form-group">
-                        <label className="mobile-label">Wide Cracks</label>
-                        <select value={sealedWideCracks} onChange={(e) => setSealedWideCracks(e.target.value)} className="mobile-select">
-                          <option value="no_cracks">No cracks</option>
-                          <option value="cracks_3_5mm">Cracks 3-5mm</option>
-                          <option value="cracks_5_10mm">Cracks 5-10mm</option>
-                          <option value="mixed">Mixed</option>
-                        </select>
-                      </div>
-                    </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                      <div className="mobile-form-group">
-                        <label className="mobile-label">Pothole / Patches</label>
-                        <SelectWithOther value={sealedPotholesPatches} onChange={setSealedPotholesPatches} options={POTHOLE_PATCHES_OPTIONS} includeOther={false} />
-                      </div>
-                      <div className="mobile-form-group">
-                        <label className="mobile-label">Rutting Degree</label>
-                        <select value={sealedRutting} onChange={(e) => setSealedRutting(e.target.value)} className="mobile-select">
-                          <option value="no_rutting__5mm">No rutting &lt;5mm</option>
-                          <option value="discernible_5_15mm">Discernible 5-15mm</option>
-                          <option value="large_15_25mm">Large 15-25mm</option>
-                          <option value="mixed">Mixed</option>
-                        </select>
-                      </div>
-                    </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                      <div className="mobile-form-group">
-                        <label className="mobile-label">Edge Breaks</label>
-                        <select value={sealedEdgeBreaks} onChange={(e) => setSealedEdgeBreaks(e.target.value)} className="mobile-select">
-                          <option value="no_edge_break">No edge break</option>
-                          <option value="up_to_50mm">Up to 50mm</option>
-                          <option value="50_100mm_break">50-100mm break</option>
-                          <option value="__100mm">&gt; 100mm</option>
-                        </select>
-                      </div>
-                      <div className="mobile-form-group">
-                        <label className="mobile-label">Edge Drop</label>
-                        <select value={sealedEdgeDrop} onChange={(e) => setSealedEdgeDrop(e.target.value)} className="mobile-select">
-                          <option value="no_edge_break">No edge drop</option>
-                          <option value="up_to_50mm">Up to 50mm</option>
-                          <option value="50_100mm_break">50-100mm drop</option>
-                          <option value="__100mm">&gt; 100mm</option>
-                        </select>
-                      </div>
-                    </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                      <div className="mobile-form-group">
-                        <label className="mobile-label">Ravelling Degree</label>
-                        <select value={sealedRavelling} onChange={(e) => setSealedRavelling(e.target.value)} className="mobile-select">
-                          <option value="none">None</option>
-                          <option value="minor">Minor</option>
-                          <option value="major">Major</option>
-                        </select>
-                      </div>
-                      <div className="mobile-form-group">
-                        <label className="mobile-label" style={{ color: "var(--text-accent)" }}>Riding Quality</label>
-                        <SelectWithOther value={sealedRidingQuality} onChange={setSealedRidingQuality} options={CONDITION_GFPM_CONSTRUCTION} includeOther={false} style={{ borderColor: "var(--accent-emerald)" }} />
-                      </div>
-                    </div>
-                  </>
-                )}
-
-                {isDualCarriageway(sealedType) && (
-                  <>
-                    <fieldset style={{ border: "1px dashed var(--border-color)", padding: "10px", borderRadius: "var(--radius-sm)", display: "flex", flexDirection: "column", gap: "8px" }}>
-                      <legend style={{ fontSize: "10px", fontWeight: 700, color: "var(--text-accent)", padding: "0 4px" }}>Carriage 1</legend>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                        <div className="mobile-form-group">
-                          <label className="mobile-label">Narrow Cracks</label>
-                          <select value={sealedC1NarrowCracks} onChange={(e) => setSealedC1NarrowCracks(e.target.value)} className="mobile-select">
-                            <option value="no_cracks">No cracks</option>
-                            <option value="faint_cracks">Faint cracks</option>
-                            <option value="distinct_cracks_up_to_1mm">Distinct cracks up to 1mm</option>
-                            <option value="mixed">Mixed</option>
-                          </select>
-                        </div>
-                        <div className="mobile-form-group">
-                          <label className="mobile-label">Wide Cracks</label>
-                          <select value={sealedC1WideCracks} onChange={(e) => setSealedC1WideCracks(e.target.value)} className="mobile-select">
-                            <option value="no_cracks">No cracks</option>
-                            <option value="cracks_3_5mm">Cracks 3-5mm</option>
-                            <option value="cracks_5_10mm">Cracks 5-10mm</option>
-                            <option value="mixed">Mixed</option>
-                          </select>
-                        </div>
-                      </div>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                        <div className="mobile-form-group">
-                          <label className="mobile-label">Pothole / Patches</label>
-                          <SelectWithOther value={sealedC1Potholes} onChange={setSealedC1Potholes} options={POTHOLE_PATCHES_OPTIONS} includeOther={false} />
-                        </div>
-                        <div className="mobile-form-group">
-                          <label className="mobile-label">Rutting</label>
-                          <select value={sealedC1Rutting} onChange={(e) => setSealedC1Rutting(e.target.value)} className="mobile-select">
-                            <option value="no_rutting__5mm">No rutting &lt;5mm</option>
-                            <option value="discernible_5_15mm">Discernible 5-15mm</option>
-                            <option value="large_15_25mm">Large 15-25mm</option>
-                            <option value="mixed">Mixed</option>
-                          </select>
-                        </div>
-                      </div>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                        <div className="mobile-form-group">
-                          <label className="mobile-label">Edge Breaks</label>
-                          <select value={sealedC1EdgeBreaks} onChange={(e) => setSealedC1EdgeBreaks(e.target.value)} className="mobile-select">
-                            <option value="no_edge_break">No edge break</option>
-                            <option value="up_to_50mm">Up to 50mm</option>
-                            <option value="50_100mm_break">50-100mm break</option>
-                            <option value="__100mm">&gt; 100mm</option>
-                          </select>
-                        </div>
-                        <div className="mobile-form-group">
-                          <label className="mobile-label">Edge Drop</label>
-                          <select value={sealedC1EdgeDrop} onChange={(e) => setSealedC1EdgeDrop(e.target.value)} className="mobile-select">
-                            <option value="no_edge_break">No edge drop</option>
-                            <option value="up_to_50mm">Up to 50mm</option>
-                            <option value="50_100mm_break">50-100mm drop</option>
-                            <option value="__100mm">&gt; 100mm</option>
-                          </select>
-                        </div>
-                      </div>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                        <div className="mobile-form-group">
-                          <label className="mobile-label">Ravelling</label>
-                          <select value={sealedC1Ravelling} onChange={(e) => setSealedC1Ravelling(e.target.value)} className="mobile-select">
-                            <option value="none">None</option>
-                            <option value="minor">Minor</option>
-                            <option value="major">Major</option>
-                          </select>
-                        </div>
-                        <div className="mobile-form-group">
-                          <label className="mobile-label">Riding Quality</label>
-                          <SelectWithOther value={sealedC1RidingQuality} onChange={setSealedC1RidingQuality} options={CONDITION_GFPM_CONSTRUCTION} includeOther={false} />
-                        </div>
-                      </div>
-                    </fieldset>
-                    <fieldset style={{ border: "1px dashed var(--border-color)", padding: "10px", borderRadius: "var(--radius-sm)", display: "flex", flexDirection: "column", gap: "8px" }}>
-                      <legend style={{ fontSize: "10px", fontWeight: 700, color: "var(--text-accent)", padding: "0 4px" }}>Carriage 2</legend>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                        <div className="mobile-form-group">
-                          <label className="mobile-label">Narrow Cracks</label>
-                          <select value={sealedC2NarrowCracks} onChange={(e) => setSealedC2NarrowCracks(e.target.value)} className="mobile-select">
-                            <option value="no_cracks">No cracks</option>
-                            <option value="faint_cracks">Faint cracks</option>
-                            <option value="distinct_cracks_up_to_1mm">Distinct cracks up to 1mm</option>
-                            <option value="mixed">Mixed</option>
-                          </select>
-                        </div>
-                        <div className="mobile-form-group">
-                          <label className="mobile-label">Wide Cracks</label>
-                          <select value={sealedC2WideCracks} onChange={(e) => setSealedC2WideCracks(e.target.value)} className="mobile-select">
-                            <option value="no_cracks">No cracks</option>
-                            <option value="cracks_3_5mm">Cracks 3-5mm</option>
-                            <option value="cracks_5_10mm">Cracks 5-10mm</option>
-                            <option value="mixed">Mixed</option>
-                          </select>
-                        </div>
-                      </div>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                        <div className="mobile-form-group">
-                          <label className="mobile-label">Pothole / Patches</label>
-                          <SelectWithOther value={sealedC2Potholes} onChange={setSealedC2Potholes} options={POTHOLE_PATCHES_OPTIONS} includeOther={false} />
-                        </div>
-                        <div className="mobile-form-group">
-                          <label className="mobile-label">Rutting</label>
-                          <select value={sealedC2Rutting} onChange={(e) => setSealedC2Rutting(e.target.value)} className="mobile-select">
-                            <option value="no_rutting__5mm">No rutting &lt;5mm</option>
-                            <option value="discernible_5_15mm">Discernible 5-15mm</option>
-                            <option value="large_15_25mm">Large 15-25mm</option>
-                            <option value="mixed">Mixed</option>
-                          </select>
-                        </div>
-                      </div>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                        <div className="mobile-form-group">
-                          <label className="mobile-label">Edge Breaks</label>
-                          <select value={sealedC2EdgeBreaks} onChange={(e) => setSealedC2EdgeBreaks(e.target.value)} className="mobile-select">
-                            <option value="no_edge_break">No edge break</option>
-                            <option value="up_to_50mm">Up to 50mm</option>
-                            <option value="50_100mm_break">50-100mm break</option>
-                            <option value="__100mm">&gt; 100mm</option>
-                          </select>
-                        </div>
-                        <div className="mobile-form-group">
-                          <label className="mobile-label">Edge Drop</label>
-                          <select value={sealedC2EdgeDrop} onChange={(e) => setSealedC2EdgeDrop(e.target.value)} className="mobile-select">
-                            <option value="no_edge_break">No edge drop</option>
-                            <option value="up_to_50mm">Up to 50mm</option>
-                            <option value="50_100mm_break">50-100mm drop</option>
-                            <option value="__100mm">&gt; 100mm</option>
-                          </select>
-                        </div>
-                      </div>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                        <div className="mobile-form-group">
-                          <label className="mobile-label">Ravelling</label>
-                          <select value={sealedC2Ravelling} onChange={(e) => setSealedC2Ravelling(e.target.value)} className="mobile-select">
-                            <option value="none">None</option>
-                            <option value="minor">Minor</option>
-                            <option value="major">Major</option>
-                          </select>
-                        </div>
-                        <div className="mobile-form-group">
-                          <label className="mobile-label">Riding Quality</label>
-                          <SelectWithOther value={sealedC2RidingQuality} onChange={setSealedC2RidingQuality} options={CONDITION_GFPM_CONSTRUCTION} includeOther={false} />
-                        </div>
-                      </div>
-                    </fieldset>
-                  </>
-                )}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Narrow Cracks</label>
+                    <select value={sealedNarrowCracks} onChange={(e) => setSealedNarrowCracks(e.target.value)} className="mobile-select">
+                      <option value="no_cracks">No cracks</option>
+                      <option value="faint_cracks">Faint cracks</option>
+                      <option value="distinct_cracks_up_to_1mm">Distinct cracks up to 1mm</option>
+                      <option value="mixed">Mixed</option>
+                    </select>
+                  </div>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Wide Cracks</label>
+                    <select value={sealedWideCracks} onChange={(e) => setSealedWideCracks(e.target.value)} className="mobile-select">
+                      <option value="no_cracks">No cracks</option>
+                      <option value="cracks_3_5mm">Cracks 3-5mm</option>
+                      <option value="cracks_5_10mm">Cracks 5-10mm</option>
+                      <option value="mixed">Mixed</option>
+                    </select>
+                  </div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Pothole / Patches</label>
+                    <SelectWithOther value={sealedPotholesPatches} onChange={setSealedPotholesPatches} options={POTHOLE_PATCHES_OPTIONS} includeOther={false} />
+                  </div>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Rutting Degree</label>
+                    <select value={sealedRutting} onChange={(e) => setSealedRutting(e.target.value)} className="mobile-select">
+                      <option value="no_rutting__5mm">No rutting &lt;5mm</option>
+                      <option value="discernible_5_15mm">Discernible 5-15mm</option>
+                      <option value="large_15_25mm">Large 15-25mm</option>
+                      <option value="mixed">Mixed</option>
+                    </select>
+                  </div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Edge Breaks</label>
+                    <select value={sealedEdgeBreaks} onChange={(e) => setSealedEdgeBreaks(e.target.value)} className="mobile-select">
+                      <option value="no_edge_break">No edge break</option>
+                      <option value="up_to_50mm">Up to 50mm</option>
+                      <option value="50_100mm_break">50-100mm break</option>
+                      <option value="__100mm">&gt; 100mm</option>
+                    </select>
+                  </div>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Edge Drop</label>
+                    <select value={sealedEdgeDrop} onChange={(e) => setSealedEdgeDrop(e.target.value)} className="mobile-select">
+                      <option value="no_edge_break">No edge drop</option>
+                      <option value="up_to_50mm">Up to 50mm</option>
+                      <option value="50_100mm_break">50-100mm drop</option>
+                      <option value="__100mm">&gt; 100mm</option>
+                    </select>
+                  </div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Ravelling Degree</label>
+                    <select value={sealedRavelling} onChange={(e) => setSealedRavelling(e.target.value)} className="mobile-select">
+                      <option value="none">None</option>
+                      <option value="minor">Minor</option>
+                      <option value="major">Major</option>
+                    </select>
+                  </div>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label" style={{ color: "var(--text-accent)" }}>Riding Quality</label>
+                    <SelectWithOther value={sealedRidingQuality} onChange={setSealedRidingQuality} options={CONDITION_GFPM_CONSTRUCTION} includeOther={false} style={{ borderColor: "var(--accent-emerald)" }} />
+                  </div>
+                </div>
 
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                   <div className="mobile-form-group">
@@ -4148,6 +4274,20 @@ export default function App() {
                   </div>
                 </div>
               </fieldset>
+            )}
+
+            {assetCategory === "sealed" &&
+              isDualCollectionMode(sealedCollectionMode) &&
+              dualRoadPhase === 1 &&
+              segmentGeometry && (
+              <button
+                type="button"
+                onClick={handleCompleteRoad1}
+                className="mobile-btn"
+                style={{ width: "100%", marginTop: "4px" }}
+              >
+                Complete Road 1 — Collect Road 2
+              </button>
             )}
 
             {/* Conditional Form: Gravel Road */}
@@ -5213,7 +5353,13 @@ export default function App() {
                   style={{ flex: 1 }}
                 >
                   <PlusCircle size={14} />
-                  <span>{editingDraftId ? "Queue Update" : "Queue for Sync"}</span>
+                  <span>
+                    {editingDraftId
+                      ? "Queue Update"
+                      : assetCategory === "sealed" && isDualCollectionMode(sealedCollectionMode) && dualRoadPhase === 2
+                        ? "Queue Dual Survey"
+                        : "Queue for Sync"}
+                  </span>
                 </button>
               </div>
               {editingDraftId && (

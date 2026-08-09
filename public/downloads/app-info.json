@@ -2,11 +2,11 @@
     "available":  true,
     "minAndroid":  "7.0 (API 24)",
     "fileName":  "motid-road-survey.apk",
-    "releasedAt":  "2026-07-30T06:40:22.0578243Z",
+    "releasedAt":  "2026-08-09T05:24:58.5013718Z",
     "packageId":  "zw.gov.motid.roadsurvey",
-    "sizeBytes":  7019907,
-    "versionCode":  12,
-    "versionName":  "1.6.5",
-    "changelog":  "Survey and photo sync fixes, segment limit auto-stop, and screen-on during GPS recording.",
+    "sizeBytes":  7021403,
+    "versionCode":  13,
+    "versionName":  "1.6.6",
+    "changelog":  "Sealed road dual collection: collect Road 1 and Road 2 sequentially on parallel carriageways.",
     "appName":  "MOTID Road Survey"
 }

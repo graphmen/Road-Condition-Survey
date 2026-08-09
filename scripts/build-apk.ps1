@@ -4,9 +4,9 @@
 #   powershell -ExecutionPolicy Bypass -File scripts/build-apk.ps1
 
 param(
-  [string]$Version = "1.6.5",
-  [int]$VersionCode = 12,
-  [string]$Changelog = "Survey and photo sync fixes, segment limit auto-stop, and screen-on during GPS recording."
+  [string]$Version = "1.6.6",
+  [int]$VersionCode = 13,
+  [string]$Changelog = "Sealed road dual collection: collect Road 1 and Road 2 sequentially on parallel carriageways."
 )
 
 $ErrorActionPreference = "Stop"
