@@ -1181,16 +1181,9 @@ export function SegmentTracker({
           </div>
         </div>
 
-        <div
-          style={{
-            background: "rgba(34,197,94,0.05)",
-            border: "1px dashed rgba(34,197,94,0.25)",
-            borderRadius: "var(--radius-sm)",
-            padding: "10px 12px",
-          }}
-        >
-          <p style={{ fontSize: "10px", color: "var(--text-muted)", margin: 0, lineHeight: 1.8 }}>
-            <strong style={{ color: "var(--text-accent)" }}>High-precision tracking:</strong><br />
+        <div className="mobile-info-box">
+          <p style={{ fontSize: "10px", color: "var(--text-primary)", margin: 0, lineHeight: 1.8 }}>
+            <strong>High-precision tracking:</strong><br />
             🛰 Points auto-added every 3 s when accuracy ≤ {accuracyThreshold.toFixed(1)} m<br />
             📱 Screen stays on while recording for reliable GPS<br />
             📍 Tap <em>Add Point Now</em> (requires accuracy ≤ {accuracyThreshold.toFixed(1)} m)<br />

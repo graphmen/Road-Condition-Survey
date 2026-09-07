@@ -2977,7 +2977,7 @@ export default function App() {
                 onClick={handleDevClick}
                 style={{ height: "70px", marginBottom: "12px", filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.4))", cursor: "pointer" }} 
               />
-              <h2 style={{ fontFamily: "var(--font-title)", fontSize: "20px", fontWeight: "800", letterSpacing: "1px", color: "var(--text-accent)" }}>MOTID COLLECT</h2>
+              <h2 style={{ fontFamily: "var(--font-title)", fontSize: "20px", fontWeight: "800", letterSpacing: "1px", color: "var(--text-on-dark-accent)" }}>MOTID COLLECT</h2>
               <span style={{ fontSize: "11px", fontWeight: "600", textTransform: "uppercase", opacity: 0.85, marginTop: "4px" }}>Ministry of Transport &amp; Infrastructural Development</span>
               <p style={{ fontSize: "10px", opacity: 0.7, maxWidth: "250px", marginTop: "8px", lineHeight: "1.4" }}>
                 Official mobile survey repository for national roads, bridges, and infrastructure telemetry.
@@ -3647,16 +3647,7 @@ export default function App() {
             )}
 
             {assetCategory === "sealed" && isDualCollectionMode(sealedCollectionMode) && (
-              <div
-                style={{
-                  padding: "10px 12px",
-                  borderRadius: "var(--radius-md)",
-                  border: "1px solid var(--accent-emerald)",
-                  background: "rgba(16, 185, 129, 0.08)",
-                  fontSize: "11px",
-                  color: "var(--text-accent)",
-                }}
-              >
+              <div className="mobile-callout">
                 <strong>Road {dualRoadPhase} of 2</strong>
                 {dualRoadPhase === 1
                   ? " — Record this carriageway, fill in attributes, then tap Complete Road 1."

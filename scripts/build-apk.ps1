@@ -4,9 +4,9 @@
 #   powershell -ExecutionPolicy Bypass -File scripts/build-apk.ps1
 
 param(
-  [string]$Version = "1.6.9",
-  [int]$VersionCode = 16,
-  [string]$Changelog = "Fix mobile login server URL: auto-correct localhost, Server URL on sign-in screen.",
+  [string]$Version = "1.7.0",
+  [int]$VersionCode = 17,
+  [string]$Changelog = "Fix text contrast on light backgrounds; labels and info boxes use readable dark green.",
   [string]$ServerUrl = "https://road-condition-survey.vercel.app"
 )
 

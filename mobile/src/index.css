@@ -17,10 +17,15 @@
   
   --text-primary: #1a2b22;
   --text-muted: #6b8072;
-  --text-accent: #FFD100;
+  /* Readable on light cards/forms — not gold (poor contrast on mint/white) */
+  --text-accent: #004d26;
+  --text-secondary: #2d4a3a;
+  /* Gold reserved for dark green header / nav bar only */
+  --text-on-dark-accent: #ffd100;
   
   --accent-emerald: #006633;
-  --accent-gold: #FFD100;
+  --accent-emerald-dark: #004d26;
+  --accent-gold: #ffd100;
   --accent-blue: #1d6fa4;
   --accent-rose: #dc2626;
   
@@ -130,7 +135,7 @@ body {
 
 .mobile-header-subtitle {
   font-size: 8px;
-  color: var(--accent-gold);
+  color: var(--text-on-dark-accent);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -175,7 +180,7 @@ body {
 }
 
 .mobile-nav-item.active {
-  color: var(--accent-gold);
+  color: var(--text-on-dark-accent);
 }
 
 .mobile-nav-badge {
@@ -205,8 +210,10 @@ body {
 
 .mobile-label {
   font-size: 11px;
-  font-weight: 600;
-  color: var(--text-secondary);
+  font-weight: 700;
+  color: var(--text-accent);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .mobile-input, .mobile-select, .mobile-textarea {
@@ -321,5 +328,34 @@ body {
 }
 
 legend {
-  color: var(--accent-emerald) !important;
+  color: var(--text-accent) !important;
+  font-weight: 700 !important;
+}
+
+.mobile-info-box {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-active);
+  border: 1px solid var(--border-active);
+  font-size: 11px;
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+.mobile-info-box strong {
+  color: var(--text-accent);
+}
+
+.mobile-callout {
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-active);
+  background: var(--bg-active);
+  font-size: 11px;
+  color: var(--text-primary);
+  line-height: 1.45;
+}
+
+.mobile-callout strong {
+  color: var(--accent-emerald-dark);
 }
