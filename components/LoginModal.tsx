@@ -4,6 +4,7 @@ import { Lock, Mail, Eye, EyeOff, ShieldCheck, AlertCircle, Key, LifeBuoy } from
 import { UserProfile } from "@/components/helpers";
 import { setInactivityTimestamp } from "@/hooks/useInactivityTimeout";
 import { saveAuthSession, authFetch } from "@/lib/authClient";
+import { TRAINING_EMAIL, TRAINING_PASSWORD } from "@/lib/trainingCredentials";
 
 interface LoginModalProps {
   onLoginSuccess: (user: UserProfile) => void;
@@ -197,6 +198,22 @@ export default function LoginModal({ onLoginSuccess }: LoginModalProps) {
               <button type="submit" disabled={loading} style={{ background: loading ? "#94a3b8" : "#006633", color: "#fff", border: "none", borderRadius: 8, padding: 12, fontSize: 13, fontWeight: 800, cursor: loading ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
                 <Key size={15} /> {loading ? "Authenticating..." : "Sign In"}
               </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setUsernameOrEmail(TRAINING_EMAIL);
+                  setPassword(TRAINING_PASSWORD);
+                  setError("");
+                }}
+                style={{ background: "#fff9db", color: "#92400e", border: "1px solid #FFD100", borderRadius: 8, padding: 10, fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}
+              >
+                Use training account
+              </button>
+              <div style={{ background: "#f0f7f3", border: "1px solid #006633", borderRadius: 8, padding: "10px 12px", fontSize: 11, color: "#334155", lineHeight: 1.5 }}>
+                <strong style={{ color: "#006633" }}>Training login</strong>
+                <br />
+                {TRAINING_EMAIL} / {TRAINING_PASSWORD}
+              </div>
               <button type="button" onClick={() => { setMode("recover"); setError(""); }} style={{ background: "none", border: "none", color: "#006633", fontSize: 11, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
                 <LifeBuoy size={14} /> Forgot Super Master Admin password?
               </button>

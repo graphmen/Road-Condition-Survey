@@ -6,7 +6,8 @@
     "phone_number": "+263 77 100 0001",
     "role": "master_admin",
     "is_active": true,
-    "must_change_password": false
+    "must_change_password": false,
+    "password_hash": "scrypt:a4f52844ec10e06b8505e8adf0ad2672:903b63985e4e2e95b6b605af33e978fbf6563e705d271bfe3b4653e53ffb09dc4404feced9866437fc5b74cdab421444fa77c0b439e944995447e812534fa558"
   },
   {
     "id": "usr-national-1",
@@ -15,7 +16,8 @@
     "phone_number": "+263 77 200 0002",
     "role": "national_coordinator",
     "is_active": true,
-    "must_change_password": false
+    "must_change_password": false,
+    "password_hash": "scrypt:e89783e9639e11bb88b033d3e300df16:5a2ad9408d1641d5e2e3484cab12228d2e7b535b70523e99720a2712e44901439ff7eacfe80f6c7e50d7ace75013902068828f622c0473423c80e88aa407d2b2"
   },
   {
     "id": "usr-provincial-harare",
@@ -25,7 +27,8 @@
     "role": "provincial_coordinator",
     "province": "Harare",
     "is_active": true,
-    "must_change_password": false
+    "must_change_password": false,
+    "password_hash": "scrypt:5a93d253ae8e22117c7c32be6925e313:7838ddf5085408dcd8a2c6589f142797426375b0945b98612b7d9e5b7bba5e5ad89eb9d019f549bb8a0a10dd0cdce4f00f439eee52417e23a5c786247d4bcd8e"
   },
   {
     "id": "usr-district-harare",
@@ -36,7 +39,8 @@
     "province": "Harare",
     "district": "Harare",
     "is_active": true,
-    "must_change_password": false
+    "must_change_password": false,
+    "password_hash": "scrypt:da5430c825fa9643ed5ece457d51cd59:5028bb987616846a696be4cc483ece3a0a72e1c0e556a0bf706b96606f623f825408998c95d41c2064f53f838a63d3ad8c5742bcc41832f01a578fea1e84629d"
   },
   {
     "id": "usr-collector-1",
@@ -47,16 +51,31 @@
     "province": "Harare",
     "district": "Harare",
     "is_active": true,
-    "must_change_password": false
+    "must_change_password": false,
+    "password_hash": "scrypt:6b3c3e64adcee6e793466118614cfac7:fbecff1e549e084a6c7e996a1ade625b48b28c6f01cc198bafb0b5838542f717514990fcd3c57c2dccb65a44efd42c1680675357807f117779f28e75562e6132"
   },
   {
     "id": "usr-1784874021555",
     "email": "hurungwetrees@gmail.com",
-    "full_name": "Manuel Ndebele",
+    "full_name": "Manuel Ndebele (Super Master Admin)",
     "phone_number": "+263773807928",
-    "role": "provincial_coordinator",
+    "role": "master_admin",
     "province": "Harare",
     "is_active": true,
-    "must_change_password": true
+    "must_change_password": true,
+    "is_super_admin": true,
+    "password_hash": "scrypt:dd1c9f9d37363ff0a1773d3b062f8ea9:b7a2b57c0f54b697f9bf52e4942c554492bb5c98532a046fb5b566823269b387ad69f746dbf9e1bbf21b8454c6cc3b1adb529cb3dd2ac3ad7667d06732ad71ba"
+  },
+  {
+    "id": "usr-training-1",
+    "email": "training@transport.gov.zw",
+    "full_name": "MOTID Training Account",
+    "phone_number": "+263 77 000 0000",
+    "role": "provincial_coordinator",
+    "province": "National",
+    "is_active": true,
+    "must_change_password": false,
+    "is_training_account": true,
+    "password_hash": "scrypt:a2d31c987b88eabc55e1f268f13a68ce:7d7afc8148ac705322c1edf0c84e66a0dc38c8ca0f027562efa65cb83810a71238b2a314f9069a703b8f3f44c5a4205e9693019a4efafc9c59d2c5df19a45254"
   }
 ]

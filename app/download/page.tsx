@@ -23,6 +23,13 @@ type AppInfo = {
   sizeBytes: number | null;
   available: boolean;
   changelog?: string;
+  trainingLogin?: {
+    email: string;
+    password: string;
+    role: string;
+    note: string;
+  };
+  dashboardUrl?: string;
 };
 
 function formatSize(bytes: number | null): string {
@@ -192,6 +199,35 @@ export default function DownloadPage() {
           </div>
         </section>
 
+        <section className="dl-training">
+          <h2>Training venue login</h2>
+          <p className="dl-section-lead">
+            Use this shared account during Level 2 training on web and mobile. No password change required.
+          </p>
+          <div className="dl-training-card">
+            <div className="dl-training-row">
+              <span>Email</span>
+              <strong>{info?.trainingLogin?.email ?? "training@transport.gov.zw"}</strong>
+            </div>
+            <div className="dl-training-row">
+              <span>Password</span>
+              <strong>{info?.trainingLogin?.password ?? "Training@ZimRoads2026!"}</strong>
+            </div>
+            <div className="dl-training-row">
+              <span>Web dashboard</span>
+              <strong>{info?.dashboardUrl ?? "Same URL as this download page (without /download)"}</strong>
+            </div>
+            <div className="dl-training-row">
+              <span>Mobile app</span>
+              <strong>Tap &quot;Use training account&quot; on the sign-in screen, or enter credentials above</strong>
+            </div>
+            <p className="dl-training-note">
+              {info?.trainingLogin?.note ??
+                "For authorised training only. Personal accounts will be issued after training."}
+            </p>
+          </div>
+        </section>
+
         <section className="dl-steps">
           <h2>Install on your phone</h2>
           <p className="dl-section-lead">
@@ -218,10 +254,19 @@ export default function DownloadPage() {
             <li>
               <span className="dl-step-num">3</span>
               <div>
-                <strong>Open MOTID Road Survey</strong>
+                <strong>Sign in with the training account</strong>
                 <p>
-                  After install, open the app, grant location permission, and you are ready to
-                  collect in the field.
+                  Open the app and tap <strong>Use training account</strong>, or enter the training email and
+                  password shown above. Grant location permission when prompted.
+                </p>
+              </div>
+            </li>
+            <li>
+              <span className="dl-step-num">4</span>
+              <div>
+                <strong>Start collecting</strong>
+                <p>
+                  If sync fails, open Settings and confirm Server URL matches the web dashboard address.
                 </p>
               </div>
             </li>

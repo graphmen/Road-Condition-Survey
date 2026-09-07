@@ -21,6 +21,8 @@ export interface UserProfile {
   must_change_password?: boolean;
   /** Only one account — full system control; cannot be deactivated by others. */
   is_super_admin?: boolean;
+  /** Training venue shared login — no password change required. */
+  is_training_account?: boolean;
 }
 
 export interface DeletionRequest {

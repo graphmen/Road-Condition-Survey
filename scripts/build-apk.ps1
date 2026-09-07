@@ -4,9 +4,10 @@
 #   powershell -ExecutionPolicy Bypass -File scripts/build-apk.ps1
 
 param(
-  [string]$Version = "1.6.7",
-  [int]$VersionCode = 14,
-  [string]$Changelog = "Unified login for web and mobile, role-based access, ICT member registration, and Super Master Admin recovery."
+  [string]$Version = "1.6.8",
+  [int]$VersionCode = 15,
+  [string]$Changelog = "Training venue login, pre-configured server URL, and download page training credentials.",
+  [string]$ServerUrl = "https://road-condition-survey.vercel.app"
 )
 
 $ErrorActionPreference = "Stop"
@@ -17,6 +18,8 @@ $MobilePublic = Join-Path $Mobile "public"
 
 Write-Host "Ensuring mobile public assets..." -ForegroundColor Cyan
 New-Item -ItemType Directory -Force -Path $MobilePublic | Out-Null
+Set-Content -Path (Join-Path $Mobile ".env.capacitor") -Value "VITE_DEFAULT_SERVER_URL=$ServerUrl" -Encoding UTF8
+Write-Host "  Server URL for APK: $ServerUrl" -ForegroundColor DarkGray
 foreach ($name in @("coat_of_arms.png", "zimbabwe_roads.geojson", "favicon.svg")) {
   $src = Join-Path $PublicCollector $name
   if (-not (Test-Path $src)) {
@@ -48,7 +51,7 @@ try {
 }
 
 $publishScript = Join-Path $Root "scripts\publish-apk.ps1"
-& $publishScript -Version $Version -VersionCode $VersionCode -Changelog $Changelog
+& $publishScript -Version $Version -VersionCode $VersionCode -Changelog $Changelog -DashboardUrl $ServerUrl
 
 Write-Host ""
 Write-Host "APK ready for collectors at /download (v$Version)" -ForegroundColor Green

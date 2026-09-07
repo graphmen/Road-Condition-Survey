@@ -50,6 +50,7 @@ import {
 } from "./lib/suggestions";
 import { Geolocation } from "@capacitor/geolocation";
 import { Capacitor } from "@capacitor/core";
+import { DEFAULT_SERVER_URL } from "./lib/serverConfig";
 import { BackgroundGeolocation } from "@capgo/background-geolocation";
 import {
   Database,
@@ -811,6 +812,9 @@ export default function App() {
     const savedUrl = localStorage.getItem("roads_server_url");
     if (savedUrl) {
       setServerUrl(savedUrl);
+    } else if (Capacitor.isNativePlatform()) {
+      setServerUrl(DEFAULT_SERVER_URL);
+      localStorage.setItem("roads_server_url", DEFAULT_SERVER_URL);
     } else {
       const defaultUrl = window.location.origin.includes("5173")
         ? "http://localhost:3002"

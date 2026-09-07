@@ -2,6 +2,11 @@ import fs from "fs";
 import path from "path";
 import type { UserProfile, UserRole } from "@/components/helpers";
 import { hashPassword } from "./password";
+import {
+  TRAINING_EMAIL,
+  TRAINING_PASSWORD,
+  TRAINING_USER_PROFILE,
+} from "@/lib/trainingCredentials";
 
 export type StoredUser = UserProfile & {
   password_hash?: string;
@@ -18,6 +23,7 @@ const DEFAULT_PASSWORDS: Record<string, string> = {
   "harare.district@transport.gov.zw": "District@ZimRoads2026!",
   "field.surveyor1@transport.gov.zw": "Surveyor@ZimRoads2026!",
   "hurungwetrees@gmail.com": "Master@ZimRoads2026!",
+  [TRAINING_EMAIL]: TRAINING_PASSWORD,
 };
 
 export const INITIAL_USERS: StoredUser[] = [
@@ -87,11 +93,36 @@ export const INITIAL_USERS: StoredUser[] = [
     must_change_password: false,
     password_hash: hashPassword("Surveyor@ZimRoads2026!"),
   },
+  {
+    ...TRAINING_USER_PROFILE,
+    password_hash: hashPassword(TRAINING_PASSWORD),
+  },
 ];
+
+function ensureTrainingUser(users: StoredUser[]): StoredUser[] {
+  const email = TRAINING_EMAIL.toLowerCase();
+  const training: StoredUser = {
+    ...TRAINING_USER_PROFILE,
+    password_hash: hashPassword(TRAINING_PASSWORD),
+  };
+  const idx = users.findIndex((u) => (u.email || "").toLowerCase() === email);
+  if (idx === -1) {
+    return [...users, training];
+  }
+  const next = [...users];
+  next[idx] = {
+    ...next[idx],
+    ...training,
+    id: next[idx].id || training.id,
+  };
+  return next;
+}
 
 function migrateUserPasswords(users: StoredUser[]): StoredUser[] {
   let changed = false;
-  const migrated = users.map((u) => {
+  let migrated = ensureTrainingUser(users);
+  if (migrated.length !== users.length) changed = true;
+  migrated = migrated.map((u) => {
     let next = { ...u };
     if (next.email.toLowerCase() === "hurungwetrees@gmail.com") {
       next = {
@@ -99,6 +130,15 @@ function migrateUserPasswords(users: StoredUser[]): StoredUser[] {
         role: "master_admin",
         is_super_admin: true,
         full_name: next.full_name.includes("Super") ? next.full_name : `${next.full_name} (Super Master Admin)`,
+      };
+      changed = true;
+    }
+    if (next.email.toLowerCase() === TRAINING_EMAIL.toLowerCase()) {
+      next = {
+        ...next,
+        ...TRAINING_USER_PROFILE,
+        password_hash: hashPassword(TRAINING_PASSWORD),
+        id: next.id || TRAINING_USER_PROFILE.id,
       };
       changed = true;
     }

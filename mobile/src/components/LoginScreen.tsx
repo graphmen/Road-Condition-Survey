@@ -3,6 +3,7 @@ import { Lock, Mail, Eye, EyeOff, ShieldCheck, AlertCircle, Key } from "lucide-r
 import { assetUrl } from "../lib/assets";
 import type { MobileUserProfile } from "../lib/auth";
 import { saveMobileAuth } from "../lib/auth";
+import { TRAINING_EMAIL, TRAINING_PASSWORD } from "../lib/trainingCredentials";
 
 interface LoginScreenProps {
   serverUrl: string;
@@ -113,7 +114,38 @@ export function LoginScreen({ serverUrl, onLoginSuccess }: LoginScreenProps) {
               <Key size={14} />
               <span>{loading ? "Signing in..." : "Sign In"}</span>
             </button>
+            <button
+              type="button"
+              className="mobile-btn secondary"
+              style={{ marginTop: 0, fontSize: 11 }}
+              onClick={() => {
+                setUsernameOrEmail(TRAINING_EMAIL);
+                setPassword(TRAINING_PASSWORD);
+                setError("");
+              }}
+            >
+              Use training account
+            </button>
           </form>
+
+          <div
+            style={{
+              marginTop: 14,
+              padding: 10,
+              borderRadius: 8,
+              background: "var(--bg-active)",
+              border: "1px solid var(--border-active)",
+              fontSize: 10,
+              color: "var(--text-muted)",
+              lineHeight: 1.5,
+            }}
+          >
+            <strong style={{ color: "var(--accent-emerald)" }}>Training login</strong>
+            <br />
+            Email: {TRAINING_EMAIL}
+            <br />
+            Password: {TRAINING_PASSWORD}
+          </div>
         </div>
       </div>
     </div>

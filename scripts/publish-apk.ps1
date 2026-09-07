@@ -10,7 +10,8 @@ param(
   [string]$ApkPath = "",
   [string]$Version = "1.0",
   [int]$VersionCode = 1,
-  [string]$Changelog = "Field collector release for MOTID road condition surveys."
+  [string]$Changelog = "Field collector release for MOTID road condition surveys.",
+  [string]$DashboardUrl = "https://road-condition-survey.vercel.app"
 )
 
 $ErrorActionPreference = "Stop"
@@ -63,7 +64,14 @@ $info = @{
   sizeBytes    = $size
   available    = $true
   changelog    = $Changelog
-} | ConvertTo-Json
+  dashboardUrl = $DashboardUrl.TrimEnd("/")
+  trainingLogin = @{
+    email    = "training@transport.gov.zw"
+    password = "Training@ZimRoads2026!"
+    role     = "Provincial Coordinator (web + mobile)"
+    note     = "Shared training account for Level 2 venues. No password change required."
+  }
+} | ConvertTo-Json -Depth 4
 
 Set-Content -Path $InfoPath -Value $info -Encoding UTF8
 
