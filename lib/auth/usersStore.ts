@@ -16,6 +16,11 @@ export type StoredUser = UserProfile & {
 
 const USERS_FILE = path.resolve(process.cwd(), "public", "users-db.json");
 
+/** Vercel/serverless deployments ship a read-only bundle — persist only locally. */
+function canPersistUsersStore(): boolean {
+  return !process.env.VERCEL && !process.env.AWS_LAMBDA_FUNCTION_NAME;
+}
+
 const DEFAULT_PASSWORDS: Record<string, string> = {
   "ict.admin@transport.gov.zw": "Admin@ZimRoads2026!",
   "national.coordinator@transport.gov.zw": "Coord@ZimRoads2026!",
@@ -101,19 +106,29 @@ export const INITIAL_USERS: StoredUser[] = [
 
 function ensureTrainingUser(users: StoredUser[]): StoredUser[] {
   const email = TRAINING_EMAIL.toLowerCase();
-  const training: StoredUser = {
-    ...TRAINING_USER_PROFILE,
-    password_hash: hashPassword(TRAINING_PASSWORD),
-  };
   const idx = users.findIndex((u) => (u.email || "").toLowerCase() === email);
   if (idx === -1) {
-    return [...users, training];
+    return [
+      ...users,
+      {
+        ...TRAINING_USER_PROFILE,
+        password_hash: hashPassword(TRAINING_PASSWORD),
+      },
+    ];
   }
+  const existing = users[idx];
+  const complete =
+    existing.password_hash &&
+    existing.is_training_account &&
+    existing.role === TRAINING_USER_PROFILE.role &&
+    existing.must_change_password === false;
+  if (complete) return users;
   const next = [...users];
   next[idx] = {
-    ...next[idx],
-    ...training,
-    id: next[idx].id || training.id,
+    ...existing,
+    ...TRAINING_USER_PROFILE,
+    password_hash: existing.password_hash || hashPassword(TRAINING_PASSWORD),
+    id: existing.id || TRAINING_USER_PROFILE.id,
   };
   return next;
 }
@@ -125,22 +140,39 @@ function migrateUserPasswords(users: StoredUser[]): StoredUser[] {
   migrated = migrated.map((u) => {
     let next = { ...u };
     if (next.email.toLowerCase() === "hurungwetrees@gmail.com") {
-      next = {
-        ...next,
-        role: "master_admin",
-        is_super_admin: true,
-        full_name: next.full_name.includes("Super") ? next.full_name : `${next.full_name} (Super Master Admin)`,
-      };
-      changed = true;
+      const fullName = next.full_name.includes("Super")
+        ? next.full_name
+        : `${next.full_name} (Super Master Admin)`;
+      if (
+        next.role !== "master_admin" ||
+        !next.is_super_admin ||
+        next.full_name !== fullName
+      ) {
+        next = {
+          ...next,
+          role: "master_admin",
+          is_super_admin: true,
+          full_name: fullName,
+        };
+        changed = true;
+      }
     }
     if (next.email.toLowerCase() === TRAINING_EMAIL.toLowerCase()) {
-      next = {
-        ...next,
-        ...TRAINING_USER_PROFILE,
-        password_hash: hashPassword(TRAINING_PASSWORD),
-        id: next.id || TRAINING_USER_PROFILE.id,
-      };
-      changed = true;
+      const needsTrainingUpdate =
+        next.role !== TRAINING_USER_PROFILE.role ||
+        next.must_change_password !== false ||
+        !next.is_training_account ||
+        !next.is_active ||
+        !next.password_hash;
+      if (needsTrainingUpdate) {
+        next = {
+          ...next,
+          ...TRAINING_USER_PROFILE,
+          password_hash: next.password_hash || hashPassword(TRAINING_PASSWORD),
+          id: next.id || TRAINING_USER_PROFILE.id,
+        };
+        changed = true;
+      }
     }
     if (next.password_hash) {
       delete next.password;
@@ -155,7 +187,7 @@ function migrateUserPasswords(users: StoredUser[]): StoredUser[] {
     changed = true;
     return next;
   });
-  if (changed) writeUsersStore(migrated);
+  if (changed && canPersistUsersStore()) writeUsersStore(migrated);
   return migrated;
 }
 
@@ -171,16 +203,29 @@ export function getUsersStore(): StoredUser[] {
   } catch (e) {
     console.error("Error reading users-db.json:", e);
   }
-  fs.writeFileSync(USERS_FILE, JSON.stringify(INITIAL_USERS, null, 2), "utf-8");
+  if (canPersistUsersStore()) {
+    try {
+      fs.writeFileSync(USERS_FILE, JSON.stringify(INITIAL_USERS, null, 2), "utf-8");
+    } catch (e) {
+      console.warn("Could not seed users-db.json:", e);
+    }
+  }
   return INITIAL_USERS;
 }
 
 export function writeUsersStore(users: StoredUser[]): void {
+  if (!canPersistUsersStore()) return;
   const sanitized = users.map(({ password_hash, password: _p, ...rest }) => ({
     ...rest,
     password_hash,
   }));
-  fs.writeFileSync(USERS_FILE, JSON.stringify(sanitized, null, 2), "utf-8");
+  try {
+    fs.writeFileSync(USERS_FILE, JSON.stringify(sanitized, null, 2), "utf-8");
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException)?.code;
+    if (code === "EROFS" || code === "EPERM") return;
+    throw e;
+  }
 }
 
 export function findUserById(id: string): StoredUser | undefined {
