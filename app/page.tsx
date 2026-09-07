@@ -374,6 +374,22 @@ export default function Home() {
       </header>
       )}
 
+      {isAuthenticated === true && currentUser?.is_training_account && (
+        <div
+          style={{
+            background: "linear-gradient(90deg, #004d26, #006633)",
+            color: "#fff",
+            textAlign: "center",
+            padding: "8px 16px",
+            fontSize: 11,
+            fontWeight: 600,
+            borderBottom: "2px solid #ffd100",
+          }}
+        >
+          Training mode — viewing all live survey data on the server so trainees can explore the full dashboard (map, analytics & records).
+        </div>
+      )}
+
       {/* Render Login Screen Overlay when unauthenticated */}
       {isAuthenticated === false && (
         <LoginModal

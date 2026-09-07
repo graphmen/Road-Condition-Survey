@@ -145,6 +145,11 @@ export function filterRecordsByRoleScope(records: any[], user: UserProfile): any
   // 1. Exclude soft-deleted records for standard views
   const activeRecords = records.filter(r => !r.is_deleted && r.deletion_status !== "deleted");
 
+  // Training venue account — show all live server data so trainees can explore the full dashboard
+  if (user.is_training_account) {
+    return activeRecords;
+  }
+
   // 2. Master Admin, ICT team & National Coordinator see everything nationwide
   if (
     user.role === "master_admin" ||
