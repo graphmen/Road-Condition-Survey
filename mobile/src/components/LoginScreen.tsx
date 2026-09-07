@@ -1,21 +1,61 @@
-import React, { useState } from "react";
-import { Lock, Mail, Eye, EyeOff, ShieldCheck, AlertCircle, Key } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { Lock, Mail, Eye, EyeOff, ShieldCheck, AlertCircle, Key, Globe, Wifi } from "lucide-react";
 import { assetUrl } from "../lib/assets";
 import type { MobileUserProfile } from "../lib/auth";
 import { saveMobileAuth } from "../lib/auth";
 import { TRAINING_EMAIL, TRAINING_PASSWORD } from "../lib/trainingCredentials";
+import {
+  DEFAULT_SERVER_URL,
+  ensureNativeServerUrl,
+  normalizeServerUrl,
+  resolveStoredServerUrl,
+} from "../lib/serverConfig";
 
 interface LoginScreenProps {
   serverUrl: string;
   onLoginSuccess: (user: MobileUserProfile) => void;
+  onServerUrlChange?: (url: string) => void;
 }
 
-export function LoginScreen({ serverUrl, onLoginSuccess }: LoginScreenProps) {
+export function LoginScreen({ serverUrl, onLoginSuccess, onServerUrlChange }: LoginScreenProps) {
   const [usernameOrEmail, setUsernameOrEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [testing, setTesting] = useState(false);
   const [error, setError] = useState("");
+  const [backendUrl, setBackendUrl] = useState(() => resolveStoredServerUrl() || serverUrl || DEFAULT_SERVER_URL);
+
+  useEffect(() => {
+    const resolved = ensureNativeServerUrl();
+    setBackendUrl(resolved);
+    onServerUrlChange?.(resolved);
+  }, [onServerUrlChange]);
+
+  const persistServerUrl = (url: string) => {
+    const normalized = normalizeServerUrl(url);
+    setBackendUrl(normalized);
+    localStorage.setItem("roads_server_url", normalized);
+    onServerUrlChange?.(normalized);
+  };
+
+  const handleTestConnection = async () => {
+    setError("");
+    setTesting(true);
+    try {
+      const base = normalizeServerUrl(backendUrl);
+      const res = await fetch(`${base}/api/roads`, { method: "GET" });
+      if (!res.ok) {
+        setError(`Server responded with status ${res.status}. Check the URL.`);
+      } else {
+        persistServerUrl(base);
+      }
+    } catch {
+      setError(`Cannot reach ${normalizeServerUrl(backendUrl)}. Check Wi‑Fi/mobile data and the Server URL below.`);
+    } finally {
+      setTesting(false);
+    }
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -24,9 +64,10 @@ export function LoginScreen({ serverUrl, onLoginSuccess }: LoginScreenProps) {
       setError("Enter email and password.");
       return;
     }
+    const base = normalizeServerUrl(backendUrl);
+    persistServerUrl(base);
     setLoading(true);
     try {
-      const base = serverUrl.replace(/\/$/, "");
       const res = await fetch(`${base}/api/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -44,7 +85,7 @@ export function LoginScreen({ serverUrl, onLoginSuccess }: LoginScreenProps) {
       saveMobileAuth(data.user, data.token);
       onLoginSuccess(data.user);
     } catch {
-      setError("Cannot reach server. Check Server URL in settings after signing in, or use Wi‑Fi.");
+      setError(`Cannot reach ${base}. Check Server URL below and your internet connection.`);
       setLoading(false);
     }
   };
@@ -78,6 +119,31 @@ export function LoginScreen({ serverUrl, onLoginSuccess }: LoginScreenProps) {
           )}
 
           <form onSubmit={handleLogin} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div className="mobile-form-group">
+              <label className="mobile-label">Server URL</label>
+              <div style={{ position: "relative" }}>
+                <Globe size={14} style={{ position: "absolute", left: 10, top: 11, color: "var(--text-muted)" }} />
+                <input
+                  type="url"
+                  className="mobile-input"
+                  style={{ paddingLeft: 34 }}
+                  placeholder={DEFAULT_SERVER_URL}
+                  value={backendUrl}
+                  onChange={(e) => setBackendUrl(e.target.value)}
+                  required
+                />
+              </div>
+              <button
+                type="button"
+                className="mobile-btn secondary"
+                style={{ marginTop: 8, fontSize: 11 }}
+                onClick={handleTestConnection}
+                disabled={testing || !backendUrl.trim()}
+              >
+                <Wifi size={14} />
+                <span>{testing ? "Testing..." : "Test connection"}</span>
+              </button>
+            </div>
             <div className="mobile-form-group">
               <label className="mobile-label">Email / Username</label>
               <div style={{ position: "relative" }}>

@@ -50,7 +50,7 @@ import {
 } from "./lib/suggestions";
 import { Geolocation } from "@capacitor/geolocation";
 import { Capacitor } from "@capacitor/core";
-import { DEFAULT_SERVER_URL } from "./lib/serverConfig";
+import { ensureNativeServerUrl, resolveStoredServerUrl } from "./lib/serverConfig";
 import { BackgroundGeolocation } from "@capgo/background-geolocation";
 import {
   Database,
@@ -388,7 +388,7 @@ export default function App() {
   const [showRecoveryBanner, setShowRecoveryBanner] = React.useState(false);
 
   // Settings State
-  const [serverUrl, setServerUrl] = useState("http://localhost:3002");
+  const [serverUrl, setServerUrl] = useState(() => resolveStoredServerUrl());
   const [defaultSurveyor, setDefaultSurveyor] = useState("");
   const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<"unchecked" | "online" | "offline">("unchecked");
@@ -809,19 +809,8 @@ export default function App() {
     setDrafts(db.getDrafts());
     setIsOnline(navigator.onLine);
 
-    const savedUrl = localStorage.getItem("roads_server_url");
-    if (savedUrl) {
-      setServerUrl(savedUrl);
-    } else if (Capacitor.isNativePlatform()) {
-      setServerUrl(DEFAULT_SERVER_URL);
-      localStorage.setItem("roads_server_url", DEFAULT_SERVER_URL);
-    } else {
-      const defaultUrl = window.location.origin.includes("5173")
-        ? "http://localhost:3002"
-        : window.location.origin;
-      setServerUrl(defaultUrl);
-      localStorage.setItem("roads_server_url", defaultUrl);
-    }
+    const resolvedUrl = ensureNativeServerUrl();
+    setServerUrl(resolvedUrl);
 
     const savedSurveyor = localStorage.getItem("default_surveyor_name");
     if (savedSurveyor) {
@@ -2937,7 +2926,13 @@ export default function App() {
   }
 
   if (!authUser) {
-    return <LoginScreen serverUrl={serverUrl} onLoginSuccess={handleAuthLogin} />;
+    return (
+      <LoginScreen
+        serverUrl={serverUrl}
+        onServerUrlChange={setServerUrl}
+        onLoginSuccess={handleAuthLogin}
+      />
+    );
   }
 
   return (
