@@ -17,6 +17,8 @@ import {
   fireMapGoto,
   getAssetName,
   normalizePhotos,
+  recordHasPhotos,
+  mergePhotoLists,
   type MapGotoDetail,
   type UserProfile,
   ROLE_LABELS,
@@ -122,8 +124,10 @@ export default function Home() {
   const enrichRecordsWithPhotos = (rows: any[]) =>
     (rows || []).map((r) => {
       const photos = normalizePhotos(r);
-      if (photos.length === 0) return r;
-      return { ...r, photos, photo: photos[0], _allPhotos: photos };
+      if (photos.length === 0) {
+        return { ...r, has_photo: r.has_photo ?? false, photo_count: r.photo_count ?? 0 };
+      }
+      return { ...r, photos, photo: photos[0], _allPhotos: photos, has_photo: true, photo_count: photos.length };
     });
 
   const fetchRecords = async (silent = false, force = false) => {
@@ -148,63 +152,51 @@ export default function Home() {
     }
   };
 
-  // Two-phase load:
-  // 1. Show local cache instantly (no spinner)
-  // 2. When server responds, MERGE with local data so all records appear
-  useEffect(() => {
-    let localRecords: any[] = [];
-
-    const load = async () => {
-      // Phase 1 — instant local render
-      try {
-        const localRes = await fetch("/api/roads?fallback=1");
-        if (localRes.ok) {
-          const localData = await localRes.json();
-          localRecords = localData.records || [];
-          if (localRecords.length > 0) {
-            setRecords(localRecords);
-            setSourceInfo("Local Cache");
-            setIsLoading(false);
-          }
-        }
-      } catch (_) {}
-
-      // Phase 2 â€” server data arrives; merge with local so nothing is lost
-      try {
-        const res = await fetch("/api/roads");
-        if (res.ok) {
-          const data = await res.json();
-          const serverRecords: any[] = data.records || [];
-
-          if (serverRecords.length > 0) {
-            // Deduplicate: server records win on conflict (newest data)
-            const seenIds = new Set(serverRecords.map((r: any) => String(r.id || r._id || "")));
-            const localOnly = localRecords.filter(
-              (r: any) => { const id = String(r.id || r._id || ""); return !id || !seenIds.has(id); }
-            );
-            const merged = [...serverRecords, ...localOnly];
-            setRecords(enrichRecordsWithPhotos(merged));
-            setLastSynced(new Date());
-            let src = "Server Live";
-            if (data.cached) src = "Server (Cached)";
-            if (data.fallback) src = "Offline Cache";
-            setSourceInfo(`${src} · ${merged.length} records`);
-          }
-        }
-      } catch (_) {}
-
-      setIsLoading(false);
-    };
-    load();
-  }, []);
-
-  // After sign-in and during active training: keep pulling fresh synced data from server
+  // Load live server data after sign-in (skip stale local fallback that lacks photos)
   useEffect(() => {
     if (isAuthenticated !== true) return;
-    fetchRecords(true, true);
-    const interval = window.setInterval(() => fetchRecords(true, true), 90_000);
-    return () => window.clearInterval(interval);
+
+    let alive = true;
+    const load = async () => {
+      if (!alive) return;
+      await fetchRecords(false, true);
+    };
+    load();
+    const interval = window.setInterval(() => {
+      if (alive) fetchRecords(true, true);
+    }, 90_000);
+    return () => {
+      alive = false;
+      window.clearInterval(interval);
+    };
   }, [isAuthenticated]);
+
+  // Keep selected asset in sync when fresh records arrive (photos load after list refresh)
+  useEffect(() => {
+    if (!selectedRecord) return;
+    const id = String(selectedRecord.id || selectedRecord._id || selectedRecord.survey_id || "").trim();
+    if (!id) return;
+    const updated = records.find(
+      (r) => String(r.id || r._id || r.survey_id || "").trim() === id
+    );
+    if (!updated) return;
+    const mergedPhotos = mergePhotoLists(normalizePhotos(selectedRecord), normalizePhotos(updated));
+    const prevCount = normalizePhotos(selectedRecord).length;
+    if (mergedPhotos.length === prevCount && !recordHasPhotos(updated)) return;
+    setSelectedRecord((prev) =>
+      prev
+        ? {
+            ...prev,
+            ...updated,
+            photos: mergedPhotos,
+            photo: mergedPhotos[0] || null,
+            _allPhotos: mergedPhotos,
+            has_photo: mergedPhotos.length > 0 || recordHasPhotos(updated),
+            photo_count: mergedPhotos.length || updated.photo_count || 0,
+          }
+        : prev
+    );
+  }, [records]);
 
   useEffect(() => {
     if (typeof window !== "undefined" && "serviceWorker" in navigator) {

@@ -1,7 +1,5 @@
-/** Fields stored in dedicated DB columns — omit from raw_data JSONB to keep payloads small. */
+/** Fields stored in dedicated DB columns — omit heavy geometry from raw_data only. */
 const RAW_DATA_OMIT = new Set([
-  "photo",
-  "photos",
   "road_segment_points",
   "road_segment_geojson",
   "road_segment_length_m",

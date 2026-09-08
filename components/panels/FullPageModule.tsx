@@ -2,7 +2,7 @@
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { LayoutDashboard, TrendingUp, BarChart2, ClipboardCheck, Database, Download, ArrowUpDown, Search, X, ChevronDown, ChevronUp, Camera, FileText, BookOpen, Trash2, Compass, Users, ShieldAlert } from "lucide-react";
 
 import {
@@ -10,7 +10,7 @@ import {
   BarChart, Bar, XAxis, YAxis, LineChart, Line, CartesianGrid, AreaChart, Area,
 } from "recharts";
 import {
-  getRecordStatus, getAssetType, getAssetName, formatStatusLabel, getStatusColor, normalizePhotos, mergePhotoLists, getSadcValue,
+  getRecordStatus, getAssetType, getAssetName, formatStatusLabel, getStatusColor, normalizePhotos, mergePhotoLists, recordHasPhotos, getSadcValue,
   AUTHORITY_OPTIONS, CONDITION_WITH_CONSTRUCTION_OPTIONS,
   formatGpsLabel,
 } from "@/components/helpers";
@@ -4225,26 +4225,44 @@ export default function FullPageModule({ module, records, onSelectRecord, onClos
 function GalleryCard({ record, onSelectRecord, onOpenLightbox }: { record: any; onSelectRecord: (r: any) => void; onOpenLightbox: (record: any, photos: string[]) => void }) {
   const [photos, setPhotos] = useState<string[]>(() => normalizePhotos(record));
   const [loading, setLoading] = useState<boolean>(false);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [inView, setInView] = useState(false);
 
   useEffect(() => {
-    const id = record.id || record._id || record.survey_id;
+    const el = cardRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) setInView(true); },
+      { rootMargin: "120px" }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
+
+  useEffect(() => {
     const initial = normalizePhotos(record);
     setPhotos(initial);
+    if (!inView) return;
+    if (initial.length > 0) return;
 
+    const id = record.id || record._id || record.survey_id;
     if (!id) return;
 
     setLoading(true);
     fetch(`/api/roads?photoFor=${encodeURIComponent(id)}`)
-      .then(res => res.json())
-      .then(data => {
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((data) => {
         const remote = Array.isArray(data.photos) && data.photos.length > 0
           ? data.photos
           : (data.photo ? [data.photo] : []);
-        setPhotos(mergePhotoLists(initial, remote));
+        if (remote.length > 0) setPhotos(remote);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [record]);
+  }, [record, inView]);
 
   const cat = record.asset_category || "unknown";
   const name = getAssetName(record);
@@ -4255,7 +4273,7 @@ function GalleryCard({ record, onSelectRecord, onOpenLightbox }: { record: any; 
   const mainPhoto = photos[0];
 
   return (
-    <div style={{
+    <div ref={cardRef} style={{
       background: "#fff",
       borderRadius: 12,
       border: "1px solid var(--border)",
@@ -4422,7 +4440,7 @@ function GalleryPage({ records, onSelectRecord }: { records: any[]; onSelectReco
   });
 
   // Photo stats
-  const totalWithPhoto = records.filter((r) => normalizePhotos(r).length > 0).length;
+  const totalWithPhoto = records.filter((r) => recordHasPhotos(r) || normalizePhotos(r).length > 0).length;
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--bg-app)", overflow: "hidden" }}>

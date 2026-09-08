@@ -301,6 +301,28 @@ export function normalizePhotos(r: any): string[] {
   return Array.from(new Set(photos));
 }
 
+/** True when record metadata indicates photos exist (list payloads may omit blobs). */
+export function recordHasPhotos(r: any): boolean {
+  if (!r) return false;
+  if (r.has_photo === true) return true;
+  if (typeof r.photo_count === "number" && r.photo_count > 0) return true;
+  return normalizePhotos(r).length > 0;
+}
+
+/** Strip base64 blobs from list payloads — UI loads full images via ?photoFor= */
+export function slimRecordForList(r: any): any {
+  const photos = normalizePhotos(r);
+  const out = { ...r, has_photo: photos.length > 0, photo_count: photos.length };
+  delete out.photo;
+  delete out.photos;
+  delete out._allPhotos;
+  if (out.raw_data && typeof out.raw_data === "object") {
+    const { photo: _p, photos: _ps, ...rawRest } = out.raw_data as Record<string, unknown>;
+    out.raw_data = rawRest;
+  }
+  return out;
+}
+
 /** Merge multiple photo lists (deduped, stable order). */
 export function mergePhotoLists(...lists: (string[] | undefined | null)[]): string[] {
   const out: string[] = [];

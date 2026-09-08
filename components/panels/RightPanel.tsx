@@ -5,7 +5,7 @@ import {
   ResponsiveContainer, PieChart, Pie, Cell, Legend,
   BarChart, Bar, XAxis, YAxis, Tooltip as ChartTooltip,
 } from "recharts";
-import { getRecordStatus, getAssetType, getAssetName, formatStatusLabel, getStatusColor, normalizePhotos, mergePhotoLists, getSadcValue, AUTHORITY_OPTIONS, CONDITION_WITH_CONSTRUCTION_OPTIONS } from "@/components/helpers";
+import { getRecordStatus, getAssetType, getAssetName, formatStatusLabel, getStatusColor, normalizePhotos, mergePhotoLists, recordHasPhotos, getSadcValue, AUTHORITY_OPTIONS, CONDITION_WITH_CONSTRUCTION_OPTIONS } from "@/components/helpers";
 
 interface RightPanelProps {
   records: any[];
@@ -168,10 +168,19 @@ export default function RightPanel({ records, selectedRecord, onClose }: RightPa
     const id = selectedRecord.id || selectedRecord._id || selectedRecord.survey_id;
     if (!id) return;
 
+    const embedded = normalizePhotos(selectedRecord);
+    if (embedded.length > 0) {
+      setFetchedPhotos(embedded);
+      return;
+    }
+
     setLoadingPhotos(true);
     fetch(`/api/roads?photoFor=${encodeURIComponent(id)}`)
-      .then(res => res.json())
-      .then(data => {
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((data) => {
         const remote = Array.isArray(data.photos) && data.photos.length > 0
           ? data.photos
           : (data.photo ? [data.photo] : []);

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import roadsData from "@/public/roads-data.json";
-import { mergePhotoLists, normalizePhotos } from "@/components/helpers";
+import { mergePhotoLists, normalizePhotos, slimRecordForList } from "@/components/helpers";
 import fs from "fs";
 import path from "path";
 
@@ -564,9 +564,8 @@ const SUPABASE_ANON_KEY = "sb_publishable_XVL14JBx0YdcbqXlUEsN7w_8xhPeA4W";
 const FIREBASE_PROJECT = "road-condition-survey";
 const FIREBASE_DB = "road-condition-survey";
 
-/** Build photo column + slim raw_data (photos live in `photos`, not duplicated in raw_data). */
+/** Build photo column + slim raw_data (keep photos in raw_data as backup for dashboard fetch). */
 const RAW_DATA_OMIT = new Set([
-  "photo", "photos",
   "road_segment_points", "road_segment_geojson",
   "road_segment_length_m", "road_segment_start_time", "road_segment_end_time",
   "road_segment_avg_accuracy_m", "road_segment_point_count",
@@ -881,22 +880,11 @@ function invalidateServerCache() {
   _cacheTimestamp = 0;
 }
 
-/** Persist merged records to roads-data.json — keep full photos[] for dashboard gallery. */
+/** Persist merged records to roads-data.json — slim blobs; has_photo flags for gallery. */
 function writeLocalCache(records: any[]): void {
   try {
     const cachePath = path.resolve(process.cwd(), "public", "roads-data.json");
-    const slim = records.map((r: any) => {
-      const photos = normalizePhotos(r);
-      const rest = { ...r, photos, photo: photos[0] || r.photo || null, _allPhotos: photos };
-      // Drop duplicate blobs from raw_data; top-level photos[] is canonical
-      if (rest.raw_data && typeof rest.raw_data === "object") {
-        const { photo: rp, photos: rps, ...rawRest } = rest.raw_data;
-        rest.raw_data = rawRest;
-        void rp;
-        void rps;
-      }
-      return rest;
-    });
+    const slim = records.map((r: any) => slimRecordForList(r));
     const payload = { count: slim.length, records: slim, source: "merged" };
     fs.writeFileSync(cachePath, JSON.stringify(payload, null, 0), "utf-8");
     console.log(`Local cache updated: ${slim.length} records written to roads-data.json`);
@@ -1242,6 +1230,8 @@ async function hydrateMissingPhotos(records: any[]): Promise<void> {
           r.photos = photos;
           r.photo = photos[0];
           r._allPhotos = photos;
+          r.has_photo = true;
+          r.photo_count = photos.length;
         }
       })
     );
@@ -1359,11 +1349,16 @@ export async function GET(req: Request) {
         byCat
       );
 
-      _cachedRecords = merged;
+      _cachedRecords = merged.map(slimRecordForList);
       _cacheTimestamp = Date.now();
       writeLocalCache(merged);
 
-      return NextResponse.json({ count: merged.length, records: merged, source: "server", categories: byCat });
+      return NextResponse.json({
+        count: _cachedRecords.length,
+        records: _cachedRecords,
+        source: "server",
+        categories: byCat,
+      });
     }
 
     console.error("No records returned from Supabase tables or view");
