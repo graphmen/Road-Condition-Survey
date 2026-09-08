@@ -4422,7 +4422,7 @@ function GalleryPage({ records, onSelectRecord }: { records: any[]; onSelectReco
   });
 
   // Photo stats
-  const totalWithPhoto = records.filter(r => r.photo || (r.photos && r.photos.length > 0) || (r.raw_data && (r.raw_data.photo || r.raw_data.photos))).length;
+  const totalWithPhoto = records.filter((r) => normalizePhotos(r).length > 0).length;
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--bg-app)", overflow: "hidden" }}>

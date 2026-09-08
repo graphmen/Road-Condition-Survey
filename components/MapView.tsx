@@ -46,6 +46,21 @@ function MapGoToController({ focus }: { focus: MapGotoDetail | null }) {
     if (detail.nonce) appliedNonceRef.current = detail.nonce;
     try {
       map.invalidateSize({ animate: false });
+
+      // Keep the user's zoom — only pan so the asset stays in view
+      if (detail.preserveZoom) {
+        map.panTo([detail.lat, detail.lng], { animate: true, duration: 0.35 });
+        (window as any).__motidLastGoto = {
+          surveyId: detail.surveyId,
+          lat: detail.lat,
+          lng: detail.lng,
+          nonce: detail.nonce,
+          mode: "panTo",
+          t: Date.now(),
+        };
+        return;
+      }
+
       const zoom = detail.zoom ?? 17;
       if (detail.usePointCamera === false && detail.line && detail.line.length >= 2) {
         const bounds = L.latLngBounds(detail.line.map(([la, ln]) => L.latLng(la, ln)));
@@ -94,6 +109,8 @@ function MapGoToController({ focus }: { focus: MapGotoDetail | null }) {
   useEffect(() => {
     if (!focus) return;
     apply(focus);
+    // Retry only when auto-zooming (layout races); preserveZoom needs a single pan
+    if (focus.preserveZoom) return;
     const timers = [100, 300, 700, 1200, 2000].map((ms) => window.setTimeout(() => apply(focus), ms));
     return () => timers.forEach((t) => window.clearTimeout(t));
   }, [focus?.nonce, focus?.surveyId, map]); // eslint-disable-line react-hooks/exhaustive-deps

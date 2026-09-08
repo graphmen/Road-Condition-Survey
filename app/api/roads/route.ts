@@ -874,7 +874,7 @@ const mapDraftToSupabaseTable = (draft: any, tableName: string) => {
 // --- Server-side in-memory cache (survives Next.js hot-reload in dev) ---
 let _cachedRecords: any[] | null = null;
 let _cacheTimestamp = 0;
-const CACHE_TTL_MS = 60_000; // 60 seconds
+const CACHE_TTL_MS = 15_000; // 15 seconds — keep dashboard fresh during active field sync
 
 function invalidateServerCache() {
   _cachedRecords = null;
@@ -1227,21 +1227,25 @@ async function hydrateMissingPhotos(records: any[]): Promise<void> {
   const need = records.filter((r) => normalizePhotos(r).length === 0);
   if (need.length === 0) return;
 
-  const cap = Math.min(need.length, 150);
+  const cap = Math.min(need.length, 500);
   console.log(`Hydrating photos for ${cap}/${need.length} records without images…`);
 
-  await Promise.all(
-    need.slice(0, cap).map(async (r) => {
-      const id = String(r.id || r._id || r.survey_id || "").trim();
-      if (!id) return;
-      const { photos } = await fetchPhotosForSurveyId(id);
-      if (photos.length > 0) {
-        r.photos = photos;
-        r.photo = photos[0];
-        r._allPhotos = photos;
-      }
-    })
-  );
+  const batchSize = 25;
+  for (let i = 0; i < cap; i += batchSize) {
+    const batch = need.slice(i, i + batchSize);
+    await Promise.all(
+      batch.map(async (r) => {
+        const id = String(r.id || r._id || r.survey_id || "").trim();
+        if (!id) return;
+        const { photos } = await fetchPhotosForSurveyId(id);
+        if (photos.length > 0) {
+          r.photos = photos;
+          r.photo = photos[0];
+          r._allPhotos = photos;
+        }
+      })
+    );
+  }
 }
 
 export async function GET(req: Request) {

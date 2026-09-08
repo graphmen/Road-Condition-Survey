@@ -16,6 +16,7 @@ import {
   buildMapGoto,
   fireMapGoto,
   getAssetName,
+  normalizePhotos,
   type MapGotoDetail,
   type UserProfile,
   ROLE_LABELS,
@@ -118,6 +119,13 @@ export default function Home() {
     if (!isLoading || records.length > 0) setMapUnlocked(true);
   }, [isLoading, records.length]);
 
+  const enrichRecordsWithPhotos = (rows: any[]) =>
+    (rows || []).map((r) => {
+      const photos = normalizePhotos(r);
+      if (photos.length === 0) return r;
+      return { ...r, photos, photo: photos[0], _allPhotos: photos };
+    });
+
   const fetchRecords = async (silent = false, force = false) => {
     if (!silent) setIsLoading(true);
     try {
@@ -125,7 +133,7 @@ export default function Home() {
       const res = await fetch(url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      setRecords(data.records || []);
+      setRecords(enrichRecordsWithPhotos(data.records || []));
       setLastSynced(new Date());
       let src = "Local Cache";
       if (data.source === "backend")  src = "Server Cache";
@@ -175,7 +183,7 @@ export default function Home() {
               (r: any) => { const id = String(r.id || r._id || ""); return !id || !seenIds.has(id); }
             );
             const merged = [...serverRecords, ...localOnly];
-            setRecords(merged);
+            setRecords(enrichRecordsWithPhotos(merged));
             setLastSynced(new Date());
             let src = "Server Live";
             if (data.cached) src = "Server (Cached)";
@@ -190,6 +198,13 @@ export default function Home() {
     load();
   }, []);
 
+  // After sign-in and during active training: keep pulling fresh synced data from server
+  useEffect(() => {
+    if (isAuthenticated !== true) return;
+    fetchRecords(true, true);
+    const interval = window.setInterval(() => fetchRecords(true, true), 90_000);
+    return () => window.clearInterval(interval);
+  }, [isAuthenticated]);
 
   useEffect(() => {
     if (typeof window !== "undefined" && "serviceWorker" in navigator) {
@@ -251,7 +266,7 @@ export default function Home() {
       return;
     }
 
-    const focus: MapGotoDetail = { ...focusBase, label };
+    const focus: MapGotoDetail = { ...focusBase, label, preserveZoom: true };
 
     setMapFocus(focus);
     setToast({

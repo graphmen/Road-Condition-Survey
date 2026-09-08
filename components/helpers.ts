@@ -799,6 +799,8 @@ export type MapGotoDetail = {
   line?: [number, number][];
   /** true = setView to lat/lng; false = fitBounds short line only */
   usePointCamera: boolean;
+  /** When true, pan to asset without changing the user's current zoom level */
+  preserveZoom?: boolean;
   label?: string;
 };
 
