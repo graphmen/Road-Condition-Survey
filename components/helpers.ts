@@ -246,6 +246,34 @@ export function getStatusColor(status: string): string {
   return map[status] || "#6b7280";
 }
 
+/** Metadata fields that match /image/ in the name but are not photo blobs. */
+const NON_PHOTO_FIELD_KEYS = new Set([
+  "image_SADC_compliant",
+  "image_sadc_compliant",
+  "sadc_compliant",
+  "sign_sadc_compliant",
+]);
+
+/** True when a string is a renderable photo src (data URL, http URL, or long base64). */
+export function isValidPhotoSrc(value: string): boolean {
+  const s = value.trim();
+  if (!s) return false;
+  if (/^(yes|no|mixed|true|false|null|none|n\/a)$/i.test(s)) return false;
+  if (s.startsWith("data:image")) return true;
+  if (/^https?:\/\//i.test(s)) return true;
+  if (s.startsWith("blob:")) return true;
+  if (s.startsWith("/") && s.length > 20) return true;
+  // Bare base64 without data-URL prefix (mobile occasionally sends this)
+  if (s.length > 500 && /^[A-Za-z0-9+/=\r\n]+$/.test(s.replace(/\s/g, ""))) return true;
+  return false;
+}
+
+function isPhotoFieldKey(key: string): boolean {
+  if (NON_PHOTO_FIELD_KEYS.has(key)) return false;
+  if (/sadc|compliant/i.test(key)) return false;
+  return /(_photo|photo_|^photos?$|^picture$|attachment)/i.test(key) || key === "image";
+}
+
 /** Resolve photo list from record / raw_data (mobile multi-photo & attachments). */
 export function normalizePhotos(r: any): string[] {
   if (!r) return [];
@@ -267,12 +295,13 @@ export function normalizePhotos(r: any): string[] {
           /* keep as single URL/data URL */
         }
       }
+      if (!isValidPhotoSrc(s)) return;
       photos.push(s);
     } else if (Array.isArray(item)) {
       item.forEach(addPhoto);
     } else if (typeof item === "object") {
       const url = item.download_url || item.url || item.path || item.filename;
-      if (typeof url === "string" && url.trim().length > 0) {
+      if (typeof url === "string" && isValidPhotoSrc(url)) {
         photos.push(url.trim());
       }
     }
@@ -294,7 +323,7 @@ export function normalizePhotos(r: any): string[] {
     if (Array.isArray(raw._attachments)) raw._attachments.forEach(addPhoto);
     // Legacy / mobile field names (Bridge_Photo, Road_Photo, etc.)
     for (const [key, val] of Object.entries(raw)) {
-      if (/photo|image|picture|attachment/i.test(key)) addPhoto(val);
+      if (isPhotoFieldKey(key)) addPhoto(val);
     }
   }
 
