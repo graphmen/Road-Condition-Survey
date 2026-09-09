@@ -14,6 +14,8 @@ export interface SurveyDraft {
   photos?: string[];
   /** Optional free-text notes for any asset survey. */
   survey_notes?: string;
+  /** Authenticated collector — for per-user progress (future server filter). */
+  user_id?: string;
 
   // Bridge optional fields
   bridge?: string;

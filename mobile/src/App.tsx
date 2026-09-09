@@ -6,6 +6,7 @@ import { assetUrl } from "./lib/assets";
 import { SegmentTracker, PAUSED_ROAD_CONTEXT_KEY, SEGMENT_SESSION_KEY } from "./components/SegmentTracker";
 import type { SegmentGeometry } from "./components/SegmentTracker";
 import { SurveyProgressPanel } from "./components/SurveyProgressPanel";
+import { MyProgressPage } from "./components/MyProgressPage";
 import { LoginScreen } from "./components/LoginScreen";
 import {
   getMobileUser,
@@ -88,6 +89,7 @@ import {
   Gauge,
   Play,
   Pause,
+  Map,
 } from "lucide-react";
 
 type RoadCategory = "sealed" | "gravel" | "earth";
@@ -415,7 +417,7 @@ const ASSET_CLASSES = [
 
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<"welcome" | "form" | "queue" | "settings">("welcome");
+  const [activeTab, setActiveTab] = useState<"welcome" | "form" | "progress" | "queue" | "settings">("welcome");
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [filterCategory, setFilterCategory] = useState<string>("all");
   const [drafts, setDrafts] = useState<SurveyDraft[]>([]);
@@ -2082,6 +2084,7 @@ export default function App() {
       photo: photos[0] || undefined,
       photos: photos.length > 0 ? photos : undefined,
       survey_notes: surveyNotes.trim() || undefined,
+      user_id: authUser?.id,
       status: saveAsDraft ? ("draft" as const) : ("queued" as const),
       gps_accuracy_threshold: gpsAccuracyLimit
     };
@@ -3034,20 +3037,20 @@ export default function App() {
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                 <button
+                  onClick={() => setActiveTab("progress")}
+                  className="mobile-btn mobile-btn-outline"
+                  style={{ height: "40px", display: "flex", justifyContent: "center", alignItems: "center", gap: "8px", fontSize: "11px" }}
+                >
+                  <Map size={14} color="var(--accent-emerald)" />
+                  <span>My Progress</span>
+                </button>
+                <button
                   onClick={() => setActiveTab("queue")}
                   className="mobile-btn mobile-btn-outline"
                   style={{ height: "40px", display: "flex", justifyContent: "center", alignItems: "center", gap: "8px", fontSize: "11px" }}
                 >
                   <Database size={14} color="var(--accent-emerald)" />
                   <span>Draft Queue ({drafts.length})</span>
-                </button>
-                <button
-                  onClick={() => setActiveTab("settings")}
-                  className="mobile-btn mobile-btn-outline"
-                  style={{ height: "40px", display: "flex", justifyContent: "center", alignItems: "center", gap: "8px", fontSize: "11px" }}
-                >
-                  <SettingsIcon size={14} color="var(--accent-emerald)" />
-                  <span>System Settings</span>
                 </button>
               </div>
             </div>
@@ -5408,6 +5411,13 @@ export default function App() {
             </div>
           </form>
           )
+        ) : activeTab === "progress" && authUser ? (
+          <MyProgressPage
+            user={authUser}
+            drafts={drafts}
+            apiBase={(serverUrl || resolveStoredServerUrl() || "").replace(/\/$/, "")}
+            isOnline={isOnline}
+          />
         ) : activeTab === "queue" ? (
           /* Queue tab content */
           <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
@@ -5807,12 +5817,19 @@ export default function App() {
           <span>New Survey</span>
         </button>
         <button
+          onClick={() => setActiveTab("progress")}
+          className={`mobile-nav-item ${activeTab === "progress" ? "active" : ""}`}
+        >
+          <Map size={18} className="mobile-nav-icon" />
+          <span>Progress</span>
+        </button>
+        <button
           onClick={() => setActiveTab("queue")}
           className={`mobile-nav-item ${activeTab === "queue" ? "active" : ""}`}
         >
           <Database size={18} className="mobile-nav-icon" />
           {drafts.length > 0 && <span className="mobile-nav-badge">{drafts.length}</span>}
-          <span>Draft Queue</span>
+          <span>Queue</span>
         </button>
         <button
           onClick={() => setActiveTab("settings")}
