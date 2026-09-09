@@ -1988,6 +1988,61 @@ export default function App() {
   const handleSaveForm = (e: React.FormEvent, saveAsDraft: boolean) => {
     e.preventDefault();
 
+    let gpsForSave = gps;
+
+    // Coordinates required for both drafts and queue — avoid saving location-less drafts
+    if (isRoadType) {
+      const hasDualRoad1Only =
+        saveAsDraft &&
+        assetCategory === "sealed" &&
+        isDualCollectionMode(sealedCollectionMode) &&
+        !!dualRoad1Snapshot?.segmentGeometry?.points?.length;
+      if ((!segmentGeometry || segmentGeometry.points.length === 0) && !hasDualRoad1Only) {
+        showToast(
+          saveAsDraft
+            ? "🛰 Record the GPS segment before saving a draft."
+            : "🛰 Please complete the GPS segment recording before queueing.",
+          "error"
+        );
+        return;
+      }
+      const geoForGps =
+        segmentGeometry?.points?.length
+          ? segmentGeometry
+          : hasDualRoad1Only
+            ? dualRoad1Snapshot!.segmentGeometry
+            : null;
+      if (geoForGps) {
+        const firstPt = geoForGps.points[0];
+        gpsForSave = `${firstPt.lat.toFixed(6)} ${firstPt.lng.toFixed(6)} ${firstPt.alt ?? 1200} ${Math.round(firstPt.acc)}`;
+        setGps(gpsForSave);
+      }
+    } else {
+      if (!gpsForSave || !gpsForSave.trim()) {
+        showToast(
+          saveAsDraft
+            ? "Capture GPS coordinates before saving a draft. You must be at the asset location."
+            : "Capture GPS at this asset before queueing. Each point survey needs its own location.",
+          "error"
+        );
+        return;
+      }
+      const gpsParts = gpsForSave.trim().split(/\s+/);
+      const lat = parseFloat(gpsParts[0]);
+      const lng = parseFloat(gpsParts[1]);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        showToast("GPS coordinates are invalid. Capture GPS again at this asset.", "error");
+        return;
+      }
+      if (!saveAsDraft) {
+        const gpsAcc = gpsParts.length >= 4 ? parseFloat(gpsParts[3]) : NaN;
+        if (!isNaN(gpsAcc) && gpsAcc > gpsAccuracyLimit) {
+          showToast(`❌ GPS accuracy ±${Math.round(gpsAcc)}m is too poor (≤${gpsAccuracyLimit}m required). Re-capture GPS in open-sky area.`, "error");
+          return;
+        }
+      }
+    }
+
     if (!saveAsDraft) {
       if (!roadName.trim()) {
         showToast("Highway Route is required", "error");
@@ -2003,11 +2058,6 @@ export default function App() {
       }
 
       if (isRoadType) {
-        // Road surveys: GPS is derived from segment geometry — no separate point capture needed
-        if (!segmentGeometry || segmentGeometry.points.length === 0) {
-          showToast("🛰 Please complete the GPS segment recording before queueing.", "error");
-          return;
-        }
         if (!vegetation) {
           showToast("Vegetation Status is required — complete the segment first.", "error");
           return;
@@ -2019,7 +2069,6 @@ export default function App() {
         if (
           assetCategory === "sealed" &&
           isDualCollectionMode(sealedCollectionMode) &&
-          !saveAsDraft &&
           (dualRoadPhase === 1 || !dualRoad1Snapshot)
         ) {
           showToast("Complete Road 1 first, then collect Road 2 before queueing.", "error");
@@ -2036,35 +2085,14 @@ export default function App() {
         const roadClassForLimit =
           assetCategory === "sealed" ? sealedClass
           : assetCategory === "gravel" ? gravelClass : earthClass;
-        const segCheck = validateSegmentLengthM(segmentGeometry.length_m, roadClassForLimit);
+        const segCheck = validateSegmentLengthM(segmentGeometry!.length_m, roadClassForLimit);
         if (!segCheck.ok) {
           showToast(segCheck.message, "error");
           return;
         }
-        // Auto-populate GPS from the first segment point
-        const firstPt = segmentGeometry.points[0];
-        const derivedGps = `${firstPt.lat.toFixed(6)} ${firstPt.lng.toFixed(6)} ${firstPt.alt ?? 1200} ${Math.round(firstPt.acc)}`;
-        setGps(derivedGps);
       } else {
         if (!vegetation) {
           showToast("Vegetation Status is required", "error");
-          return;
-        }
-        // Non-road / point surveys: require a fresh Capture GPS before queue/save
-        if (!gps || !gps.trim()) {
-          showToast("Capture GPS at this asset before queueing. Each point survey needs its own location.", "error");
-          return;
-        }
-        const gpsParts = gps.trim().split(/\s+/);
-        const lat = parseFloat(gpsParts[0]);
-        const lng = parseFloat(gpsParts[1]);
-        if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-          showToast("GPS coordinates are invalid. Capture GPS again at this asset.", "error");
-          return;
-        }
-        const gpsAcc = gpsParts.length >= 4 ? parseFloat(gpsParts[3]) : NaN;
-        if (!isNaN(gpsAcc) && gpsAcc > gpsAccuracyLimit) {
-          showToast(`❌ GPS accuracy ±${Math.round(gpsAcc)}m is too poor (≤${gpsAccuracyLimit}m required). Re-capture GPS in open-sky area.`, "error");
           return;
         }
       }
@@ -2079,7 +2107,7 @@ export default function App() {
       surveyor_name: surveyorName || "(Draft Surveyor)",
       survey_date: capturedSurveyDate,
       vegetation,
-      gps: gps || "",
+      gps: gpsForSave || "",
       image_SADC_compliant: imageSadcCompliant,
       photo: photos[0] || undefined,
       photos: photos.length > 0 ? photos : undefined,
@@ -3515,18 +3543,6 @@ export default function App() {
                 onChange={setSurveyorName}
                 suggestions={surveyorSuggestions(drafts)}
                 required
-              />
-            </div>
-
-            <div className="mobile-form-group">
-              <label className="mobile-label">Notes (optional)</label>
-              <textarea
-                placeholder="Additional observations, access issues, context…"
-                value={surveyNotes}
-                onChange={(e) => setSurveyNotes(e.target.value)}
-                className="mobile-input"
-                rows={3}
-                style={{ resize: "vertical", minHeight: "72px" }}
               />
             </div>
 
@@ -5369,6 +5385,18 @@ export default function App() {
                 </div>
               </fieldset>
             )}
+
+            <div className="mobile-form-group" style={{ marginTop: "4px" }}>
+              <label className="mobile-label">Notes (optional)</label>
+              <textarea
+                placeholder="Additional observations, access issues, context…"
+                value={surveyNotes}
+                onChange={(e) => setSurveyNotes(e.target.value)}
+                className="mobile-input"
+                rows={3}
+                style={{ resize: "vertical", minHeight: "72px" }}
+              />
+            </div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "8px" }}>
               <div style={{ display: "flex", gap: "10px" }}>

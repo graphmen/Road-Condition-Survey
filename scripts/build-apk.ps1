@@ -4,9 +4,9 @@
 #   powershell -ExecutionPolicy Bypass -File scripts/build-apk.ps1
 
 param(
-  [string]$Version = "1.9.0",
-  [int]$VersionCode = 19,
-  [string]$Changelog = "My Progress map: see your collected surveys on a map with stats, synced server data, and per-account filtering.",
+  [string]$Version = "1.9.1",
+  [int]$VersionCode = 20,
+  [string]$Changelog = "Notes field moved to end of each form; drafts now require GPS coordinates before saving.",
   [string]$ServerUrl = "https://road-condition-survey.vercel.app"
 )
 
