@@ -12,7 +12,9 @@ export interface SurveyDraft {
   photo?: string;
   /** Multiple Base64 data URLs — especially for linear (road) surveys along a segment. */
   photos?: string[];
- 
+  /** Optional free-text notes for any asset survey. */
+  survey_notes?: string;
+
   // Bridge optional fields
   bridge?: string;
   bridge_crossing?: string;
@@ -38,10 +40,15 @@ export interface SurveyDraft {
   culvet_serviceability?: string;
   culvert_size_m2?: number;
   culvert_openings?: number;
+  /** Pipe culvert diameter in mm (450, 600, 900, 1200). */
+  culvert_pipe_diameter?: string;
+  /** Number of barrel pipes (pipe culvert only). */
+  culvert_barrels?: number;
 
   // Shelvet optional fields
   shelvets_type?: string;
   shelvet_condition?: string;
+  /** Comma-separated when multiple serviceability states apply. */
   shelvet_serviceability?: string;
   shelvet_size_m2?: number;
   shelvet_openings?: number;

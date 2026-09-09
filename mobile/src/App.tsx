@@ -105,8 +105,57 @@ const PAUSED_ROAD_PHOTOS_KEY = "roads_paused_road_photos";
 const MAX_ROAD_PHOTOS = 6;
 const MAX_POINT_PHOTOS = 2;
 
+const SHELVT_SERVICEABILITY_OPTIONS = [
+  { value: "good", label: "Good" },
+  { value: "fair", label: "Fair" },
+  { value: "poor", label: "Poor" },
+  { value: "blocked", label: "Blocked" },
+  { value: "damaged", label: "Damaged" },
+] as const;
+
+const CULVERT_PIPE_DIAMETER_OPTIONS = [
+  { value: "450", label: "450 mm" },
+  { value: "600", label: "600 mm" },
+  { value: "900", label: "900 mm" },
+  { value: "1200", label: "1200 mm" },
+] as const;
+
 function captureSurveyDate(): string {
   return new Date().toISOString().split("T")[0];
+}
+
+function gpsSegmentLengthKm(geo: SegmentGeometry | null | undefined): number | undefined {
+  if (!geo?.length_m) return undefined;
+  return Math.round((geo.length_m / 1000) * 1000) / 1000;
+}
+
+function formatGpsLengthKm(geo: SegmentGeometry | null | undefined): string {
+  const km = gpsSegmentLengthKm(geo);
+  return km !== undefined ? km.toFixed(3) : "";
+}
+
+function parseServiceabilityList(val: unknown): string[] {
+  if (Array.isArray(val)) return val.map(String).filter(Boolean);
+  if (typeof val === "string" && val.trim()) {
+    return val.split(/[,;]+/).map((s) => s.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+function applyGpsLengthToRoadState(
+  geo: SegmentGeometry,
+  category: string,
+  setters: {
+    setSealedLength: (v: string) => void;
+    setGravelLength: (v: string) => void;
+    setEarthLength: (v: string) => void;
+  }
+) {
+  const km = formatGpsLengthKm(geo);
+  if (!km) return;
+  if (category === "sealed") setters.setSealedLength(km);
+  else if (category === "gravel") setters.setGravelLength(km);
+  else if (category === "earth") setters.setEarthLength(km);
 }
 
 function normalizePhotos(s: { photos?: string[]; photo?: string | null } | null | undefined): string[] {
@@ -489,20 +538,10 @@ export default function App() {
   const pointGpsEngineRef = React.useRef<"bg" | "cap" | "web" | null>(null);
   const [imageSadcCompliant, setImageSadcCompliant] = useState<"yes" | "no" | "mixed">("yes");
   const [photos, setPhotos] = useState<string[]>([]);
+  const [surveyNotes, setSurveyNotes] = useState("");
 
   // Conditional Bridge Fields
   const [bridgeName, setBridgeName] = useState("");
-  const [bridgeCrossing, setBridgeCrossing] = useState("river");
-  const [bridgeType, setBridgeType] = useState("hldc");
-  const [bridgeBearing, setBridgeBearing] = useState("elastometric");
-  const [bridgeJoints, setBridgeJoints] = useState("good");
-  const [bearingsState, setBearingsState] = useState("good");
-  const [parapet, setParapet] = useState("undamaged");
-  const [chemicalEffect, setChemicalEffect] = useState("none");
-  const [vegetationGrowth, setVegetationGrowth] = useState("no");
-  const [drainage, setDrainage] = useState("good");
-  const [bridgeCondition, setBridgeCondition] = useState("good");
-  const [bridgeStructureType, setBridgeStructureType] = useState("beam");
   const [bridgeLength, setBridgeLength] = useState("");
   const [bridgeWidth, setBridgeWidth] = useState("");
   const [bridgeSpans, setBridgeSpans] = useState("");
@@ -515,11 +554,13 @@ export default function App() {
   const [culvertServiceability, setCulvertServiceability] = useState("good");
   const [culvertSizeM2, setCulvertSizeM2] = useState("");
   const [culvertOpenings, setCulvertOpenings] = useState("");
+  const [culvertPipeDiameter, setCulvertPipeDiameter] = useState("450");
+  const [culvertBarrels, setCulvertBarrels] = useState("");
 
   // Conditional Shelvet Fields
   const [shelvetType, setShelvetType] = useState("armco");
   const [shelvetCondition, setShelvetCondition] = useState("good");
-  const [shelvetServiceability, setShelvetServiceability] = useState("good");
+  const [shelvetServiceability, setShelvetServiceability] = useState<string[]>([]);
   const [shelvetSizeM2, setShelvetSizeM2] = useState("");
   const [shelvetOpenings, setShelvetOpenings] = useState("");
 
@@ -996,13 +1037,12 @@ export default function App() {
           savedAt: Date.now(),
           assetCategory,
           roadName, sectionName, chainageFrom, chainageTo, surveyorName, surveyDate, vegetation, gps,
-          imageSadcCompliant, photos,
+          imageSadcCompliant, photos, surveyNotes,
           // Bridge
-          bridgeName, bridgeCrossing, bridgeType, bridgeBearing, bridgeJoints,
-          bearingsState, parapet, chemicalEffect, vegetationGrowth, drainage, bridgeCondition,
-          bridgeStructureType, bridgeLength, bridgeWidth, bridgeSpans, bridgeApproachCondition, bridgeSignage,
+          bridgeName, bridgeLength, bridgeWidth, bridgeSpans, bridgeApproachCondition, bridgeSignage,
           // Culvert
           culvertClass, culvertType, culvertServiceability, culvertSizeM2, culvertOpenings,
+          culvertPipeDiameter, culvertBarrels,
           // Shelvet
           shelvetType, shelvetCondition, shelvetServiceability, shelvetSizeM2, shelvetOpenings,
           // Sealed
@@ -1077,11 +1117,10 @@ export default function App() {
   }, [
     activeTab, selectedCategory, editingDraftId,
     assetCategory, roadName, sectionName, chainageFrom, chainageTo, surveyorName, surveyDate, vegetation, gps,
-    imageSadcCompliant, photos,
-    bridgeName, bridgeCrossing, bridgeType, bridgeBearing, bridgeJoints,
-    bearingsState, parapet, chemicalEffect, vegetationGrowth, drainage, bridgeCondition,
-    bridgeStructureType, bridgeLength, bridgeWidth, bridgeSpans, bridgeApproachCondition, bridgeSignage,
+    imageSadcCompliant, photos, surveyNotes,
+    bridgeName, bridgeLength, bridgeWidth, bridgeSpans, bridgeApproachCondition, bridgeSignage,
     culvertClass, culvertType, culvertServiceability, culvertSizeM2, culvertOpenings,
+    culvertPipeDiameter, culvertBarrels,
     shelvetType, shelvetCondition, shelvetServiceability, shelvetSizeM2, shelvetOpenings,
     sealedName, sealedRoute, sealedClass, sealedType, sealedClimate, sealedTerrain,
     sealedAuthority, sealedLength, sealedWidth, sealedDrainageType, sealedVegetation,
@@ -1161,20 +1200,10 @@ export default function App() {
         const isRoad = cat === "sealed" || cat === "gravel" || cat === "earth";
         setPhotos(clampPhotos(normalizePhotos(s), isRoad));
       }
+      if (s.surveyNotes !== undefined) setSurveyNotes(s.surveyNotes);
 
       // Bridge
       if (s.bridgeName !== undefined) setBridgeName(s.bridgeName);
-      if (s.bridgeCrossing !== undefined) setBridgeCrossing(s.bridgeCrossing);
-      if (s.bridgeType !== undefined) setBridgeType(s.bridgeType);
-      if (s.bridgeBearing !== undefined) setBridgeBearing(s.bridgeBearing);
-      if (s.bridgeJoints !== undefined) setBridgeJoints(s.bridgeJoints);
-      if (s.bearingsState !== undefined) setBearingsState(s.bearingsState);
-      if (s.parapet !== undefined) setParapet(s.parapet);
-      if (s.chemicalEffect !== undefined) setChemicalEffect(s.chemicalEffect);
-      if (s.vegetationGrowth !== undefined) setVegetationGrowth(s.vegetationGrowth);
-      if (s.drainage !== undefined) setDrainage(s.drainage);
-      if (s.bridgeCondition !== undefined) setBridgeCondition(s.bridgeCondition);
-      if (s.bridgeStructureType !== undefined) setBridgeStructureType(s.bridgeStructureType);
       if (s.bridgeLength !== undefined) setBridgeLength(s.bridgeLength);
       if (s.bridgeWidth !== undefined) setBridgeWidth(s.bridgeWidth);
       if (s.bridgeSpans !== undefined) setBridgeSpans(s.bridgeSpans);
@@ -1186,10 +1215,12 @@ export default function App() {
       if (s.culvertServiceability !== undefined) setCulvertServiceability(s.culvertServiceability);
       if (s.culvertSizeM2 !== undefined) setCulvertSizeM2(s.culvertSizeM2);
       if (s.culvertOpenings !== undefined) setCulvertOpenings(s.culvertOpenings);
+      if (s.culvertPipeDiameter !== undefined) setCulvertPipeDiameter(s.culvertPipeDiameter);
+      if (s.culvertBarrels !== undefined) setCulvertBarrels(s.culvertBarrels);
       // Shelvet
       if (s.shelvetType !== undefined) setShelvetType(s.shelvetType);
       if (s.shelvetCondition !== undefined) setShelvetCondition(s.shelvetCondition);
-      if (s.shelvetServiceability !== undefined) setShelvetServiceability(s.shelvetServiceability);
+      if (s.shelvetServiceability !== undefined) setShelvetServiceability(parseServiceabilityList(s.shelvetServiceability));
       if (s.shelvetSizeM2 !== undefined) setShelvetSizeM2(s.shelvetSizeM2);
       if (s.shelvetOpenings !== undefined) setShelvetOpenings(s.shelvetOpenings);
       // Sealed
@@ -1515,6 +1546,7 @@ export default function App() {
     setGps("");
     setRoadName("");
     setBridgeName("");
+    setSurveyNotes("");
     setSealedName("");
     setGravelName("");
     setEarthName("");
@@ -1541,8 +1573,11 @@ export default function App() {
     setBridgeSpans("");
     setCulvertSizeM2("");
     setCulvertOpenings("");
+    setCulvertPipeDiameter("450");
+    setCulvertBarrels("");
     setShelvetSizeM2("");
     setShelvetOpenings("");
+    setShelvetServiceability([]);
     setLaybyLength("");
     setLaybyWidth("");
     setCausewayLength("");
@@ -1644,6 +1679,7 @@ export default function App() {
     setGps(draft.gps);
     setImageSadcCompliant(draft.image_SADC_compliant || "yes");
     setPhotos(clampPhotos(normalizePhotos(draft), category === "sealed" || category === "gravel" || category === "earth"));
+    setSurveyNotes(draft.survey_notes || "");
 
     setAssetCategory(category);
     setSelectedCategory(category);
@@ -1709,17 +1745,6 @@ export default function App() {
 
     if (category === "bridge") {
       setBridgeName(draft.bridge || "");
-      setBridgeCrossing(draft.bridge_crossing || "river");
-      setBridgeType(draft.bridge_type || "hldc");
-      setBridgeBearing(draft.bridge_bearing || "elastometric");
-      setBridgeJoints(draft.bridge_joints || "good");
-      setBearingsState(draft.bearings_state || "good");
-      setParapet(draft.parapet || "undamaged");
-      setChemicalEffect(draft.chemical_effect || "none");
-      setVegetationGrowth(draft.vegetation_growth || "no");
-      setDrainage(draft.drainage || "good");
-      setBridgeCondition(draft.bridge_condition || "good");
-      setBridgeStructureType(draft.bridge_structure_type || "beam");
       setBridgeLength(draft.bridge_length_m !== undefined ? String(draft.bridge_length_m) : "");
       setBridgeWidth(draft.bridge_width_m !== undefined ? String(draft.bridge_width_m) : "");
       setBridgeSpans(draft.bridge_spans !== undefined ? String(draft.bridge_spans) : "");
@@ -1731,10 +1756,12 @@ export default function App() {
       setCulvertServiceability(draft.culvet_serviceability || "good");
       setCulvertSizeM2(draft.culvert_size_m2 !== undefined ? String(draft.culvert_size_m2) : "");
       setCulvertOpenings(draft.culvert_openings !== undefined ? String(draft.culvert_openings) : "");
+      setCulvertPipeDiameter(draft.culvert_pipe_diameter || "450");
+      setCulvertBarrels(draft.culvert_barrels !== undefined ? String(draft.culvert_barrels) : "");
     } else if (category === "shelvet") {
       setShelvetType(draft.shelvets_type || "armco");
       setShelvetCondition(draft.shelvet_condition || "good");
-      setShelvetServiceability(draft.shelvet_serviceability || draft.shelvet_condition || "good");
+      setShelvetServiceability(parseServiceabilityList(draft.shelvet_serviceability || draft.shelvet_condition));
       setShelvetSizeM2(draft.shelvet_size_m2 !== undefined ? String(draft.shelvet_size_m2) : "");
       setShelvetOpenings(draft.shelvet_openings !== undefined ? String(draft.shelvet_openings) : "");
     } else if (category === "sealed") {
@@ -1750,7 +1777,11 @@ export default function App() {
       setSealedClimate(draft.Climate_Region_001 || "moderate");
       setSealedTerrain(draft.Terrain_Type_002 || "flat");
       setSealedAuthority(draft.Authority_Name_002 === "ddf" ? "rida" : (draft.Authority_Name_002 || "rdc"));
-      setSealedLength(draft.Road_Length_km !== undefined ? String(draft.Road_Length_km) : "");
+      setSealedLength(
+        draft.road_segment_length_m
+          ? formatGpsLengthKm({ length_m: draft.road_segment_length_m } as SegmentGeometry)
+          : draft.Road_Length_km !== undefined ? String(draft.Road_Length_km) : ""
+      );
       setSealedWidth(draft.Road_width_m_002 !== undefined ? String(draft.Road_width_m_002) : "");
       setSealedDrainageType(draft.Drainage_Type_002_001 || "v_drain");
       setSealedVegetation(draft.servitude_vegetation_001 || "medium");
@@ -1811,7 +1842,11 @@ export default function App() {
     } else if (category === "gravel") {
       setGravelName(draft.gravel_road_name || "");
       setGravelRoute(draft.Route_Number || "");
-      setGravelLength(draft.Road_Length !== undefined ? String(draft.Road_Length) : "");
+      setGravelLength(
+        draft.road_segment_length_m
+          ? formatGpsLengthKm({ length_m: draft.road_segment_length_m } as SegmentGeometry)
+          : draft.Road_Length !== undefined ? String(draft.Road_Length) : ""
+      );
       setGravelClass(draft.gravel_road_class || "urban_collector");
       setGravelAuthority(draft.Authority_Name === "ddf" ? "rida" : (draft.Authority_Name || "rdc"));
       setGravelVegetation(draft.servitude_vegetation || "medium");
@@ -1836,7 +1871,11 @@ export default function App() {
       setEarthName(draft.earth_road_name || "");
       setEarthClass(draft.earth_road_class || "secondary");
       setEarthWidth(draft.earth_road_width !== undefined ? String(draft.earth_road_width) : "");
-      setEarthLength(draft.earth_road_length !== undefined ? String(draft.earth_road_length) : "");
+      setEarthLength(
+        draft.road_segment_length_m
+          ? formatGpsLengthKm({ length_m: draft.road_segment_length_m } as SegmentGeometry)
+          : draft.earth_road_length !== undefined ? String(draft.earth_road_length) : ""
+      );
       setEarthCondition(draft.earth_road_condition || "good");
       setEarthPassability(draft.earth_road_passability || "all_year");
       setEarthDrainageType(draft.earth_drainage_type || "v_drain");
@@ -2042,6 +2081,7 @@ export default function App() {
       image_SADC_compliant: imageSadcCompliant,
       photo: photos[0] || undefined,
       photos: photos.length > 0 ? photos : undefined,
+      survey_notes: surveyNotes.trim() || undefined,
       status: saveAsDraft ? ("draft" as const) : ("queued" as const),
       gps_accuracy_threshold: gpsAccuracyLimit
     };
@@ -2049,27 +2089,16 @@ export default function App() {
     let draftData: Omit<SurveyDraft, "id">;
 
     if (assetCategory === "bridge") {
-      if (!saveAsDraft && !bridgeName) {
-        showToast("Bridge name is required.", "error");
+      if (!saveAsDraft && !bridgeName.trim()) {
+        showToast("Bridge location is required.", "error");
         return;
       }
       draftData = {
         ...baseData,
-        bridge: bridgeName,
-        bridge_crossing: bridgeCrossing,
-        bridge_type: bridgeType,
-        bridge_bearing: bridgeBearing,
-        bridge_joints: bridgeJoints,
-        bearings_state: bearingsState,
-        parapet,
-        chemical_effect: chemicalEffect,
-        vegetation_growth: vegetationGrowth,
-        drainage,
-        bridge_condition: bridgeCondition,
-        bridge_structure_type: bridgeStructureType,
+        bridge: bridgeName.trim(),
         bridge_length_m: bridgeLength ? parseFloat(bridgeLength) : undefined,
         bridge_width_m: bridgeWidth ? parseFloat(bridgeWidth) : undefined,
-        bridge_spans: bridgeSpans ? parseInt(bridgeSpans) : undefined,
+        bridge_spans: bridgeSpans ? parseInt(bridgeSpans, 10) : undefined,
         bridge_approach_condition: bridgeApproachCondition,
         bridge_signage: bridgeSignage,
       };
@@ -2079,17 +2108,23 @@ export default function App() {
         culvet_class: culvertClass,
         culvet_type: culvertType,
         culvet_serviceability: culvertServiceability,
-        culvert_size_m2: culvertSizeM2 ? parseFloat(culvertSizeM2) : undefined,
-        culvert_openings: culvertOpenings ? parseInt(culvertOpenings) : undefined,
+        culvert_size_m2:
+          culvertClass === "box_culvert" && culvertSizeM2 ? parseFloat(culvertSizeM2) : undefined,
+        culvert_openings:
+          culvertClass === "box_culvert" && culvertOpenings ? parseInt(culvertOpenings, 10) : undefined,
+        culvert_pipe_diameter: culvertClass === "pipe_culvert" ? culvertPipeDiameter : undefined,
+        culvert_barrels:
+          culvertClass === "pipe_culvert" && culvertBarrels ? parseInt(culvertBarrels, 10) : undefined,
       };
     } else if (assetCategory === "shelvet") {
+      const serviceabilityJoined = shelvetServiceability.length > 0 ? shelvetServiceability.join(", ") : undefined;
       draftData = {
         ...baseData,
         shelvets_type: shelvetType,
-        shelvet_condition: shelvetCondition,
-        shelvet_serviceability: shelvetServiceability,
+        shelvet_condition: shelvetServiceability[0] || shelvetCondition,
+        shelvet_serviceability: serviceabilityJoined,
         shelvet_size_m2: shelvetSizeM2 ? parseFloat(shelvetSizeM2) : undefined,
-        shelvet_openings: shelvetOpenings ? parseInt(shelvetOpenings) : undefined,
+        shelvet_openings: shelvetOpenings ? parseInt(shelvetOpenings, 10) : undefined,
       };
     } else if (assetCategory === "sealed") {
       const finalSealedName = roadName.split(" (")[0] || roadName;
@@ -2132,7 +2167,8 @@ export default function App() {
         Climate_Region_001: sealedClimate,
         Terrain_Type_002: sealedTerrain,
         Authority_Name_002: sealedAuthority,
-        Road_Length_km: sealedLength ? parseFloat(sealedLength) : undefined,
+        Road_Length_km: gpsSegmentLengthKm(segmentGeometry) ?? (sealedLength ? parseFloat(sealedLength) : undefined),
+        Segment_Length_Km_002: gpsSegmentLengthKm(segmentGeometry),
         Road_width_m_002: sealedWidth ? parseFloat(sealedWidth) : undefined,
         Drainage_Type_002_001: sealedDrainageType,
         servitude_vegetation_001: sealedVegetation,
@@ -2196,7 +2232,8 @@ export default function App() {
         chainage_to_km: chainTo,
         Road_Name: finalGravelName,
         Route_Number: undefined,
-        Road_Length: gravelLength ? parseFloat(gravelLength) : undefined,
+        Road_Length: gpsSegmentLengthKm(segmentGeometry) ?? (gravelLength ? parseFloat(gravelLength) : undefined),
+        Segment_Length_km: gpsSegmentLengthKm(segmentGeometry),
         Road_Class: gravelClass,
         Authority_Name: gravelAuthority,
         servitude_vegetation: gravelVegetation,
@@ -2228,7 +2265,8 @@ export default function App() {
         earth_road_name: roadName.split(" (")[0] || roadName,
         earth_road_class: earthClass,
         earth_road_width: earthWidth ? parseFloat(earthWidth) : undefined,
-        earth_road_length: earthLength ? parseFloat(earthLength) : undefined,
+        earth_road_length: gpsSegmentLengthKm(segmentGeometry) ?? (earthLength ? parseFloat(earthLength) : undefined),
+        Segment_Length_km: gpsSegmentLengthKm(segmentGeometry),
         earth_road_condition: earthCondition,
         earth_road_passability: earthPassability,
         earth_drainage_type: earthDrainageType,
@@ -2684,16 +2722,11 @@ export default function App() {
         row.traffic_calming_condition = draft.traffic_calming_condition || null;
       } else if (tableName === "survey_bridges") {
         row.bridge = draft.bridge || null;
-        row.bridge_crossing = draft.bridge_crossing || null;
-        row.bridge_type = draft.bridge_type || null;
-        row.bridge_bearing = draft.bridge_bearing || null;
-        row.bridge_joints = draft.bridge_joints || null;
-        row.bearings_state = draft.bearings_state || null;
-        row.parapet = draft.parapet || null;
-        row.chemical_effect = draft.chemical_effect || null;
-        row.vegetation_growth = draft.vegetation_growth || null;
-        row.drainage = draft.drainage || null;
-        row.bridge_condition = draft.bridge_condition || null;
+        row.bridge_length_m = draft.bridge_length_m !== undefined ? Number(draft.bridge_length_m) : null;
+        row.bridge_width_m = draft.bridge_width_m !== undefined ? Number(draft.bridge_width_m) : null;
+        row.bridge_spans = draft.bridge_spans !== undefined ? Number(draft.bridge_spans) : null;
+        row.bridge_approach_condition = draft.bridge_approach_condition || null;
+        row.bridge_signage = draft.bridge_signage || null;
       } else if (tableName === "survey_footbridges") {
         row.footbridge_name = draft.footbridge_name || null;
         row.footbridge_type = draft.footbridge_type || null;
@@ -2739,10 +2772,14 @@ export default function App() {
       } else if (tableName === "survey_shelvets") {
         row.shelvets_type = draft.shelvets_type || null;
         row.shelvet_condition = draft.shelvet_condition || null;
+        row.shelvet_serviceability = draft.shelvet_serviceability || null;
       } else if (tableName === "survey_culverts") {
         row.culvet_class = draft.culvet_class || null;
         row.culvet_type = draft.culvet_type || null;
         row.culvet_serviceability = draft.culvet_serviceability || null;
+        row.culvert_size_m2 = draft.culvert_size_m2 !== undefined ? Number(draft.culvert_size_m2) : null;
+        row.culvert_pipe_diameter = draft.culvert_pipe_diameter || null;
+        row.culvert_barrels = draft.culvert_barrels !== undefined ? Number(draft.culvert_barrels) : null;
       } else if (tableName === "survey_piped_causeways") {
         row.causeway_name = draft.causeway_name || null;
         row.causeway_condition = draft.causeway_condition || null;
@@ -3478,6 +3515,18 @@ export default function App() {
               />
             </div>
 
+            <div className="mobile-form-group">
+              <label className="mobile-label">Notes (optional)</label>
+              <textarea
+                placeholder="Additional observations, access issues, context…"
+                value={surveyNotes}
+                onChange={(e) => setSurveyNotes(e.target.value)}
+                className="mobile-input"
+                rows={3}
+                style={{ resize: "vertical", minHeight: "72px" }}
+              />
+            </div>
+
             <div style={{ display: "grid", gridTemplateColumns: isRoadType ? "1fr" : "1fr 1fr", gap: "10px" }}>
               {/* For road types, vegetation moves below the completed segment */}
               {!isRoadType && (
@@ -3678,6 +3727,11 @@ export default function App() {
                 )}
                 onSegmentComplete={(geo) => {
                   setSegmentGeometry(geo);
+                  applyGpsLengthToRoadState(geo, assetCategory, {
+                    setSealedLength,
+                    setGravelLength,
+                    setEarthLength,
+                  });
                   persistPausedRoadContext(null);
                   clearPausedRoadPhotos();
                   setAutoResumeSegment(false);
@@ -3779,53 +3833,18 @@ export default function App() {
             {/* Conditional Form: Bridge */}
             {assetCategory === "bridge" && (
               <fieldset style={{ border: "1px solid var(--border-color)", padding: "12px", borderRadius: "var(--radius-md)", display: "flex", flexDirection: "column", gap: "10px" }}>
-                <legend style={{ fontSize: "10px", fontWeight: "700", textTransform: "uppercase", color: "var(--text-accent)", padding: "0 6px" }}>Bridge structural grades</legend>
-                
+                <legend style={{ fontSize: "10px", fontWeight: "700", textTransform: "uppercase", color: "var(--text-accent)", padding: "0 6px" }}>Bridge inspection</legend>
+
                 <div className="mobile-form-group">
-                  <label className="mobile-label">Bridge Structure Name</label>
+                  <label className="mobile-label">Location</label>
                   <input
                     type="text"
-                    placeholder="e.g. Tokwe River Bridge"
+                    placeholder="e.g. Tokwe River at km 45"
                     value={bridgeName}
                     onChange={(e) => setBridgeName(e.target.value)}
                     className="mobile-input"
                     required={assetCategory === "bridge"}
                   />
-                </div>
-
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                  <div className="mobile-form-group">
-                    <label className="mobile-label">Structure Type</label>
-                    <select value={bridgeStructureType} onChange={(e) => setBridgeStructureType(e.target.value)} className="mobile-select">
-                      <option value="beam">Beam</option>
-                      <option value="arch">Arch</option>
-                      <option value="slab">Slab</option>
-                      <option value="truss">Truss</option>
-                      <option value="cantilever">Cantilever</option>
-                      <option value="suspension">Suspension</option>
-                    </select>
-                  </div>
-                  <div className="mobile-form-group">
-                    <label className="mobile-label">Crossing Type</label>
-                    <select value={bridgeCrossing} onChange={(e) => setBridgeCrossing(e.target.value)} className="mobile-select">
-                      <option value="stream">Stream</option>
-                      <option value="river">River</option>
-                      <option value="road">Road flyover</option>
-                      <option value="rail">Railway flyover</option>
-                      <option value="other">Other</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                  <div className="mobile-form-group">
-                    <label className="mobile-label">Deck Type</label>
-                    <select value={bridgeType} onChange={(e) => setBridgeType(e.target.value)} className="mobile-select">
-                      <option value="hldc">HLDC Deck</option>
-                      <option value="sldc">SLDC Deck</option>
-                      <option value="slc">SLC Deck</option>
-                    </select>
-                  </div>
                 </div>
 
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px" }}>
@@ -3838,77 +3857,12 @@ export default function App() {
                     <input type="number" step="any" placeholder="e.g. 7.2" value={bridgeWidth} onChange={(e) => setBridgeWidth(e.target.value)} className="mobile-input" />
                   </div>
                   <div className="mobile-form-group">
-                    <label className="mobile-label">Spans</label>
+                    <label className="mobile-label">Number of spans</label>
                     <input type="number" min="1" placeholder="e.g. 3" value={bridgeSpans} onChange={(e) => setBridgeSpans(e.target.value)} className="mobile-input" />
                   </div>
                 </div>
 
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                  <div className="mobile-form-group">
-                    <label className="mobile-label">Bearing type</label>
-                    <select value={bridgeBearing} onChange={(e) => setBridgeBearing(e.target.value)} className="mobile-select">
-                      <option value="elastometric">Elastometric</option>
-                      <option value="sliding">Sliding</option>
-                      <option value="roller">Roller</option>
-                      <option value="rocker and pin">Rocker and pin</option>
-                      <option value="disk">Disk</option>
-                    </select>
-                  </div>
-                  <div className="mobile-form-group">
-                    <label className="mobile-label">Bearing condition</label>
-                    <select value={bearingsState} onChange={(e) => setBearingsState(e.target.value)} className="mobile-select">
-                      <option value="good">Good</option>
-                      <option value="fair">Fair</option>
-                      <option value="poor">Poor</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                  <div className="mobile-form-group">
-                    <label className="mobile-label">Expansion Joints</label>
-                    <select value={bridgeJoints} onChange={(e) => setBridgeJoints(e.target.value)} className="mobile-select">
-                      <option value="good">Good</option>
-                      <option value="fair">Fair</option>
-                      <option value="poor">Poor</option>
-                    </select>
-                  </div>
-                  <div className="mobile-form-group">
-                    <label className="mobile-label">Parapet damage</label>
-                    <select value={parapet} onChange={(e) => setParapet(e.target.value)} className="mobile-select">
-                      <option value="undamaged">Undamaged</option>
-                      <option value="damaged">Damaged</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                  <div className="mobile-form-group">
-                    <label className="mobile-label">Concrete Chemical reaction</label>
-                    <select value={chemicalEffect} onChange={(e) => setChemicalEffect(e.target.value)} className="mobile-select">
-                      <option value="none">None</option>
-                      <option value="mild">Mild</option>
-                      <option value="severe">Severe</option>
-                    </select>
-                  </div>
-                  <div className="mobile-form-group">
-                    <label className="mobile-label">Joint Vegetation growth</label>
-                    <select value={vegetationGrowth} onChange={(e) => setVegetationGrowth(e.target.value)} className="mobile-select">
-                      <option value="no">No growth</option>
-                      <option value="yes">Yes (Invasive)</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                  <div className="mobile-form-group">
-                    <label className="mobile-label">Approach condition</label>
-                    <select value={bridgeApproachCondition} onChange={(e) => setBridgeApproachCondition(e.target.value)} className="mobile-select">
-                      <option value="good">Good</option>
-                      <option value="fair">Fair</option>
-                      <option value="poor">Poor</option>
-                    </select>
-                  </div>
                   <div className="mobile-form-group">
                     <label className="mobile-label">Signage</label>
                     <select value={bridgeSignage} onChange={(e) => setBridgeSignage(e.target.value)} className="mobile-select">
@@ -3917,23 +3871,12 @@ export default function App() {
                       <option value="no">No</option>
                     </select>
                   </div>
-                </div>
-
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                   <div className="mobile-form-group">
-                    <label className="mobile-label">Drainage status</label>
-                    <select value={drainage} onChange={(e) => setDrainage(e.target.value)} className="mobile-select">
+                    <label className="mobile-label">Approach condition</label>
+                    <select value={bridgeApproachCondition} onChange={(e) => setBridgeApproachCondition(e.target.value)} className="mobile-select">
                       <option value="good">Good</option>
                       <option value="fair">Fair</option>
-                      <option value="clogged">Clogged</option>
-                    </select>
-                  </div>
-                  <div className="mobile-form-group">
-                    <label className="mobile-label" style={{ color: "var(--text-accent)" }}>Overall Bridge Grade</label>
-                    <select value={bridgeCondition} onChange={(e) => setBridgeCondition(e.target.value)} className="mobile-select" style={{ borderColor: "var(--accent-emerald)" }}>
-                      <option value="good">GOOD</option>
-                      <option value="fair">FAIR</option>
-                      <option value="poor">POOR</option>
+                      <option value="poor">Poor</option>
                     </select>
                   </div>
                 </div>
@@ -3967,16 +3910,33 @@ export default function App() {
                   />
                 </div>
 
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                  <div className="mobile-form-group">
-                    <label className="mobile-label">Size (m²)</label>
-                    <input type="number" step="any" placeholder="e.g. 2.5" value={culvertSizeM2} onChange={(e) => setCulvertSizeM2(e.target.value)} className="mobile-input" />
+                {culvertClass === "box_culvert" ? (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                    <div className="mobile-form-group">
+                      <label className="mobile-label">Size (m²)</label>
+                      <input type="number" step="any" placeholder="e.g. 2.5" value={culvertSizeM2} onChange={(e) => setCulvertSizeM2(e.target.value)} className="mobile-input" />
+                    </div>
+                    <div className="mobile-form-group">
+                      <label className="mobile-label">Number of openings</label>
+                      <input type="number" min="1" placeholder="e.g. 2" value={culvertOpenings} onChange={(e) => setCulvertOpenings(e.target.value)} className="mobile-input" />
+                    </div>
                   </div>
-                  <div className="mobile-form-group">
-                    <label className="mobile-label">Number of openings</label>
-                    <input type="number" min="1" placeholder="e.g. 2" value={culvertOpenings} onChange={(e) => setCulvertOpenings(e.target.value)} className="mobile-input" />
+                ) : (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                    <div className="mobile-form-group">
+                      <label className="mobile-label">Diameter</label>
+                      <select value={culvertPipeDiameter} onChange={(e) => setCulvertPipeDiameter(e.target.value)} className="mobile-select">
+                        {CULVERT_PIPE_DIAMETER_OPTIONS.map((o) => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="mobile-form-group">
+                      <label className="mobile-label">Barrels</label>
+                      <input type="number" min="1" placeholder="e.g. 5" value={culvertBarrels} onChange={(e) => setCulvertBarrels(e.target.value)} className="mobile-input" />
+                    </div>
                   </div>
-                </div>
+                )}
 
                 <div className="mobile-form-group">
                   <label className="mobile-label">Serviceability state</label>
@@ -4009,14 +3969,29 @@ export default function App() {
                 </div>
 
                 <div className="mobile-form-group">
-                  <label className="mobile-label">Serviceability</label>
-                  <select value={shelvetServiceability} onChange={(e) => setShelvetServiceability(e.target.value)} className="mobile-select">
-                    <option value="good">Good</option>
-                    <option value="fair">Fair</option>
-                    <option value="poor">Poor</option>
-                    <option value="blocked">Blocked</option>
-                    <option value="damaged">Damaged</option>
-                  </select>
+                  <label className="mobile-label">Serviceability (select all that apply)</label>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginTop: "4px" }}>
+                    {SHELVT_SERVICEABILITY_OPTIONS.map((opt) => {
+                      const checked = shelvetServiceability.includes(opt.value);
+                      return (
+                        <label
+                          key={opt.value}
+                          style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px", cursor: "pointer" }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => {
+                              setShelvetServiceability((prev) =>
+                                checked ? prev.filter((v) => v !== opt.value) : [...prev, opt.value]
+                              );
+                            }}
+                          />
+                          {opt.label}
+                        </label>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
@@ -4119,8 +4094,14 @@ export default function App() {
 
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                   <div className="mobile-form-group">
-                    <label className="mobile-label">Road Length (km)</label>
-                    <input type="number" step="any" placeholder="e.g. 15.5" value={sealedLength} onChange={(e) => setSealedLength(e.target.value)} className="mobile-input" />
+                    <label className="mobile-label">Section length (km) — from GPS</label>
+                    <input
+                      type="text"
+                      readOnly
+                      value={formatGpsLengthKm(segmentGeometry) || sealedLength}
+                      className="mobile-input"
+                      style={{ background: "var(--bg-card)", color: "var(--text-secondary)" }}
+                    />
                   </div>
                   <div className="mobile-form-group">
                     <label className="mobile-label">Road Width (m)</label>
@@ -4350,14 +4331,13 @@ export default function App() {
 
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                   <div className="mobile-form-group">
-                    <label className="mobile-label">Road Length (km)</label>
+                    <label className="mobile-label">Section length (km) — from GPS</label>
                     <input
-                      type="number"
-                      step="any"
-                      placeholder="e.g. 8.4"
-                      value={gravelLength}
-                      onChange={(e) => setGravelLength(e.target.value)}
+                      type="text"
+                      readOnly
+                      value={formatGpsLengthKm(segmentGeometry) || gravelLength}
                       className="mobile-input"
+                      style={{ background: "var(--bg-card)", color: "var(--text-secondary)" }}
                     />
                   </div>
                   <div className="mobile-form-group">
@@ -4579,8 +4559,14 @@ export default function App() {
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                   <div className="mobile-form-group">
-                    <label className="mobile-label">Length (km)</label>
-                    <input type="number" step="any" placeholder="e.g. 5.2" value={earthLength} onChange={(e) => setEarthLength(e.target.value)} className="mobile-input" />
+                    <label className="mobile-label">Section length (km) — from GPS</label>
+                    <input
+                      type="text"
+                      readOnly
+                      value={formatGpsLengthKm(segmentGeometry) || earthLength}
+                      className="mobile-input"
+                      style={{ background: "var(--bg-card)", color: "var(--text-secondary)" }}
+                    />
                   </div>
                   <div className="mobile-form-group">
                     <label className="mobile-label">Width (m)</label>
