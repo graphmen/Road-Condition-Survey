@@ -4,9 +4,9 @@
 #   powershell -ExecutionPolicy Bypass -File scripts/build-apk.ps1
 
 param(
-  [string]$Version = "1.7.0",
-  [int]$VersionCode = 17,
-  [string]$Changelog = "Fix text contrast on light backgrounds; labels and info boxes use readable dark green.",
+  [string]$Version = "1.8.0",
+  [int]$VersionCode = 18,
+  [string]$Changelog = "Revised survey forms: optional notes on all assets, simplified bridge fields, multi-select shelvert serviceability, pipe culvert diameter/barrels, GPS section length on roads.",
   [string]$ServerUrl = "https://road-condition-survey.vercel.app"
 )
 
