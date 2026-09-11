@@ -345,10 +345,7 @@ export function slimRecordForList(r: any): any {
   delete out.photo;
   delete out.photos;
   delete out._allPhotos;
-  if (out.raw_data && typeof out.raw_data === "object") {
-    const { photo: _p, photos: _ps, ...rawRest } = out.raw_data as Record<string, unknown>;
-    out.raw_data = rawRest;
-  }
+  delete out.raw_data;
   return out;
 }
 

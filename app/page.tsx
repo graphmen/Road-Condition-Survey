@@ -134,8 +134,8 @@ export default function Home() {
     if (!silent) setIsLoading(true);
     try {
       const url = force ? "/api/roads?refresh=1" : "/api/roads";
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) throw new Error(`Could not load surveys (HTTP ${res.status}). Try Refresh Data again.`);
       const data = await res.json();
       setRecords(enrichRecordsWithPhotos(data.records || []));
       setLastSynced(new Date());

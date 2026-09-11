@@ -5,6 +5,8 @@ import fs from "fs";
 import path from "path";
 
 export const dynamic = "force-dynamic";
+/** Allow enough time for parallel slim Supabase fetches on Vercel (Pro). */
+export const maxDuration = 60;
 
 // Corporate SSL inspection breaks Node's default CA trust for Supabase HTTPS.
 // Without this, /api/roads silently falls back to local cache and live point surveys vanish.
@@ -910,12 +912,21 @@ const TABLE_COMMON_COLUMNS = [
   "photo", "photos", "source", "created_at", "raw_data"
 ].join(",");
 
+/** Dashboard list fetch — omit raw_data/photos (multi-MB); detail panes use ?photoFor=. */
+const TABLE_LIST_COLUMNS = [
+  "survey_id", "asset_category", "road_name", "section_name",
+  "surveyor_name", "survey_date", "gps_point", "image_sadc_compliant",
+  "source", "created_at"
+].join(",");
+
 /** Fallback when `photos` JSONB column is not migrated yet. */
 const TABLE_COMMON_FALLBACK_COLUMNS = [
   "survey_id", "asset_category", "road_name", "section_name",
   "surveyor_name", "survey_date", "gps_point", "image_sadc_compliant",
   "photo", "source", "created_at", "raw_data"
 ].join(",");
+
+const TABLE_LIST_FALLBACK_COLUMNS = TABLE_LIST_COLUMNS;
 
 // Extra columns only on linear road tables
 const ROAD_EXTRA_COLUMNS = [
@@ -951,13 +962,19 @@ const ROAD_TABLES = new Set([
 ]);
 
 /** Fetch one Supabase table with a timeout, return [] on failure */
-async function fetchTable(tableName: string, columns: string, signal: AbortSignal): Promise<any[]> {
+async function fetchTable(
+  tableName: string,
+  columns: string,
+  signal: AbortSignal,
+  fallbackColumns?: string
+): Promise<any[]> {
   const roadExtras = ROAD_TABLES.has(tableName) ? `,${ROAD_EXTRA_COLUMNS}` : "";
-  const stableCols = `${TABLE_COMMON_COLUMNS}${roadExtras}`.replace(/\s+/g, "");
+  const stableCols = `${TABLE_LIST_COLUMNS}${roadExtras}`.replace(/\s+/g, "");
   const attempts = Array.from(new Set([
     columns.replace(/\s+/g, ""),
     stableCols,
-    TABLE_COMMON_FALLBACK_COLUMNS.replace(/\s+/g, ""),
+    (fallbackColumns || TABLE_LIST_FALLBACK_COLUMNS).replace(/\s+/g, ""),
+    `${TABLE_COMMON_FALLBACK_COLUMNS}${roadExtras}`.replace(/\s+/g, ""),
   ]));
 
   const headers: Record<string, string> = {
@@ -1029,9 +1046,10 @@ async function fetchAllCategoryTables(signal: AbortSignal): Promise<any[]> {
   const results = await Promise.all(
     entries.map(async ([cat, table]) => {
       const roadExtras = ROAD_TABLES.has(table) ? `,${ROAD_EXTRA_COLUMNS}` : "";
-      // Stable column set — category-specific fields live in raw_data + typed columns on row merge
-      const cols = `${TABLE_COMMON_COLUMNS}${roadExtras}`;
-      const rows = await fetchTable(table, cols, signal);
+      const categoryExtra = CATEGORY_EXTRA[cat] ? `,${CATEGORY_EXTRA[cat]}` : "";
+      // Slim list columns — no raw_data/photos (UI lazy-loads images via ?photoFor=)
+      const cols = `${TABLE_LIST_COLUMNS}${roadExtras}${categoryExtra}`;
+      const rows = await fetchTable(table, cols, signal, TABLE_LIST_FALLBACK_COLUMNS);
       console.log(`  ${table}: ${rows.length} rows`);
       return rows.map((row) => rowToRecord(row, row.asset_category || cat));
     })
@@ -1103,6 +1121,8 @@ function rowToRecord(row: any, cat: string): any {
   record.photo = allPhotos[0] || null;
   record.photos = allPhotos;
   record._allPhotos = allPhotos;
+  record.has_photo = allPhotos.length > 0;
+  record.photo_count = allPhotos.length;
 
   // Merge useful detail fields from raw_data so names/inspector see mobile values
   if (raw) {
@@ -1274,7 +1294,7 @@ export async function GET(req: Request) {
 
     // Primary: fetch every category table (bridges, culverts, signs, roads, ...)
     let serverRecords = await fetchAllCategoryTables(controller.signal);
-    await hydrateMissingPhotos(serverRecords);
+    // Photos lazy-loaded per asset via ?photoFor= — bulk hydrate was timing out the dashboard.
 
     // Segments fetched via ROAD_EXTRA_COLUMNS
 
