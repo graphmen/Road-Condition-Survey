@@ -41,8 +41,13 @@ import {
   mergeSegmentGeometries,
   segmentGeometryFromDraftParts,
   gpsFromGeometry,
-  formatTotalSegmentsLengthKm,
 } from "./lib/segmentMerge";
+import {
+  type RoadSegmentSurvey,
+  segmentSurveysToGeometries,
+  totalSurveyLengthKm,
+  draftAttrsFromSegmentSurvey,
+} from "./lib/roadSegmentSurvey";
 import {
   SelectWithOther,
   AUTHORITY_OPTIONS,
@@ -579,9 +584,7 @@ export default function App() {
   const [sealedCollectionMode, setSealedCollectionMode] = useState<SealedCollectionMode>("single");
   const [dualRoadPhase, setDualRoadPhase] = useState<1 | 2>(1);
   const [dualRoad1Snapshot, setDualRoad1Snapshot] = useState<DualRoadLaneSnapshot | null>(null);
-  const [collectedRoadSegments, setCollectedRoadSegments] = useState<SegmentGeometry[]>([]);
-  const [dualEndRoadFormOpen, setDualEndRoadFormOpen] = useState(false);
-  const [dualRoad2Finalized, setDualRoad2Finalized] = useState(false);
+  const [completedSegmentSurveys, setCompletedSegmentSurveys] = useState<RoadSegmentSurvey[]>([]);
   const [segmentTrackerKey, setSegmentTrackerKey] = useState(0);
   const [sealedClimate, setSealedClimate] = useState("moderate");
   const [sealedTerrain, setSealedTerrain] = useState("flat");
@@ -631,35 +634,26 @@ export default function App() {
   const isSealedDualMode =
     assetCategory === "sealed" && isDualCollectionMode(sealedCollectionMode);
 
-  const currentDualSegmentsPending = (): SegmentGeometry[] =>
-    segmentGeometry ? [...collectedRoadSegments, segmentGeometry] : collectedRoadSegments;
+  const showRoadAttributes = isRoadType && !!segmentGeometry;
 
-  const activeRoadGeometryForForm = (): SegmentGeometry | null => {
-    if (!isRoadType) return null;
-    if (isSealedDualMode) {
-      if (dualEndRoadFormOpen || dualRoad2Finalized) {
-        return mergeSegmentGeometries(collectedRoadSegments);
-      }
-      return segmentGeometry;
-    }
-    return segmentGeometry;
+  const betweenSegments =
+    isRoadType && !segmentGeometry && completedSegmentSurveys.length > 0;
+
+  const totalCollectedSegmentSurveys = (): RoadSegmentSurvey[] => {
+    const road1 = dualRoad1Snapshot?.segments ?? [];
+    const road2 = dualRoadPhase === 2 ? completedSegmentSurveys : [];
+    if (isSealedDualMode) return [...road1, ...road2];
+    return completedSegmentSurveys;
   };
 
-  const showRoadAttributes =
-    isRoadType &&
-    (isSealedDualMode ? dualEndRoadFormOpen || dualRoad2Finalized : !!segmentGeometry);
-
-  const pendingDualSegment =
-    isSealedDualMode && !!segmentGeometry && !dualEndRoadFormOpen && !dualRoad2Finalized;
+  const hasSecurableRoadData = totalCollectedSegmentSurveys().length > 0;
 
   const sealedDualCollectionStarted =
     assetCategory === "sealed" &&
     sealedCollectionMode === "dual" &&
     (!!segmentGeometry ||
       !!dualRoad1Snapshot ||
-      collectedRoadSegments.length > 0 ||
-      dualEndRoadFormOpen ||
-      dualRoad2Finalized);
+      completedSegmentSurveys.length > 0);
 
   const captureSealedLaneDefects = (): SealedLaneDefectSnapshot => ({
     narrowCracks: sealedNarrowCracks,
@@ -691,9 +685,7 @@ export default function App() {
     setSealedCollectionMode("single");
     setDualRoadPhase(1);
     setDualRoad1Snapshot(null);
-    setCollectedRoadSegments([]);
-    setDualEndRoadFormOpen(false);
-    setDualRoad2Finalized(false);
+    setCompletedSegmentSurveys([]);
     setSegmentTrackerKey((k) => k + 1);
   };
 
@@ -707,74 +699,191 @@ export default function App() {
     } catch { /* ignore */ }
   };
 
-  const handleRecordNextDualSegment = () => {
-    if (!segmentGeometry) return;
-    setCollectedRoadSegments((prev) => [...prev, segmentGeometry]);
-    setSegmentGeometry(null);
-    resetDualSegmentTracker();
-    showToast(`Road ${dualRoadPhase}: record the next segment when ready.`, "info");
+  const resetSegmentAttributeFields = () => {
+    setVegetation("medium");
+    setPhotos([]);
+    setSurveyNotes("");
+    setChainageFrom("");
+    setChainageTo("");
+    if (assetCategory === "sealed") {
+      resetSealedLaneDefects();
+      setSealedVegetation("medium");
+    }
   };
 
-  const handleOpenEndDualRoadForm = () => {
-    const allSegs = currentDualSegmentsPending();
-    if (allSegs.length === 0) {
-      showToast("Record at least one GPS segment first.", "error");
-      return;
+  const validateCurrentSegmentAttributes = (): boolean => {
+    if (!segmentGeometry) return false;
+    if (!vegetation) {
+      showToast("Vegetation status is required for this segment.", "error");
+      return false;
     }
-    setCollectedRoadSegments(allSegs);
+    const roadClassForLimit =
+      assetCategory === "sealed" ? sealedClass
+      : assetCategory === "gravel" ? gravelClass : earthClass;
+    const segCheck = validateSegmentLengthM(segmentGeometry.length_m, roadClassForLimit);
+    if (!segCheck.ok) {
+      showToast(segCheck.message, "error");
+      return false;
+    }
+    return true;
+  };
+
+  const captureCurrentSegmentSurvey = (): RoadSegmentSurvey | null => {
+    if (!segmentGeometry) return null;
+    const chainFrom = chainageFrom.trim() ? parseFloat(chainageFrom) : undefined;
+    const chainTo = chainageTo.trim() ? parseFloat(chainageTo) : undefined;
+    let attrs: Record<string, unknown> = {};
+
+    if (assetCategory === "sealed") {
+      const defects = captureSealedLaneDefects();
+      attrs = {
+        paved_road_class: sealedClass,
+        paved_road_type: isSealedDualMode ? "dual_carriageway" : sealedType,
+        paved_road_condition: sealedRidingQuality,
+        pothole_patches: sealedPotholesPatches,
+        Road_Class_002: sealedClass,
+        Road_Type: isSealedDualMode ? "dual_carriageway" : sealedType,
+        Climate_Region_001: sealedClimate,
+        Terrain_Type_002: sealedTerrain,
+        Authority_Name_002: sealedAuthority,
+        Road_width_m_002: sealedWidth ? parseFloat(sealedWidth) : undefined,
+        Drainage_Type_002_001: sealedDrainageType,
+        servitude_vegetation_001: sealedVegetation,
+        Narrow_cracks_degree: defects.narrowCracks,
+        Wide_cracks_degree: defects.wideCracks,
+        Pothole_patches_degree: defects.potholesPatches,
+        Rutting_degree: defects.rutting,
+        Edge_breaks_Degree: defects.edgeBreaks,
+        Edge_Drop_Degree: defects.edgeDrop,
+        Drainage_001: defects.drainage,
+        Ravelling_Degree: defects.ravelling,
+        Riding_quality_degree_001: defects.ridingQuality,
+        Road_markings: sealedRoadMarkings,
+        Road_studs: sealedRoadStuds,
+        Passability_002: sealedPassability,
+        Year_constructed_to_sealed_standard: sealedYearConstructed ? parseInt(sealedYearConstructed) : undefined,
+        Surface_type: sealedSurfaceType,
+        Pothole_density: sealedPotholeDensity,
+        Cycle_track: sealedCycleTrack,
+        Number_of_Lanes_per_carriageway: sealedLanesPerCarriage ? parseInt(sealedLanesPerCarriage) : undefined,
+        Shoulder_Width_m: sealedShoulderWidth ? parseFloat(sealedShoulderWidth) : undefined,
+        Median_type: sealedMedianType,
+        Drainage_lining: sealedDrainageLining,
+        Road_markings_visible: sealedRoadMarkingsVisible,
+        Segment_Length_Km_002: gpsSegmentLengthKm(segmentGeometry),
+        ...(isSealedDualMode && dualRoadPhase === 1
+          ? {
+              Carriage1_Narrow_cracks: defects.narrowCracks,
+              Carriage1_Wide_cracks: defects.wideCracks,
+              Carriage1_Pothole_patches: defects.potholesPatches,
+              Carriage1_Rutting: defects.rutting,
+              Carriage1_Edge_breaks: defects.edgeBreaks,
+              Carriage1_Edge_drop: defects.edgeDrop,
+              Carriage1_Ravelling: defects.ravelling,
+              Carriage1_Riding_quality: defects.ridingQuality,
+            }
+          : isSealedDualMode && dualRoadPhase === 2
+            ? {
+                Carriage2_Narrow_cracks: defects.narrowCracks,
+                Carriage2_Wide_cracks: defects.wideCracks,
+                Carriage2_Pothole_patches: defects.potholesPatches,
+                Carriage2_Rutting: defects.rutting,
+                Carriage2_Edge_breaks: defects.edgeBreaks,
+                Carriage2_Edge_drop: defects.edgeDrop,
+                Carriage2_Ravelling: defects.ravelling,
+                Carriage2_Riding_quality: defects.ridingQuality,
+              }
+            : {}),
+      };
+    } else if (assetCategory === "gravel") {
+      attrs = {
+        gravel_road_class: gravelClass,
+        gravel_condition: gravelRidingQuality,
+        drainage_condition: gravelDrainageCond,
+        Road_Class: gravelClass,
+        Authority_Name: gravelAuthority,
+        servitude_vegetation: gravelVegetation,
+        Climate_Region: gravelClimate,
+        Terrain_Type: gravelTerrain,
+        Road_Width_m: gravelWidth ? parseFloat(gravelWidth) : undefined,
+        Drainage_Type: gravelDrainageType,
+        Cross_section: gravelCrossSection,
+        Gravel_Thickness_mm: gravelThickness,
+        Corrugations: gravelCorrugations,
+        Riding_Quality_degree: gravelRidingQuality,
+        Potholes_Degree: gravelPotholes,
+        Passability: gravelPassability,
+        Year_of_Counstruction: gravelYearConstructed ? parseInt(gravelYearConstructed) : undefined,
+        Drainage_condition: gravelDrainageCond,
+        gravel_corrugations_severity: gravelCorrugationsSeverity,
+        gravel_cross_section_severity: gravelCrossSectionSeverity,
+        gravel_drainage_severity: gravelDrainageSeverity,
+        gravel_potholes_severity: gravelPotholesSeverity,
+        gravel_riding_severity: gravelRidingSeverity,
+        Segment_Length_km: gpsSegmentLengthKm(segmentGeometry),
+      };
+    } else if (assetCategory === "earth") {
+      attrs = {
+        earth_road_class: earthClass,
+        earth_road_width: earthWidth ? parseFloat(earthWidth) : undefined,
+        earth_road_condition: earthCondition,
+        earth_road_passability: earthPassability,
+        earth_drainage_type: earthDrainageType,
+        earth_drainage_condition: earthDrainageCond,
+        earth_terrain: earthTerrain,
+        earth_climate: earthClimate,
+        earth_authority: earthAuthority,
+        earth_year_constructed: earthYearConstructed ? parseInt(earthYearConstructed) : undefined,
+        Segment_Length_km: gpsSegmentLengthKm(segmentGeometry),
+      };
+    }
+
+    return {
+      geometry: segmentGeometry,
+      vegetation,
+      photos: [...photos],
+      chainage_from_km: chainFrom,
+      chainage_to_km: chainTo,
+      survey_notes: surveyNotes.trim() || undefined,
+      attrs,
+    };
+  };
+
+  const handleCompleteCurrentSegment = () => {
+    if (!validateCurrentSegmentAttributes()) return;
+    const survey = captureCurrentSegmentSurvey();
+    if (!survey) return;
+
+    setCompletedSegmentSurveys((prev) => [...prev, survey]);
     setSegmentGeometry(null);
-    setDualEndRoadFormOpen(true);
-    const merged = mergeSegmentGeometries(allSegs);
-    if (merged) {
-      applyGpsLengthToRoadState(merged, assetCategory, {
-        setSealedLength,
-        setGravelLength,
-        setEarthLength,
-      });
-    }
+    resetSegmentAttributeFields();
     resetDualSegmentTracker();
     showToast(
-      `Enter Road ${dualRoadPhase} attributes, then tap End Road ${dualRoadPhase}.`,
-      "info"
+      `Segment ${completedSegmentSurveys.length + 1} saved on Road ${isSealedDualMode ? dualRoadPhase : 1}. Record the next segment or queue your work.`,
+      "success"
     );
   };
 
-  const handleFinalizeEndDualRoad = () => {
-    if (!isSealedDualMode || !dualEndRoadFormOpen) return;
-    if (collectedRoadSegments.length === 0) {
-      showToast("No GPS segments recorded for this road.", "error");
+  const handleEndDualRoad = () => {
+    if (!isSealedDualMode) return;
+    if (segmentGeometry) {
+      showToast("Complete this segment's attributes first, or discard by finishing the segment form.", "error");
       return;
     }
-    if (!vegetation) {
-      showToast("Vegetation status is required before ending this road.", "error");
+    if (completedSegmentSurveys.length === 0) {
+      showToast("Save at least one completed segment before ending this road.", "error");
       return;
     }
-
-    const segments = collectedRoadSegments;
 
     if (dualRoadPhase === 1) {
-      setDualRoad1Snapshot({
-        segments,
-        photos: [...photos],
-        defects: captureSealedLaneDefects(),
-        vegetation,
-      });
+      setDualRoad1Snapshot({ segments: completedSegmentSurveys });
       setDualRoadPhase(2);
-      setCollectedRoadSegments([]);
-      setDualEndRoadFormOpen(false);
-      setSegmentGeometry(null);
-      setPhotos([]);
-      resetSealedLaneDefects();
+      setCompletedSegmentSurveys([]);
       resetDualSegmentTracker();
-      showToast(
-        "Road 1 complete. Switch to the parallel carriageway and record Road 2 segments.",
-        "success"
-      );
-      return;
+      showToast("Road 1 complete. Switch to the parallel carriageway and record Road 2.", "success");
+    } else {
+      showToast("Road 2 segments saved. Queue for Sync to upload.", "info");
     }
-
-    setDualRoad2Finalized(true);
-    showToast("Road 2 complete. Tap Queue Dual Survey when ready.", "success");
   };
 
   useEffect(() => {
@@ -1768,89 +1877,102 @@ export default function App() {
       draft.sealed_collection_mode === "dual" ||
       (draft.Road_Type === "dual_carriageway" && !!draft.road_segment_geojson_2);
 
-    if (category === "sealed" && draftDualMode && draft.road_segment_points) {
+    const legacySurveyFromGeometry = (
+      geo: SegmentGeometry
+    ): RoadSegmentSurvey => ({
+      geometry: geo,
+      vegetation: draft.vegetation || "medium",
+      photos: clampPhotos(normalizePhotos(draft), true),
+      chainage_from_km: draft.chainage_from_km ?? draft.Chainage_from_km_002,
+      chainage_to_km: draft.chainage_to_km ?? draft.Chainage_to_km_002,
+      survey_notes: draft.survey_notes,
+      attrs: { ...draft },
+    });
+
+    if (category === "sealed" && draftDualMode) {
       setSealedCollectionMode("dual");
-      const road1Segments =
-        (draft.road_segment_parts as SegmentGeometry[] | undefined)?.length
-          ? (draft.road_segment_parts as SegmentGeometry[])
-          : [
-              segmentGeometryFromDraftParts(undefined, {
-                points: draft.road_segment_points,
-                geojson: draft.road_segment_geojson || "",
-                length_m: draft.road_segment_length_m || 0,
-                start_time: draft.road_segment_start_time || "",
-                end_time: draft.road_segment_end_time || "",
-                avg_accuracy_m: draft.road_segment_avg_accuracy_m || 0,
-                point_count: draft.road_segment_point_count || 0,
-              })!,
-            ].filter(Boolean) as SegmentGeometry[];
+      const road1Surveys: RoadSegmentSurvey[] =
+        (draft.road_segment_surveys as RoadSegmentSurvey[] | undefined)?.length
+          ? (draft.road_segment_surveys as RoadSegmentSurvey[])
+          : draft.road_segment_points
+            ? [
+                legacySurveyFromGeometry(
+                  segmentGeometryFromDraftParts(
+                    draft.road_segment_parts as SegmentGeometry[] | undefined,
+                    {
+                      points: draft.road_segment_points,
+                      geojson: draft.road_segment_geojson || "",
+                      length_m: draft.road_segment_length_m || 0,
+                      start_time: draft.road_segment_start_time || "",
+                      end_time: draft.road_segment_end_time || "",
+                      avg_accuracy_m: draft.road_segment_avg_accuracy_m || 0,
+                      point_count: draft.road_segment_point_count || 0,
+                    }
+                  )!
+                ),
+              ]
+            : [];
 
-      setDualRoad1Snapshot({
-        segments: road1Segments,
-        photos: clampPhotos(normalizePhotos(draft), true).slice(0, MAX_ROAD_PHOTOS),
-        defects: {
-          narrowCracks: draft.Carriage1_Narrow_cracks || draft.Narrow_cracks_degree || "no_cracks",
-          wideCracks: draft.Carriage1_Wide_cracks || draft.Wide_cracks_degree || "no_cracks",
-          potholesPatches: mapLegacyPotholePatches(draft.Carriage1_Pothole_patches || draft.Pothole_patches_degree),
-          rutting: draft.Carriage1_Rutting || draft.Rutting_degree || "no_rutting__5mm",
-          edgeBreaks: draft.Carriage1_Edge_breaks || draft.Edge_breaks_Degree || "no_edge_break",
-          edgeDrop: draft.Carriage1_Edge_drop || draft.Edge_Drop_Degree || "no_edge_break",
-          ravelling: draft.Carriage1_Ravelling || draft.Ravelling_Degree || "none",
-          ridingQuality: draft.Carriage1_Riding_quality || draft.Riding_quality_degree_001 || "good",
-          drainage: draft.Drainage_001 || "good",
-        },
-        vegetation: draft.servitude_vegetation_001 || draft.vegetation,
-      });
-
-      if (draft.road_segment_points_2) {
+      if (draft.road_segment_surveys_2?.length || draft.road_segment_points_2) {
         setDualRoadPhase(2);
-        const road2Segments =
-          (draft.road_segment_parts_2 as SegmentGeometry[] | undefined)?.length
-            ? (draft.road_segment_parts_2 as SegmentGeometry[])
-            : [
-                segmentGeometryFromDraftParts(undefined, {
-                  points: draft.road_segment_points_2,
-                  geojson: draft.road_segment_geojson_2 || "",
-                  length_m: draft.road_segment_length_m_2 || 0,
-                  start_time: draft.road_segment_start_time_2 || "",
-                  end_time: draft.road_segment_end_time_2 || "",
-                  avg_accuracy_m: draft.road_segment_avg_accuracy_m_2 || 0,
-                  point_count: draft.road_segment_point_count_2 || 0,
-                })!,
-              ].filter(Boolean) as SegmentGeometry[];
-        setCollectedRoadSegments(road2Segments);
-        setDualEndRoadFormOpen(true);
-        setDualRoad2Finalized(draft.dual_road_phase === 2 && draft.status === "queued");
-        setSegmentGeometry(null);
+        setDualRoad1Snapshot({ segments: road1Surveys });
+        const road2Surveys: RoadSegmentSurvey[] =
+          (draft.road_segment_surveys_2 as RoadSegmentSurvey[] | undefined)?.length
+            ? (draft.road_segment_surveys_2 as RoadSegmentSurvey[])
+            : draft.road_segment_points_2
+              ? [
+                  legacySurveyFromGeometry(
+                    segmentGeometryFromDraftParts(
+                      draft.road_segment_parts_2 as SegmentGeometry[] | undefined,
+                      {
+                        points: draft.road_segment_points_2,
+                        geojson: draft.road_segment_geojson_2 || "",
+                        length_m: draft.road_segment_length_m_2 || 0,
+                        start_time: draft.road_segment_start_time_2 || "",
+                        end_time: draft.road_segment_end_time_2 || "",
+                        avg_accuracy_m: draft.road_segment_avg_accuracy_m_2 || 0,
+                        point_count: draft.road_segment_point_count_2 || 0,
+                      }
+                    )!
+                  ),
+                ]
+              : [];
+        setCompletedSegmentSurveys(road2Surveys);
+      } else if (road1Surveys.length > 0 && draft.dual_road_phase === 2) {
+        setDualRoadPhase(2);
+        setDualRoad1Snapshot({ segments: road1Surveys });
+        setCompletedSegmentSurveys([]);
       } else {
-        setDualRoadPhase(draft.dual_road_phase === 2 ? 2 : 1);
-        setCollectedRoadSegments([]);
-        setDualEndRoadFormOpen(false);
-        setDualRoad2Finalized(false);
-        setSegmentGeometry(null);
+        setDualRoadPhase(1);
+        setDualRoad1Snapshot(null);
+        setCompletedSegmentSurveys(road1Surveys);
       }
-      setSegmentTrackerKey((k) => k + 1);
-    } else if (category === "sealed" && draftDualMode && draft.road_segment_parts?.length) {
-      setSealedCollectionMode("dual");
-      setDualRoadPhase(1);
-      setCollectedRoadSegments(draft.road_segment_parts as SegmentGeometry[]);
-      setDualRoad1Snapshot(null);
-      setDualEndRoadFormOpen(false);
-      setDualRoad2Finalized(false);
       setSegmentGeometry(null);
       setSegmentTrackerKey((k) => k + 1);
-    } else if (draft.road_segment_points) {
-      setSegmentGeometry({
-        points: draft.road_segment_points,
-        geojson: draft.road_segment_geojson || "",
-        length_m: draft.road_segment_length_m || 0,
-        start_time: draft.road_segment_start_time || "",
-        end_time: draft.road_segment_end_time || "",
-        avg_accuracy_m: draft.road_segment_avg_accuracy_m || 0,
-        point_count: draft.road_segment_point_count || 0,
-      });
+    } else if (isRoadType && (draft.road_segment_surveys?.length || draft.road_segment_points)) {
+      const surveys: RoadSegmentSurvey[] =
+        (draft.road_segment_surveys as RoadSegmentSurvey[] | undefined)?.length
+          ? (draft.road_segment_surveys as RoadSegmentSurvey[])
+          : draft.road_segment_points
+            ? [
+                legacySurveyFromGeometry(
+                  segmentGeometryFromDraftParts(undefined, {
+                    points: draft.road_segment_points,
+                    geojson: draft.road_segment_geojson || "",
+                    length_m: draft.road_segment_length_m || 0,
+                    start_time: draft.road_segment_start_time || "",
+                    end_time: draft.road_segment_end_time || "",
+                    avg_accuracy_m: draft.road_segment_avg_accuracy_m || 0,
+                    point_count: draft.road_segment_point_count || 0,
+                  }                  )!
+                ),
+              ]
+            : [];
+      setCompletedSegmentSurveys(surveys);
+      setSegmentGeometry(null);
     } else {
       setSegmentGeometry(null);
+      setCompletedSegmentSurveys([]);
     }
 
     if (category === "bridge") {
@@ -2096,52 +2218,21 @@ export default function App() {
 
     let gpsForSave = gps;
 
-    // Coordinates required for both drafts and queue — avoid saving location-less drafts
+    // Coordinates required — at least one completed segment with attributes
     if (isRoadType) {
-      if (isSealedDualMode) {
-        const road1Done = !!dualRoad1Snapshot?.segments?.length;
-        const pendingSegs =
-          dualEndRoadFormOpen || dualRoad2Finalized
-            ? collectedRoadSegments
-            : currentDualSegmentsPending();
-        if (dualRoadPhase === 1 && pendingSegs.length === 0) {
-          showToast(
-            saveAsDraft
-              ? "🛰 Record at least one GPS segment on Road 1 before saving."
-              : "🛰 Record Road 1 GPS segments before queueing.",
-            "error"
-          );
-          return;
-        }
-        if (dualRoadPhase === 2 && !road1Done) {
-          showToast("End Road 1 before saving or queueing Road 2.", "error");
-          return;
-        }
-        if (dualRoadPhase === 2 && !saveAsDraft && !dualRoad2Finalized) {
-          showToast("End Road 2 before queueing the dual survey.", "error");
-          return;
-        }
-        if (dualRoadPhase === 2 && pendingSegs.length === 0 && !saveAsDraft) {
-          showToast("🛰 Record Road 2 GPS segments before queueing.", "error");
-          return;
-        }
-        const geoForGps = mergeSegmentGeometries(
-          dualRoadPhase === 2 && road1Done ? pendingSegs : pendingSegs
-        ) ?? (road1Done ? mergeSegmentGeometries(dualRoad1Snapshot!.segments) : null);
-        if (geoForGps) {
-          gpsForSave = gpsFromGeometry(geoForGps);
-          setGps(gpsForSave);
-        }
-      } else if (!segmentGeometry || segmentGeometry.points.length === 0) {
+      if (!hasSecurableRoadData) {
         showToast(
           saveAsDraft
-            ? "🛰 Record the GPS segment before saving a draft."
-            : "🛰 Please complete the GPS segment recording before queueing.",
+            ? "🛰 Complete at least one GPS segment with attributes before saving."
+            : "🛰 Complete at least one GPS segment with attributes before queueing.",
           "error"
         );
         return;
-      } else {
-        gpsForSave = gpsFromGeometry(segmentGeometry);
+      }
+      const allGeometries = segmentSurveysToGeometries(totalCollectedSegmentSurveys());
+      const merged = mergeSegmentGeometries(allGeometries);
+      if (merged) {
+        gpsForSave = gpsFromGeometry(merged);
         setGps(gpsForSave);
       }
     } else {
@@ -2185,20 +2276,8 @@ export default function App() {
       }
 
       if (isRoadType) {
-        if (!vegetation) {
-          showToast("Vegetation Status is required — complete the segment first.", "error");
-          return;
-        }
         if (assetCategory === "sealed" && !roadName.trim()) {
           showToast("Sealed road name is required (use Highway Route)", "error");
-          return;
-        }
-        if (isSealedDualMode && (dualRoadPhase === 1 || !dualRoad1Snapshot?.segments?.length)) {
-          showToast("End Road 1 first, then collect Road 2 before queueing.", "error");
-          return;
-        }
-        if (isSealedDualMode && !dualRoad2Finalized) {
-          showToast("End Road 2 before queueing the dual survey.", "error");
           return;
         }
         if (assetCategory === "gravel" && !roadName.trim()) {
@@ -2207,14 +2286,6 @@ export default function App() {
         }
         if (assetCategory === "earth" && !roadName.trim()) {
           showToast("Earth road name is required (use Highway Route)", "error");
-          return;
-        }
-        const roadClassForLimit =
-          assetCategory === "sealed" ? sealedClass
-          : assetCategory === "gravel" ? gravelClass : earthClass;
-        const segCheck = validateSegmentLengthM(segmentGeometry!.length_m, roadClassForLimit);
-        if (!segCheck.ok) {
-          showToast(segCheck.message, "error");
           return;
         }
       } else {
@@ -2286,157 +2357,81 @@ export default function App() {
       };
     } else if (assetCategory === "sealed") {
       const finalSealedName = roadName.split(" (")[0] || roadName;
-      const chainFrom = chainageFrom.trim() ? parseFloat(chainageFrom) : undefined;
-      const chainTo = chainageTo.trim() ? parseFloat(chainageTo) : undefined;
-      const isDualPartial =
-        isSealedDualMode &&
-        !!dualRoad1Snapshot?.segments?.length &&
-        !dualRoad2Finalized;
-      const isDualSave =
-        isSealedDualMode &&
-        !!dualRoad1Snapshot?.segments?.length &&
-        dualRoad2Finalized &&
-        collectedRoadSegments.length > 0;
-      const road2Merged = isDualSave ? mergeSegmentGeometries(collectedRoadSegments) : null;
-      const road1Defects =
-        isDualSave || isDualPartial ? dualRoad1Snapshot!.defects : captureSealedLaneDefects();
-      const road2Defects = isDualSave ? captureSealedLaneDefects() : null;
-      const combinedPhotos = isDualSave
-        ? [...dualRoad1Snapshot!.photos, ...photos].slice(0, MAX_ROAD_PHOTOS)
-        : isDualPartial
-          ? dualRoad1Snapshot!.photos
-          : photos;
-      const savedRoadType = isDualSave || isDualPartial ? "dual_carriageway" : sealedType;
+      const lane1Segs = isSealedDualMode
+        ? (dualRoad1Snapshot?.segments ?? (dualRoadPhase === 1 ? completedSegmentSurveys : []))
+        : completedSegmentSurveys;
+      const lane2Segs = isSealedDualMode && dualRoadPhase === 2 ? completedSegmentSurveys : [];
+      const lastSeg = lane2Segs.length > 0 ? lane2Segs[lane2Segs.length - 1] : lane1Segs[lane1Segs.length - 1];
+      const lastAttrs = lastSeg ? draftAttrsFromSegmentSurvey(lastSeg) : {};
+      const allPhotos = [...lane1Segs, ...lane2Segs].flatMap((s) => s.photos).slice(0, MAX_ROAD_PHOTOS);
+      const savedRoadType = isSealedDualMode ? "dual_carriageway" : sealedType;
+      const lane1Last = lane1Segs[lane1Segs.length - 1];
+      const lane2Last = lane2Segs[lane2Segs.length - 1];
 
       draftData = {
         ...baseData,
-        photo: combinedPhotos[0] || undefined,
-        photos: combinedPhotos.length > 0 ? combinedPhotos : undefined,
+        ...lastAttrs,
+        photo: allPhotos[0] || undefined,
+        photos: allPhotos.length > 0 ? allPhotos : undefined,
         paved_road_name: finalSealedName,
-        paved_road_class: sealedClass,
-        paved_road_type: savedRoadType,
-        paved_road_condition: isDualSave ? road2Defects!.ridingQuality : sealedRidingQuality,
-        pothole_patches: isDualSave ? road2Defects!.potholesPatches : sealedPotholesPatches,
-        vegetation: sealedVegetation,
-        chainage_from_km: chainFrom,
-        chainage_to_km: chainTo,
         Road_Name_002: finalSealedName,
-        Route_number_004: undefined,
-        Road_Class_002: sealedClass,
         Road_Type: savedRoadType,
-        Climate_Region_001: sealedClimate,
-        Terrain_Type_002: sealedTerrain,
-        Authority_Name_002: sealedAuthority,
-        Road_Length_km:
-          gpsSegmentLengthKm(road2Merged ?? segmentGeometry) ??
-          (sealedLength ? parseFloat(sealedLength) : undefined),
-        Segment_Length_Km_002: gpsSegmentLengthKm(road2Merged ?? segmentGeometry),
-        Road_width_m_002: sealedWidth ? parseFloat(sealedWidth) : undefined,
-        Drainage_Type_002_001: sealedDrainageType,
-        servitude_vegetation_001: sealedVegetation,
-        Narrow_cracks_degree: road1Defects.narrowCracks,
-        Wide_cracks_degree: road1Defects.wideCracks,
-        Pothole_patches_degree: road1Defects.potholesPatches,
-        Rutting_degree: road1Defects.rutting,
-        Edge_breaks_Degree: road1Defects.edgeBreaks,
-        Edge_Drop_Degree: road1Defects.edgeDrop,
-        Drainage_001: isDualSave ? road2Defects!.drainage : sealedDrainage,
-        Ravelling_Degree: road1Defects.ravelling,
-        Riding_quality_degree_001: road1Defects.ridingQuality,
-        Road_markings: sealedRoadMarkings,
-        Road_studs: sealedRoadStuds,
-        Passability_002: sealedPassability,
-        Year_constructed_to_sealed_standard: sealedYearConstructed ? parseInt(sealedYearConstructed) : undefined,
-        Surface_type: sealedSurfaceType,
-        Pothole_density: sealedPotholeDensity,
-        Cycle_track: sealedCycleTrack,
-        Number_of_Lanes_per_carriageway: sealedLanesPerCarriage ? parseInt(sealedLanesPerCarriage) : undefined,
-        Shoulder_Width_m: sealedShoulderWidth ? parseFloat(sealedShoulderWidth) : undefined,
-        Median_type: sealedMedianType,
-        Drainage_lining: sealedDrainageLining,
-        Road_markings_visible: sealedRoadMarkingsVisible,
-        Chainage_from_km_002: chainFrom,
-        Chainage_to_km_002: chainTo,
+        paved_road_type: savedRoadType,
         sealed_collection_mode: sealedCollectionMode,
-        dual_road_phase: isDualSave ? 2 : dualRoadPhase,
-        Carriage1_Narrow_cracks: road1Defects.narrowCracks,
-        Carriage1_Wide_cracks: road1Defects.wideCracks,
-        Carriage1_Pothole_patches: road1Defects.potholesPatches,
-        Carriage1_Rutting: road1Defects.rutting,
-        Carriage1_Edge_breaks: road1Defects.edgeBreaks,
-        Carriage1_Edge_drop: road1Defects.edgeDrop,
-        Carriage1_Ravelling: road1Defects.ravelling,
-        Carriage1_Riding_quality: road1Defects.ridingQuality,
-        Carriage2_Narrow_cracks: isDualSave ? road2Defects!.narrowCracks : sealedC2NarrowCracks,
-        Carriage2_Wide_cracks: isDualSave ? road2Defects!.wideCracks : sealedC2WideCracks,
-        Carriage2_Pothole_patches: isDualSave ? road2Defects!.potholesPatches : sealedC2Potholes,
-        Carriage2_Rutting: isDualSave ? road2Defects!.rutting : sealedC2Rutting,
-        Carriage2_Edge_breaks: isDualSave ? road2Defects!.edgeBreaks : sealedC2EdgeBreaks,
-        Carriage2_Edge_drop: isDualSave ? road2Defects!.edgeDrop : sealedC2EdgeDrop,
-        Carriage2_Ravelling: isDualSave ? road2Defects!.ravelling : sealedC2Ravelling,
-        Carriage2_Riding_quality: isDualSave ? road2Defects!.ridingQuality : sealedC2RidingQuality,
-      };
+        dual_road_phase: dualRoadPhase,
+        road_segment_surveys: lane1Segs,
+        road_segment_surveys_2: lane2Segs.length > 0 ? lane2Segs : undefined,
+        Road_Length_km: totalSurveyLengthKm([...lane1Segs, ...lane2Segs])
+          ? parseFloat(totalSurveyLengthKm([...lane1Segs, ...lane2Segs]))
+          : undefined,
+        ...(lane1Last?.attrs.Carriage1_Riding_quality || lane1Last?.attrs.Riding_quality_degree_001
+          ? {
+              Carriage1_Narrow_cracks: String(lane1Last.attrs.Carriage1_Narrow_cracks ?? ""),
+              Carriage1_Wide_cracks: String(lane1Last.attrs.Carriage1_Wide_cracks ?? ""),
+              Carriage1_Pothole_patches: String(lane1Last.attrs.Carriage1_Pothole_patches ?? ""),
+              Carriage1_Rutting: String(lane1Last.attrs.Carriage1_Rutting ?? ""),
+              Carriage1_Edge_breaks: String(lane1Last.attrs.Carriage1_Edge_breaks ?? ""),
+              Carriage1_Edge_drop: String(lane1Last.attrs.Carriage1_Edge_drop ?? ""),
+              Carriage1_Ravelling: String(lane1Last.attrs.Carriage1_Ravelling ?? ""),
+              Carriage1_Riding_quality: String(lane1Last.attrs.Carriage1_Riding_quality ?? lane1Last.attrs.Riding_quality_degree_001 ?? ""),
+            }
+          : {}),
+        ...(lane2Last
+          ? {
+              Carriage2_Narrow_cracks: String(lane2Last.attrs.Carriage2_Narrow_cracks ?? ""),
+              Carriage2_Wide_cracks: String(lane2Last.attrs.Carriage2_Wide_cracks ?? ""),
+              Carriage2_Pothole_patches: String(lane2Last.attrs.Carriage2_Pothole_patches ?? ""),
+              Carriage2_Rutting: String(lane2Last.attrs.Carriage2_Rutting ?? ""),
+              Carriage2_Edge_breaks: String(lane2Last.attrs.Carriage2_Edge_breaks ?? ""),
+              Carriage2_Edge_drop: String(lane2Last.attrs.Carriage2_Edge_drop ?? ""),
+              Carriage2_Ravelling: String(lane2Last.attrs.Carriage2_Ravelling ?? ""),
+              Carriage2_Riding_quality: String(lane2Last.attrs.Carriage2_Riding_quality ?? ""),
+            }
+          : {}),
+      } as Omit<SurveyDraft, "id">;
     } else if (assetCategory === "gravel") {
       const finalGravelName = roadName.split(" (")[0] || roadName;
-      const chainFrom = chainageFrom.trim() ? parseFloat(chainageFrom) : undefined;
-      const chainTo = chainageTo.trim() ? parseFloat(chainageTo) : undefined;
+      const lastSeg = completedSegmentSurveys[completedSegmentSurveys.length - 1];
       draftData = {
         ...baseData,
+        ...(lastSeg ? draftAttrsFromSegmentSurvey(lastSeg) : {}),
         gravel_road_name: finalGravelName,
-        gravel_road_class: gravelClass,
-        gravel_thickness: gravelThickness,
-        gravel_condition: gravelRidingQuality,
-        drainage_condition: gravelDrainageCond,
-        vegetation: gravelVegetation,
-        chainage_from_km: chainFrom,
-        chainage_to_km: chainTo,
         Road_Name: finalGravelName,
-        Route_Number: undefined,
-        Road_Length: gpsSegmentLengthKm(segmentGeometry) ?? (gravelLength ? parseFloat(gravelLength) : undefined),
-        Segment_Length_km: gpsSegmentLengthKm(segmentGeometry),
-        Road_Class: gravelClass,
-        Authority_Name: gravelAuthority,
-        servitude_vegetation: gravelVegetation,
-        Climate_Region: gravelClimate,
-        Terrain_Type: gravelTerrain,
-        Road_Width_m: gravelWidth ? parseFloat(gravelWidth) : undefined,
-        Drainage_Type: gravelDrainageType,
-        Cross_section: gravelCrossSection,
-        Gravel_Thickness_mm: gravelThickness,
-        Corrugations: gravelCorrugations,
-        Riding_Quality_degree: gravelRidingQuality,
-        Drainage_condition: gravelDrainageCond,
-        Potholes_Degree: gravelPotholes,
-        Passability: gravelPassability,
-        Year_of_Counstruction: gravelYearConstructed ? parseInt(gravelYearConstructed) : undefined,
-        Chainage_From_km: chainFrom,
-        Chainage_To_km: chainTo,
-        gravel_corrugations_severity: gravelCorrugationsSeverity,
-        gravel_cross_section_severity: gravelCrossSectionSeverity,
-        gravel_drainage_severity: gravelDrainageSeverity,
-        gravel_potholes_severity: gravelPotholesSeverity,
-        gravel_riding_severity: gravelRidingSeverity,
+        road_segment_surveys: completedSegmentSurveys,
+        Road_Length: totalSurveyLengthKm(completedSegmentSurveys)
+          ? parseFloat(totalSurveyLengthKm(completedSegmentSurveys))
+          : undefined,
       };
     } else if (assetCategory === "earth") {
-      const chainFrom = chainageFrom.trim() ? parseFloat(chainageFrom) : undefined;
-      const chainTo = chainageTo.trim() ? parseFloat(chainageTo) : undefined;
+      const lastSeg = completedSegmentSurveys[completedSegmentSurveys.length - 1];
       draftData = {
         ...baseData,
+        ...(lastSeg ? draftAttrsFromSegmentSurvey(lastSeg) : {}),
         earth_road_name: roadName.split(" (")[0] || roadName,
-        earth_road_class: earthClass,
-        earth_road_width: earthWidth ? parseFloat(earthWidth) : undefined,
-        earth_road_length: gpsSegmentLengthKm(segmentGeometry) ?? (earthLength ? parseFloat(earthLength) : undefined),
-        Segment_Length_km: gpsSegmentLengthKm(segmentGeometry),
-        earth_road_condition: earthCondition,
-        earth_road_passability: earthPassability,
-        earth_drainage_type: earthDrainageType,
-        earth_drainage_condition: earthDrainageCond,
-        earth_terrain: earthTerrain,
-        earth_climate: earthClimate,
-        earth_authority: earthAuthority,
-        earth_year_constructed: earthYearConstructed ? parseInt(earthYearConstructed) : undefined,
-        chainage_from_km: chainFrom,
-        chainage_to_km: chainTo,
+        road_segment_surveys: completedSegmentSurveys,
+        earth_road_length: totalSurveyLengthKm(completedSegmentSurveys)
+          ? parseFloat(totalSurveyLengthKm(completedSegmentSurveys))
+          : undefined,
       };
     } else if (assetCategory === "footbridge") {
       if (!saveAsDraft && !footbridgeName) { showToast("Footbridge name is required.", "error"); return; }
@@ -2579,17 +2574,18 @@ export default function App() {
       draftData = { ...baseData };
     }
 
-    const attachLaneSegments = (
+    const attachLaneGeometries = (
       data: Omit<SurveyDraft, "id">,
-      segments: SegmentGeometry[],
+      surveys: RoadSegmentSurvey[],
       lane: 1 | 2
     ): Omit<SurveyDraft, "id"> => {
-      const merged = mergeSegmentGeometries(segments);
+      const geometries = segmentSurveysToGeometries(surveys);
+      const merged = mergeSegmentGeometries(geometries);
       if (!merged) return data;
       if (lane === 1) {
         return {
           ...data,
-          road_segment_parts: segments,
+          road_segment_parts: geometries,
           road_segment_points: merged.points,
           road_segment_geojson: merged.geojson,
           road_segment_length_m: merged.length_m,
@@ -2601,7 +2597,7 @@ export default function App() {
       }
       return {
         ...data,
-        road_segment_parts_2: segments,
+        road_segment_parts_2: geometries,
         road_segment_points_2: merged.points,
         road_segment_geojson_2: merged.geojson,
         road_segment_length_m_2: merged.length_m,
@@ -2612,34 +2608,21 @@ export default function App() {
       };
     };
 
-    const dualSurveyReady =
-      isSealedDualMode &&
-      !!dualRoad1Snapshot?.segments?.length &&
-      dualRoad2Finalized &&
-      collectedRoadSegments.length > 0;
-
-    // Attach GPS line geometry for road survey types
+    // Attach merged GPS geometry for road survey types
     if (isRoadType) {
-      if (isSealedDualMode && dualRoad1Snapshot?.segments?.length) {
-        draftData = attachLaneSegments(draftData, dualRoad1Snapshot.segments, 1);
-        if (dualSurveyReady || (saveAsDraft && collectedRoadSegments.length > 0)) {
-          draftData = attachLaneSegments(draftData, collectedRoadSegments, 2);
-        }
-      } else if (isSealedDualMode && currentDualSegmentsPending().length > 0) {
-        draftData = attachLaneSegments(draftData, currentDualSegmentsPending(), 1);
-      } else if (segmentGeometry) {
-        draftData = {
-          ...draftData,
-          road_segment_points: segmentGeometry.points,
-          road_segment_geojson: segmentGeometry.geojson,
-          road_segment_length_m: segmentGeometry.length_m,
-          road_segment_start_time: segmentGeometry.start_time,
-          road_segment_end_time: segmentGeometry.end_time,
-          road_segment_avg_accuracy_m: segmentGeometry.avg_accuracy_m,
-          road_segment_point_count: segmentGeometry.point_count,
-        };
+      const lane1Segs = isSealedDualMode
+        ? (dualRoad1Snapshot?.segments ?? (dualRoadPhase === 1 ? completedSegmentSurveys : []))
+        : completedSegmentSurveys;
+      const lane2Segs = isSealedDualMode && dualRoadPhase === 2 ? completedSegmentSurveys : [];
+      if (lane1Segs.length > 0) {
+        draftData = attachLaneGeometries(draftData, lane1Segs, 1);
+      }
+      if (lane2Segs.length > 0) {
+        draftData = attachLaneGeometries(draftData, lane2Segs, 2);
       }
     }
+
+    const skippedInProgressSegment = isRoadType && !!segmentGeometry;
 
     if (editingDraftId) {
       db.updateDraft(editingDraftId, draftData);
@@ -2647,6 +2630,10 @@ export default function App() {
     } else {
       db.addDraft(draftData);
       showToast(`${assetCategory.toUpperCase()} survey saved as ${saveAsDraft ? "Draft" : "Queued for Sync"}!`, "success");
+    }
+
+    if (skippedInProgressSegment) {
+      showToast("In-progress segment was not included — only completed segments were saved.", "info");
     }
 
     // Clear temp draft — form data is now properly saved
@@ -3854,27 +3841,32 @@ export default function App() {
               <div className="mobile-callout">
                 <strong>Road {dualRoadPhase} of 2</strong>
                 {dualRoadPhase === 1 ? (
-                  collectedRoadSegments.length > 0 || pendingDualSegment ? (
-                    <> — {collectedRoadSegments.length + (pendingDualSegment ? 1 : 0)} segment(s), {formatTotalSegmentsLengthKm(currentDualSegmentsPending())} km total on Road 1.</>
+                  completedSegmentSurveys.length > 0 ? (
+                    <> — {completedSegmentSurveys.length} segment(s) saved ({totalSurveyLengthKm(completedSegmentSurveys)} km) on Road 1.</>
                   ) : (
-                    <> — Record segments on this carriageway. End each segment, then add more or end Road 1.</>
+                    <> — Record a segment, fill in its attributes, then add more segments or end Road 1.</>
                   )
                 ) : dualRoad1Snapshot ? (
-                  <> — Road 1 done ({formatTotalSegmentsLengthKm(dualRoad1Snapshot.segments)} km). Record Road 2 segments on the parallel carriageway.</>
+                  <> — Road 1 done ({totalSurveyLengthKm(dualRoad1Snapshot.segments)} km). Record Road 2 segments on the parallel carriageway.</>
                 ) : (
                   <> — Record Road 2 segments on the parallel carriageway.</>
                 )}
               </div>
             )}
 
-            {isSealedDualMode && collectedRoadSegments.length > 0 && !dualEndRoadFormOpen && !pendingDualSegment && (
+            {isRoadType && completedSegmentSurveys.length > 0 && !segmentGeometry && (
               <div style={{ fontSize: "10px", color: "var(--text-muted)", padding: "8px 10px", background: "var(--bg-card)", borderRadius: "var(--radius-sm)", border: "1px solid var(--border-color)" }}>
-                Saved on Road {dualRoadPhase}: {collectedRoadSegments.length} segment(s) · {formatTotalSegmentsLengthKm(collectedRoadSegments)} km
+                Saved on Road {isSealedDualMode ? dualRoadPhase : 1}: {completedSegmentSurveys.length} segment(s) · {totalSurveyLengthKm(completedSegmentSurveys)} km
+                {hasSecurableRoadData && (
+                  <span style={{ display: "block", marginTop: "4px", color: "var(--text-accent)" }}>
+                    You can Queue for Sync anytime to secure collected data.
+                  </span>
+                )}
               </div>
             )}
 
             {/* GPS Segment Tracker — Sealed / Gravel / Earth roads only */}
-            {isRoadType && !(isSealedDualMode && (dualEndRoadFormOpen || dualRoad2Finalized)) && (
+            {isRoadType && (
               <SegmentTracker
                 key={`segment-tracker-${segmentTrackerKey}`}
                 roadLabel={
@@ -3894,13 +3886,11 @@ export default function App() {
                 )}
                 onSegmentComplete={(geo) => {
                   setSegmentGeometry(geo);
-                  if (!isSealedDualMode) {
-                    applyGpsLengthToRoadState(geo, assetCategory, {
-                      setSealedLength,
-                      setGravelLength,
-                      setEarthLength,
-                    });
-                  }
+                  applyGpsLengthToRoadState(geo, assetCategory, {
+                    setSealedLength,
+                    setGravelLength,
+                    setEarthLength,
+                  });
                   persistPausedRoadContext(null);
                   clearPausedRoadPhotos();
                   setAutoResumeSegment(false);
@@ -3968,52 +3958,12 @@ export default function App() {
               />
             )}
 
-            {pendingDualSegment && segmentGeometry && (
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "8px",
-                  padding: "12px",
-                  background: "var(--bg-card)",
-                  border: "1px solid var(--accent-emerald)",
-                  borderRadius: "var(--radius-md)",
-                }}
-              >
-                <div style={{ fontSize: "11px", color: "var(--text-primary)" }}>
-                  <strong>Segment {collectedRoadSegments.length + 1} recorded</strong>
-                  {" "}({Math.round(segmentGeometry.length_m)} m)
-                  {collectedRoadSegments.length > 0 && (
-                    <> · Road {dualRoadPhase} total: {formatTotalSegmentsLengthKm(currentDualSegmentsPending())} km</>
-                  )}
-                </div>
-                <div style={{ display: "flex", gap: "8px" }}>
-                  <button
-                    type="button"
-                    onClick={handleRecordNextDualSegment}
-                    className="mobile-btn mobile-btn-outline"
-                    style={{ flex: 1 }}
-                  >
-                    Record Next Segment
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleOpenEndDualRoadForm}
-                    className="mobile-btn"
-                    style={{ flex: 1 }}
-                  >
-                    End Road {dualRoadPhase}
-                  </button>
-                </div>
-              </div>
-            )}
-
             {/* Divider + label after segment completion */}
             {showRoadAttributes && (
               <div style={{ display: "flex", alignItems: "center", gap: "10px", margin: "4px 0" }}>
                 <div style={{ flex: 1, height: "1px", background: "var(--border-color)" }} />
                 <span style={{ fontSize: "10px", color: "var(--text-accent)", textTransform: "uppercase", letterSpacing: "0.08em", whiteSpace: "nowrap" }}>
-                  Road Attributes
+                  Segment {completedSegmentSurveys.length + 1} Attributes ({Math.round(segmentGeometry!.length_m)} m)
                 </span>
                 <div style={{ flex: 1, height: "1px", background: "var(--border-color)" }} />
               </div>
@@ -4033,11 +3983,34 @@ export default function App() {
             )}
 
             {/* Lock message when road type chosen but no segment yet */}
-            {isRoadType && !showRoadAttributes && !pendingDualSegment && (
+            {isRoadType && !showRoadAttributes && !betweenSegments && (
               <div style={{ textAlign: "center", padding: "14px 10px", color: "var(--text-muted)", fontSize: "11px", background: "var(--bg-card)", border: "1px dashed var(--border-color)", borderRadius: "var(--radius-md)" }}>
-                {isSealedDualMode
-                  ? "🔒 Record GPS segments above. After each segment, choose Record Next Segment or End Road."
-                  : "🔒 Complete the GPS segment recording above to unlock road attributes"}
+                🔒 Record a GPS segment above — segment attributes will unlock when recording finishes.
+              </div>
+            )}
+
+            {betweenSegments && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px", padding: "12px", background: "var(--bg-card)", border: "1px solid var(--border-color)", borderRadius: "var(--radius-md)" }}>
+                <div style={{ fontSize: "11px", color: "var(--text-primary)" }}>
+                  <strong>{completedSegmentSurveys.length} segment(s) saved</strong>
+                  {" "}({totalSurveyLengthKm(completedSegmentSurveys)} km on Road {isSealedDualMode ? dualRoadPhase : 1})
+                </div>
+                <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                  {isSealedDualMode && dualRoadPhase === 1 && (
+                    <button type="button" onClick={handleEndDualRoad} className="mobile-btn mobile-btn-outline" style={{ flex: 1, minWidth: "120px" }}>
+                      End Road 1 — Switch to Road 2
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={(e) => handleSaveForm(e, false)}
+                    className="mobile-btn"
+                    style={{ flex: 1, minWidth: "120px" }}
+                  >
+                    <PlusCircle size={14} />
+                    Queue for Sync
+                  </button>
+                </div>
               </div>
             )}
 
@@ -4223,8 +4196,8 @@ export default function App() {
               <fieldset style={{ border: "1px solid var(--border-color)", padding: "12px", borderRadius: "var(--radius-md)", display: "flex", flexDirection: "column", gap: "10px" }}>
                 <legend style={{ fontSize: "10px", fontWeight: "700", textTransform: "uppercase", color: "var(--text-accent)", padding: "0 6px" }}>
                   Sealed Road Properties{isSealedDualMode ? ` — Road ${dualRoadPhase}` : ""}
-                  {isSealedDualMode && collectedRoadSegments.length > 0 && (
-                    <> ({collectedRoadSegments.length} segment{collectedRoadSegments.length === 1 ? "" : "s"})</>
+                  {completedSegmentSurveys.length > 0 && (
+                    <> ({completedSegmentSurveys.length} saved)</>
                   )}
                 </legend>
 
@@ -4312,7 +4285,7 @@ export default function App() {
                     <input
                       type="text"
                       readOnly
-                      value={formatGpsLengthKm(activeRoadGeometryForForm()) || sealedLength}
+                      value={formatGpsLengthKm(segmentGeometry) || sealedLength}
                       className="mobile-input"
                       style={{ background: "var(--bg-card)", color: "var(--text-secondary)" }}
                     />
@@ -4498,17 +4471,6 @@ export default function App() {
                   </div>
                 </div>
               </fieldset>
-            )}
-
-            {isSealedDualMode && dualEndRoadFormOpen && !dualRoad2Finalized && (
-              <button
-                type="button"
-                onClick={handleFinalizeEndDualRoad}
-                className="mobile-btn"
-                style={{ width: "100%", marginTop: "4px" }}
-              >
-                {dualRoadPhase === 1 ? "End Road 1 — Start Road 2" : "End Road 2 — Ready to Queue"}
-              </button>
             )}
 
             {/* Conditional Form: Gravel Road */}
@@ -4832,6 +4794,17 @@ export default function App() {
                   />
                 </div>
               </fieldset>
+            )}
+
+            {isRoadType && showRoadAttributes && (
+              <button
+                type="button"
+                onClick={handleCompleteCurrentSegment}
+                className="mobile-btn"
+                style={{ width: "100%", marginTop: "4px" }}
+              >
+                Complete Segment — Save &amp; Record Next
+              </button>
             )}
 
             {/* Conditional Form: Catchpit */}
@@ -5563,17 +5536,19 @@ export default function App() {
               </fieldset>
             )}
 
-            <div className="mobile-form-group" style={{ marginTop: "4px" }}>
-              <label className="mobile-label">Notes (optional)</label>
-              <textarea
-                placeholder="Additional observations, access issues, context…"
-                value={surveyNotes}
-                onChange={(e) => setSurveyNotes(e.target.value)}
-                className="mobile-input"
-                rows={3}
-                style={{ resize: "vertical", minHeight: "72px" }}
-              />
-            </div>
+            {(showRoadAttributes || !isRoadType) && (
+              <div className="mobile-form-group" style={{ marginTop: "4px" }}>
+                <label className="mobile-label">Notes (optional)</label>
+                <textarea
+                  placeholder="Additional observations, access issues, context…"
+                  value={surveyNotes}
+                  onChange={(e) => setSurveyNotes(e.target.value)}
+                  className="mobile-input"
+                  rows={3}
+                  style={{ resize: "vertical", minHeight: "72px" }}
+                />
+              </div>
+            )}
 
             <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "8px" }}>
               <div style={{ display: "flex", gap: "10px" }}>
@@ -5582,6 +5557,7 @@ export default function App() {
                   onClick={(e) => handleSaveForm(e, true)}
                   className="mobile-btn mobile-btn-outline"
                   style={{ flex: 1 }}
+                  disabled={isRoadType && !hasSecurableRoadData}
                 >
                   Save Draft
                 </button>
@@ -5589,17 +5565,28 @@ export default function App() {
                   type="submit"
                   className="mobile-btn"
                   style={{ flex: 1 }}
+                  disabled={isRoadType && !hasSecurableRoadData}
                 >
                   <PlusCircle size={14} />
                   <span>
                     {editingDraftId
                       ? "Queue Update"
-                      : isSealedDualMode && dualRoad2Finalized
+                      : isSealedDualMode
                         ? "Queue Dual Survey"
                         : "Queue for Sync"}
                   </span>
                 </button>
               </div>
+              {isRoadType && !hasSecurableRoadData && (
+                <p style={{ fontSize: "10px", color: "var(--text-muted)", margin: 0, textAlign: "center" }}>
+                  Complete at least one segment (GPS + attributes) to save or queue.
+                </p>
+              )}
+              {isRoadType && hasSecurableRoadData && segmentGeometry && (
+                <p style={{ fontSize: "10px", color: "var(--text-muted)", margin: 0, textAlign: "center" }}>
+                  Queue anytime — completed segments are saved; the current in-progress segment is excluded.
+                </p>
+              )}
               {editingDraftId && (
                 <button
                   type="button"

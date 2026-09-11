@@ -1,5 +1,5 @@
 import type { Option } from "./components/SelectWithOther";
-import type { SegmentGeometry } from "./components/SegmentTracker";
+import type { RoadSegmentSurvey } from "./lib/roadSegmentSurvey";
 
 export type SealedCollectionMode = "single" | "dual";
 
@@ -21,10 +21,7 @@ export interface SealedLaneDefectSnapshot {
 }
 
 export interface DualRoadLaneSnapshot {
-  segments: SegmentGeometry[];
-  photos: string[];
-  defects: SealedLaneDefectSnapshot;
-  vegetation?: string;
+  segments: RoadSegmentSurvey[];
 }
 
 export const DEFAULT_SEALED_LANE_DEFECTS: SealedLaneDefectSnapshot = {

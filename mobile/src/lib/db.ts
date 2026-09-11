@@ -321,6 +321,42 @@ export interface SurveyDraft {
     point_count: number;
   }>;
 
+  /** Per-segment surveys with individual attribute forms (single or dual road). */
+  road_segment_surveys?: Array<{
+    geometry: {
+      points: Array<{ lat: number; lng: number; alt?: number; acc: number; ts: number; orig_lat?: number; orig_lng?: number }>;
+      geojson: string;
+      length_m: number;
+      start_time: string;
+      end_time: string;
+      avg_accuracy_m: number;
+      point_count: number;
+    };
+    vegetation: string;
+    photos?: string[];
+    chainage_from_km?: number;
+    chainage_to_km?: number;
+    survey_notes?: string;
+    attrs?: Record<string, unknown>;
+  }>;
+  road_segment_surveys_2?: Array<{
+    geometry: {
+      points: Array<{ lat: number; lng: number; alt?: number; acc: number; ts: number; orig_lat?: number; orig_lng?: number }>;
+      geojson: string;
+      length_m: number;
+      start_time: string;
+      end_time: string;
+      avg_accuracy_m: number;
+      point_count: number;
+    };
+    vegetation: string;
+    photos?: string[];
+    chainage_from_km?: number;
+    chainage_to_km?: number;
+    survey_notes?: string;
+    attrs?: Record<string, unknown>;
+  }>;
+
   /** Sealed dual collection: sequential parallel carriageway surveys in one record. */
   sealed_collection_mode?: "single" | "dual";
   dual_road_phase?: 1 | 2;

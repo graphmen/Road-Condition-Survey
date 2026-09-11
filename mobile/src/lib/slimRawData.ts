@@ -16,6 +16,8 @@ const RAW_DATA_OMIT = new Set([
   "road_segment_point_count_2",
   "road_segment_parts",
   "road_segment_parts_2",
+  "road_segment_surveys",
+  "road_segment_surveys_2",
 ]);
 
 export function slimRawData(draft: Record<string, unknown>): Record<string, unknown> {
