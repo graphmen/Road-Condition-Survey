@@ -1,5 +1,4 @@
-import fs from "fs";
-import path from "path";
+import appInfoData from "../public/downloads/app-info.json";
 
 export type AppDownloadInfo = {
   appName: string;
@@ -21,21 +20,12 @@ export type AppDownloadInfo = {
   dashboardUrl?: string;
 };
 
-export function getAppDownloadInfo(): AppDownloadInfo | null {
-  try {
-    const infoPath = path.join(process.cwd(), "public", "downloads", "app-info.json");
-    if (!fs.existsSync(infoPath)) return null;
-    return JSON.parse(fs.readFileSync(infoPath, "utf8")) as AppDownloadInfo;
-  } catch {
-    return null;
-  }
+/** Bundled at build time — works on Vercel (serverless has no fs access to public/). */
+export function getAppDownloadInfo(): AppDownloadInfo {
+  return appInfoData as AppDownloadInfo;
 }
 
-export function apkFileExists(info: AppDownloadInfo): boolean {
-  try {
-    const apkPath = path.join(process.cwd(), "public", "downloads", info.fileName);
-    return fs.existsSync(apkPath);
-  } catch {
-    return false;
-  }
+/** APK is published alongside app-info.json in public/downloads on every release. */
+export function apkIsPublished(info: AppDownloadInfo): boolean {
+  return Boolean(info.available && info.fileName && info.versionCode > 0);
 }

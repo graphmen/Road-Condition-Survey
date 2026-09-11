@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Download,
   Smartphone,
@@ -40,8 +40,32 @@ type Props = {
   apkExists: boolean;
 };
 
-export default function DownloadPageClient({ info, apkExists }: Props) {
+export default function DownloadPageClient({ info: initialInfo, apkExists: initialApkExists }: Props) {
   const [copied, setCopied] = useState(false);
+  const [info, setInfo] = useState<AppDownloadInfo | null>(initialInfo);
+  const [apkExists, setApkExists] = useState(initialApkExists);
+
+  // Fallback: fetch release info from static CDN if server bundle was stale
+  useEffect(() => {
+    if (initialInfo?.versionName) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/downloads/app-info.json?v=${Date.now()}`, { cache: "no-store" });
+        if (!res.ok) return;
+        const data = (await res.json()) as AppDownloadInfo;
+        if (cancelled) return;
+        setInfo(data);
+        const head = await fetch(`/downloads/${data.fileName}?v=${data.versionCode}`, { method: "HEAD", cache: "no-store" });
+        if (!cancelled) setApkExists(head.ok && data.available);
+      } catch {
+        /* keep server-provided state */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [initialInfo?.versionName]);
 
   const canDownload = Boolean(info?.available && apkExists);
   const apkHref = info
