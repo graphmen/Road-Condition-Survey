@@ -4,9 +4,9 @@
 #   powershell -ExecutionPolicy Bypass -File scripts/build-apk.ps1
 
 param(
-  [string]$Version = "1.10.2",
-  [int]$VersionCode = 23,
-  [string]$Changelog = "Dual carriageway fix: collect multiple segments with per-segment forms on Road 1, queue Road 1 anytime before switching to Road 2. Improved notice box contrast.",
+  [string]$Version = "1.10.3",
+  [int]$VersionCode = 24,
+  [string]$Changelog = "Faster, more reliable sync: smaller upload payloads, direct server write with retry, continues uploading remaining surveys if one fails.",
   [string]$ServerUrl = "https://road-condition-survey.vercel.app"
 )
 

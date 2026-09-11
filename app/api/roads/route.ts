@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import roadsData from "@/public/roads-data.json";
 import { mergePhotoLists, normalizePhotos, slimRecordForList } from "@/components/helpers";
+import { buildSyncRawData, limitSyncPhotos } from "@/lib/syncPayload";
 import fs from "fs";
 import path from "path";
 
@@ -566,21 +567,10 @@ const SUPABASE_ANON_KEY = "sb_publishable_XVL14JBx0YdcbqXlUEsN7w_8xhPeA4W";
 const FIREBASE_PROJECT = "road-condition-survey";
 const FIREBASE_DB = "road-condition-survey";
 
-/** Build photo column + slim raw_data (keep photos in raw_data as backup for dashboard fetch). */
-const RAW_DATA_OMIT = new Set([
-  "road_segment_points", "road_segment_geojson",
-  "road_segment_length_m", "road_segment_start_time", "road_segment_end_time",
-  "road_segment_avg_accuracy_m", "road_segment_point_count",
-]);
-
 function buildPhotoPayload(draft: any): { photo: string | null; photos: string[]; raw_data: any } {
-  const photos = normalizePhotos(draft);
+  const photos = limitSyncPhotos(draft && typeof draft === "object" ? draft : {}, 4);
   const raw_data =
-    draft && typeof draft === "object"
-      ? Object.fromEntries(
-          Object.entries(draft).filter(([k]) => !RAW_DATA_OMIT.has(k))
-        )
-      : draft;
+    draft && typeof draft === "object" ? buildSyncRawData(draft as Record<string, unknown>) : draft;
   return {
     photo: photos[0] || null,
     photos,
@@ -1466,22 +1456,6 @@ export async function POST(req: Request) {
       }
 
       invalidateServerCache();
-
-      // 2. Firebase write
-      try {
-        const firestoreDoc = toFirestoreDocument(supabaseRow);
-        const docId = record.id || record._id;
-        await fetch(
-          `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT}/databases/${FIREBASE_DB}/documents/${tableName}?documentId=${docId}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(firestoreDoc)
-          }
-        );
-      } catch (fbErr) {
-        console.error("Firebase parallel write failed:", fbErr);
-      }
 
       return NextResponse.json({ success: true, record, source: "server" });
     } catch (err: any) {

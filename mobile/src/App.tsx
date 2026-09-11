@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { db } from "./lib/db";
 import type { SurveyDraft } from "./lib/db";
 import { slimRawData } from "./lib/slimRawData";
+import { fetchWithTimeout, prepareSyncPayload } from "./lib/prepareSyncPayload";
 import { assetUrl } from "./lib/assets";
 import { SegmentTracker, PAUSED_ROAD_CONTEXT_KEY, SEGMENT_SESSION_KEY } from "./components/SegmentTracker";
 import type { SegmentGeometry } from "./components/SegmentTracker";
@@ -2692,8 +2693,6 @@ export default function App() {
 
     const SUPABASE_URL = "https://kchmhpwmyubesocdssga.supabase.co";
     const SUPABASE_ANON_KEY = "sb_publishable_XVL14JBx0YdcbqXlUEsN7w_8xhPeA4W";
-    const FIREBASE_PROJECT = "road-condition-survey";
-    const FIREBASE_DB = "road-condition-survey";
 
     let successCount = 0;
 
@@ -2721,14 +2720,14 @@ export default function App() {
     };
 
     const mapDraftToSupabaseTable = (draft: any, tableName: string) => {
-      const photoList: string[] = [];
-      const addPhoto = (item: unknown) => {
-        if (typeof item === "string" && item.trim()) photoList.push(item.trim());
+      const syncPayload = prepareSyncPayload(draft as unknown as Record<string, unknown>);
+      const payloadPhotos: string[] = [];
+      const addPayloadPhoto = (item: unknown) => {
+        if (typeof item === "string" && item.trim()) payloadPhotos.push(item.trim());
       };
-      if (Array.isArray(draft.photos)) draft.photos.forEach(addPhoto);
-      addPhoto(draft.photo);
-      const uniquePhotos = Array.from(new Set(photoList));
-      const rawWithoutPhotos = slimRawData(draft as Record<string, unknown>);
+      if (Array.isArray(syncPayload.photos)) syncPayload.photos.forEach(addPayloadPhoto);
+      addPayloadPhoto(syncPayload.photo);
+      const uploadPhotos = Array.from(new Set(payloadPhotos));
 
       const row: any = {
         survey_id:            draft.id,
@@ -2739,9 +2738,9 @@ export default function App() {
         survey_date:          draft.survey_date || null,
         gps_point:            draft.gps || null,
         image_sadc_compliant: draft.image_SADC_compliant || draft.image_sadc_compliant || "yes",
-        photo:                uniquePhotos[0] || null,
-        photos:               uniquePhotos.length > 0 ? uniquePhotos : null,
-        raw_data:             rawWithoutPhotos,
+        photo:                uploadPhotos[0] || null,
+        photos:               uploadPhotos.length > 0 ? uploadPhotos : null,
+        raw_data:             syncPayload.raw_data ?? slimRawData(draft as Record<string, unknown>),
         source:               "mobile_app"
       };
 
@@ -2974,38 +2973,6 @@ export default function App() {
       return row;
     };
 
-    const toFirestoreDocument = (obj: any) => {
-      const fields: any = {};
-      for (const [key, val] of Object.entries(obj)) {
-        if (val === null || val === undefined) continue;
-        if (typeof val === "string") {
-          fields[key] = { stringValue: val };
-        } else if (typeof val === "number") {
-          if (Number.isInteger(val)) {
-            fields[key] = { integerValue: val.toString() };
-          } else {
-            fields[key] = { doubleValue: val };
-          }
-        } else if (typeof val === "boolean") {
-          fields[key] = { booleanValue: val };
-        } else if (Array.isArray(val)) {
-          fields[key] = {
-            arrayValue: {
-              values: val.map(item => {
-                if (typeof item === "object") {
-                  return { stringValue: JSON.stringify(item) };
-                }
-                return { stringValue: String(item) };
-              })
-            }
-          };
-        } else if (typeof val === "object") {
-          fields[key] = { stringValue: JSON.stringify(val) };
-        }
-      }
-      return { fields };
-    };
-
     for (let i = 0; i < queuedDrafts.length; i++) {
       const draft = queuedDrafts[i];
       let draftName = "Road Survey";
@@ -3031,73 +2998,85 @@ export default function App() {
       try {
         const category = draft.asset_category || "sealed";
         const tableName = categoryToTable[category] || "survey_sealed_roads";
-
-        // Prefer dashboard API when configured (same mapper + cache invalidation)
+        const syncPayload = prepareSyncPayload(draft as unknown as Record<string, unknown>);
+        const supabaseRow = mapDraftToSupabaseTable({ ...draft, ...syncPayload }, tableName);
         const apiBase = (serverUrl || localStorage.getItem("roads_server_url") || "").replace(/\/$/, "");
-        let synced = false;
 
-        if (apiBase && !apiBase.includes("localhost") && !apiBase.includes("127.0.0.1")) {
-          try {
-            const apiRes = await fetch(`${apiBase}/api/roads`, {
+        const postToSupabase = async () => {
+          const supabaseRes = await fetchWithTimeout(
+            `${SUPABASE_URL}/rest/v1/${tableName}`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                apikey: SUPABASE_ANON_KEY,
+                Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+                Prefer: "return=minimal,resolution=merge-duplicates",
+              },
+              body: JSON.stringify(supabaseRow),
+            },
+            120_000
+          );
+          if (!supabaseRes.ok) {
+            const errText = await supabaseRes.text();
+            throw new Error(`Server write failed: ${errText.slice(0, 200)}`);
+          }
+        };
+
+        const postToDashboardApi = async () => {
+          if (!apiBase || apiBase.includes("localhost") || apiBase.includes("127.0.0.1")) {
+            throw new Error("Dashboard API not configured");
+          }
+          const apiRes = await fetchWithTimeout(
+            `${apiBase}/api/roads`,
+            {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ record: { ...draft, source: "mobile_app" } }),
-            });
-            if (apiRes.ok) {
-              synced = true;
-            } else {
-              console.warn("Dashboard API sync failed, falling back to Supabase:", await apiRes.text());
+              body: JSON.stringify({ record: syncPayload }),
+            },
+            120_000
+          );
+          if (!apiRes.ok) {
+            const errText = await apiRes.text();
+            throw new Error(`Dashboard API failed: ${errText.slice(0, 200)}`);
+          }
+        };
+
+        let synced = false;
+        let lastErr: Error | null = null;
+
+        for (const attempt of [1, 2]) {
+          try {
+            await postToSupabase();
+            synced = true;
+            break;
+          } catch (e) {
+            lastErr = e instanceof Error ? e : new Error(String(e));
+            if (attempt === 1) {
+              await new Promise((r) => setTimeout(r, 1500));
             }
-          } catch (apiErr) {
-            console.warn("Dashboard API unreachable, falling back to Supabase:", apiErr);
           }
         }
 
         if (!synced) {
-          const supabaseRow = mapDraftToSupabaseTable(draft, tableName);
-
-          const supabaseRes = await fetch(`${SUPABASE_URL}/rest/v1/${tableName}`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "apikey": SUPABASE_ANON_KEY,
-              "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
-              "Prefer": "return=minimal,resolution=merge-duplicates",
-            },
-            body: JSON.stringify(supabaseRow)
-          });
-
-          if (!supabaseRes.ok) {
-            const errText = await supabaseRes.text();
-            throw new Error(`Supabase write failed: ${errText}`);
+          try {
+            await postToDashboardApi();
+            synced = true;
+          } catch (apiErr) {
+            lastErr = apiErr instanceof Error ? apiErr : new Error(String(apiErr));
           }
         }
 
-        // Mirror to Firebase (best-effort)
-        try {
-          const supabaseRow = mapDraftToSupabaseTable(draft, tableName);
-          const firestoreDoc = toFirestoreDocument(supabaseRow);
-          const firebaseRes = await fetch(
-            `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT}/databases/${FIREBASE_DB}/documents/${tableName}?documentId=${draft.id}`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(firestoreDoc)
-            }
-          );
-          if (!firebaseRes.ok) {
-            console.warn(`Firebase sync failed (Status ${firebaseRes.status}):`, await firebaseRes.text());
-          }
-        } catch (fbErr) {
-          console.error("Firebase sync error:", fbErr);
+        if (!synced) {
+          throw lastErr ?? new Error("Upload failed");
         }
 
         db.deleteDraft(draft.id);
         successCount++;
-      } catch (err: any) {
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
         console.error("Server sync error:", err);
-        showToast(`Sync failed: ${err.message || err}`, "error");
-        break; // Stop loop on primary database sync failure
+        showToast(`Sync failed on ${draftName}: ${message}`, "error");
       }
     }
 
