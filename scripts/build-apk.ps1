@@ -4,9 +4,9 @@
 #   powershell -ExecutionPolicy Bypass -File scripts/build-apk.ps1
 
 param(
-  [string]$Version = "1.10.1",
-  [int]$VersionCode = 22,
-  [string]$Changelog = "Per-segment attribute forms: fill attributes after each GPS segment (single and dual). End Road 1 switches to Road 2 without a form. Queue for Sync anytime to secure completed segments.",
+  [string]$Version = "1.10.2",
+  [int]$VersionCode = 23,
+  [string]$Changelog = "Dual carriageway fix: collect multiple segments with per-segment forms on Road 1, queue Road 1 anytime before switching to Road 2. Improved notice box contrast.",
   [string]$ServerUrl = "https://road-condition-survey.vercel.app"
 )
 

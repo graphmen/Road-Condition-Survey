@@ -1510,8 +1510,8 @@ export function SegmentTracker({
               className="mobile-btn"
               style={{
                 ...segmentBtnBase,
-                background: "#b45309",
-                borderColor: "#b45309",
+                background: "var(--accent-blue)",
+                borderColor: "var(--accent-blue)",
               }}
             >
               <MapPinned size={14} style={{ flexShrink: 0 }} />
@@ -1536,7 +1536,7 @@ export function SegmentTracker({
           display: "flex", flexDirection: "column", gap: "12px",
           padding: "14px",
           background: "var(--bg-card)",
-          border: "2px solid #b45309",
+          border: "2px solid var(--accent-emerald)",
           borderRadius: "var(--radius-md)",
         }}
       >
@@ -1544,14 +1544,14 @@ export function SegmentTracker({
           <div
             style={{
               width: 36, height: 36, borderRadius: "50%",
-              background: "rgba(180,83,9,0.12)",
+              background: "rgba(0,102,51,0.1)",
               display: "flex", alignItems: "center", justifyContent: "center",
             }}
           >
-            <Pause size={18} color="#b45309" />
+            <Pause size={18} color="var(--accent-emerald-dark)" />
           </div>
           <div>
-            <p style={{ margin: 0, fontSize: "13px", fontWeight: 800, color: "#b45309" }}>
+            <p style={{ margin: 0, fontSize: "13px", fontWeight: 800, color: "var(--accent-emerald-dark)" }}>
               Segment Paused
             </p>
             <p style={{ margin: "2px 0 0", fontSize: "10px", color: "var(--text-muted)" }}>
@@ -1610,7 +1610,7 @@ export function SegmentTracker({
             type="button"
             onClick={() => onCollectPointAlongRoute()}
             className="mobile-btn mobile-btn-outline"
-            style={{ width: "100%", height: "42px", fontSize: "12px", gap: "8px", color: "#b45309", borderColor: "#b45309" }}
+            style={{ width: "100%", height: "42px", fontSize: "12px", gap: "8px", color: "var(--accent-emerald-dark)", borderColor: "var(--accent-emerald)" }}
           >
             <MapPinned size={15} />
             Collect Point Asset (bus stop, bridge…)
@@ -1634,7 +1634,7 @@ export function SegmentTracker({
         </button>
 
         {statusMsg && (
-          <p style={{ fontSize: "11px", color: "#b45309", margin: 0, textAlign: "center" }}>{statusMsg}</p>
+          <p style={{ fontSize: "11px", color: "var(--accent-emerald-dark)", margin: 0, textAlign: "center" }}>{statusMsg}</p>
         )}
       </div>
     );
@@ -1670,7 +1670,7 @@ export function SegmentTracker({
             Segment Recorded
           </p>
           <p style={{ fontSize: "10px", color: "var(--text-muted)", margin: "2px 0 0" }}>
-            Scroll down to fill in road attributes, then save or queue for sync.
+            Scroll down to fill in this segment&apos;s attributes, then tap Complete Segment to record the next one.
           </p>
         </div>
       </div>

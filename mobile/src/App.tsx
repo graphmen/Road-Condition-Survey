@@ -639,10 +639,19 @@ export default function App() {
   const betweenSegments =
     isRoadType && !segmentGeometry && completedSegmentSurveys.length > 0;
 
+  const lane1SegmentSurveys = (): RoadSegmentSurvey[] => {
+    if (!isSealedDualMode) return completedSegmentSurveys;
+    return dualRoad1Snapshot?.segments ?? (dualRoadPhase === 1 ? completedSegmentSurveys : []);
+  };
+
+  const lane2SegmentSurveys = (): RoadSegmentSurvey[] =>
+    isSealedDualMode && dualRoadPhase === 2 ? completedSegmentSurveys : [];
+
+  const currentRoadSegmentSurveys = (): RoadSegmentSurvey[] =>
+    isSealedDualMode && dualRoadPhase === 2 ? lane2SegmentSurveys() : lane1SegmentSurveys();
+
   const totalCollectedSegmentSurveys = (): RoadSegmentSurvey[] => {
-    const road1 = dualRoad1Snapshot?.segments ?? [];
-    const road2 = dualRoadPhase === 2 ? completedSegmentSurveys : [];
-    if (isSealedDualMode) return [...road1, ...road2];
+    if (isSealedDualMode) return [...lane1SegmentSurveys(), ...lane2SegmentSurveys()];
     return completedSegmentSurveys;
   };
 
@@ -2357,9 +2366,7 @@ export default function App() {
       };
     } else if (assetCategory === "sealed") {
       const finalSealedName = roadName.split(" (")[0] || roadName;
-      const lane1Segs = isSealedDualMode
-        ? (dualRoad1Snapshot?.segments ?? (dualRoadPhase === 1 ? completedSegmentSurveys : []))
-        : completedSegmentSurveys;
+      const lane1Segs = lane1SegmentSurveys();
       const lane2Segs = isSealedDualMode && dualRoadPhase === 2 ? completedSegmentSurveys : [];
       const lastSeg = lane2Segs.length > 0 ? lane2Segs[lane2Segs.length - 1] : lane1Segs[lane1Segs.length - 1];
       const lastAttrs = lastSeg ? draftAttrsFromSegmentSurvey(lastSeg) : {};
@@ -2610,9 +2617,7 @@ export default function App() {
 
     // Attach merged GPS geometry for road survey types
     if (isRoadType) {
-      const lane1Segs = isSealedDualMode
-        ? (dualRoad1Snapshot?.segments ?? (dualRoadPhase === 1 ? completedSegmentSurveys : []))
-        : completedSegmentSurveys;
+      const lane1Segs = lane1SegmentSurveys();
       const lane2Segs = isSealedDualMode && dualRoadPhase === 2 ? completedSegmentSurveys : [];
       if (lane1Segs.length > 0) {
         draftData = attachLaneGeometries(draftData, lane1Segs, 1);
@@ -3250,21 +3255,11 @@ export default function App() {
               </div>
 
               {pausedRoadContext && (
-                <div
-                  style={{
-                    background: "rgba(180,83,9,0.08)",
-                    border: "1.5px solid #b45309",
-                    borderRadius: "var(--radius-md)",
-                    padding: "12px",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "10px",
-                  }}
-                >
+                <div className="mobile-notice-warn">
                   <div style={{ display: "flex", alignItems: "flex-start", gap: "10px" }}>
-                    <Pause size={18} color="#b45309" style={{ marginTop: 2, flexShrink: 0 }} />
+                    <Pause size={18} color="var(--accent-emerald-dark)" style={{ marginTop: 2, flexShrink: 0 }} />
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: "12px", fontWeight: 800, color: "#b45309" }}>
+                      <div className="mobile-notice-warn-title">
                         Line survey paused
                       </div>
                       <div style={{ fontSize: "10px", color: "var(--text-secondary)", marginTop: 3, lineHeight: 1.45 }}>
@@ -3838,30 +3833,40 @@ export default function App() {
             )}
 
             {isSealedDualMode && (
-              <div className="mobile-callout">
-                <strong>Road {dualRoadPhase} of 2</strong>
+              <div className="mobile-callout mobile-callout-dual">
+                <strong>Road {dualRoadPhase} of 2 — Dual Carriageway</strong>
                 {dualRoadPhase === 1 ? (
-                  completedSegmentSurveys.length > 0 ? (
-                    <> — {completedSegmentSurveys.length} segment(s) saved ({totalSurveyLengthKm(completedSegmentSurveys)} km) on Road 1.</>
+                  currentRoadSegmentSurveys().length > 0 ? (
+                    <>
+                      {" "}
+                      · {currentRoadSegmentSurveys().length} segment(s) saved ({totalSurveyLengthKm(currentRoadSegmentSurveys())} km).
+                      Record more segments above, queue Road 1 data anytime, or end Road 1 when finished.
+                    </>
                   ) : (
-                    <> — Record a segment, fill in its attributes, then add more segments or end Road 1.</>
+                    <> — Record a GPS segment, fill its attributes, then add as many segments as needed on this carriageway.</>
                   )
                 ) : dualRoad1Snapshot ? (
-                  <> — Road 1 done ({totalSurveyLengthKm(dualRoad1Snapshot.segments)} km). Record Road 2 segments on the parallel carriageway.</>
+                  <>
+                    {" "}
+                    · Road 1 complete ({totalSurveyLengthKm(dualRoad1Snapshot.segments)} km).
+                    Now record Road 2 segments on the parallel carriageway — each with its own attribute form.
+                  </>
                 ) : (
                   <> — Record Road 2 segments on the parallel carriageway.</>
                 )}
               </div>
             )}
 
-            {isRoadType && completedSegmentSurveys.length > 0 && !segmentGeometry && (
-              <div style={{ fontSize: "10px", color: "var(--text-muted)", padding: "8px 10px", background: "var(--bg-card)", borderRadius: "var(--radius-sm)", border: "1px solid var(--border-color)" }}>
-                Saved on Road {isSealedDualMode ? dualRoadPhase : 1}: {completedSegmentSurveys.length} segment(s) · {totalSurveyLengthKm(completedSegmentSurveys)} km
-                {hasSecurableRoadData && (
-                  <span style={{ display: "block", marginTop: "4px", color: "var(--text-accent)" }}>
-                    You can Queue for Sync anytime to secure collected data.
-                  </span>
-                )}
+            {isRoadType && currentRoadSegmentSurveys().length > 0 && !segmentGeometry && (
+              <div className="mobile-notice-info">
+                <strong>
+                  {currentRoadSegmentSurveys().length} segment(s) saved on Road {isSealedDualMode ? dualRoadPhase : 1}
+                </strong>
+                <span> · {totalSurveyLengthKm(currentRoadSegmentSurveys())} km total</span>
+                <p className="mobile-notice-info-hint">
+                  Tap <strong>Start GPS Recording</strong> above for the next segment.
+                  {hasSecurableRoadData && " Queue for Sync anytime to secure what you have collected."}
+                </p>
               </div>
             )}
 
@@ -3990,26 +3995,29 @@ export default function App() {
             )}
 
             {betweenSegments && (
-              <div style={{ display: "flex", flexDirection: "column", gap: "8px", padding: "12px", background: "var(--bg-card)", border: "1px solid var(--border-color)", borderRadius: "var(--radius-md)" }}>
-                <div style={{ fontSize: "11px", color: "var(--text-primary)" }}>
-                  <strong>{completedSegmentSurveys.length} segment(s) saved</strong>
-                  {" "}({totalSurveyLengthKm(completedSegmentSurveys)} km on Road {isSealedDualMode ? dualRoadPhase : 1})
+              <div className="mobile-segment-actions">
+                <div className="mobile-segment-actions-summary">
+                  <strong>{currentRoadSegmentSurveys().length} segment(s) ready</strong>
+                  {" "}· {totalSurveyLengthKm(currentRoadSegmentSurveys())} km on Road {isSealedDualMode ? dualRoadPhase : 1}
                 </div>
+                <p className="mobile-segment-actions-hint">
+                  Record the next segment above, or secure your work below.
+                </p>
                 <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                  {isSealedDualMode && dualRoadPhase === 1 && (
-                    <button type="button" onClick={handleEndDualRoad} className="mobile-btn mobile-btn-outline" style={{ flex: 1, minWidth: "120px" }}>
-                      End Road 1 — Switch to Road 2
-                    </button>
-                  )}
                   <button
                     type="button"
                     onClick={(e) => handleSaveForm(e, false)}
                     className="mobile-btn"
-                    style={{ flex: 1, minWidth: "120px" }}
+                    style={{ flex: 1, minWidth: "140px" }}
                   >
                     <PlusCircle size={14} />
-                    Queue for Sync
+                    {isSealedDualMode && dualRoadPhase === 1 ? "Queue Road 1 for Sync" : "Queue for Sync"}
                   </button>
+                  {isSealedDualMode && dualRoadPhase === 1 && (
+                    <button type="button" onClick={handleEndDualRoad} className="mobile-btn mobile-btn-outline" style={{ flex: 1, minWidth: "140px" }}>
+                      End Road 1 → Road 2
+                    </button>
+                  )}
                 </div>
               </div>
             )}
@@ -5571,6 +5579,8 @@ export default function App() {
                   <span>
                     {editingDraftId
                       ? "Queue Update"
+                      : isSealedDualMode && dualRoadPhase === 1
+                        ? "Queue Road 1 for Sync"
                       : isSealedDualMode
                         ? "Queue Dual Survey"
                         : "Queue for Sync"}

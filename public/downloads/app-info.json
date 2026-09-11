@@ -2,7 +2,7 @@
     "available":  true,
     "minAndroid":  "7.0 (API 24)",
     "fileName":  "motid-road-survey.apk",
-    "releasedAt":  "2026-09-11T05:42:10.7268700Z",
+    "releasedAt":  "2026-09-11T05:53:41.3384461Z",
     "trainingLogin":  {
                           "email":  "training@transport.gov.zw",
                           "note":  "Shared training account for Level 2 venues. No password change required.",
@@ -10,10 +10,10 @@
                           "role":  "Provincial Coordinator (web + mobile)"
                       },
     "packageId":  "zw.gov.motid.roadsurvey",
-    "sizeBytes":  7029731,
-    "versionCode":  22,
+    "sizeBytes":  7030083,
+    "versionCode":  23,
     "dashboardUrl":  "https://road-condition-survey.vercel.app",
-    "versionName":  "1.10.1",
-    "changelog":  "Per-segment attribute forms: fill attributes after each GPS segment (single and dual). End Road 1 switches to Road 2 without a form. Queue for Sync anytime to secure completed segments.",
+    "versionName":  "1.10.2",
+    "changelog":  "Dual carriageway fix: collect multiple segments with per-segment forms on Road 1, queue Road 1 anytime before switching to Road 2. Improved notice box contrast.",
     "appName":  "MOTID Road Survey"
 }
