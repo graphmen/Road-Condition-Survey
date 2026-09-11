@@ -24,7 +24,6 @@ import {
   DRAINAGE_TYPE_OPTIONS,
   DRAINAGE_LINING_OPTIONS,
   MEDIAN_TYPE_OPTIONS,
-  SURVEY_SIDE_OPTIONS,
   YES_NO_OPTIONS,
   DEFECT_SEVERITY_OPTIONS,
   TRAFFIC_CALMING_TYPES,
@@ -843,8 +842,6 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
   const [sealedSurfaceType, setSealedSurfaceType] = useState("asphalt");
   const [sealedPotholeDensity, setSealedPotholeDensity] = useState("low");
   const [sealedCycleTrack, setSealedCycleTrack] = useState("no");
-  const [sealedSurveySide, setSealedSurveySide] = useState("left");
-  const [sealedSurveyDirection, setSealedSurveyDirection] = useState("");
   const [sealedLanesPerCarriage, setSealedLanesPerCarriage] = useState("");
   const [sealedShoulderWidth, setSealedShoulderWidth] = useState("");
   const [sealedMedianType, setSealedMedianType] = useState("none");
@@ -1075,8 +1072,6 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
       setSealedSurfaceType(recordField(record, "Surface_type", "surface_type") || "asphalt");
       setSealedPotholeDensity(recordField(record, "Pothole_density", "pothole_density") || "low");
       setSealedCycleTrack(recordField(record, "Cycle_track", "cycle_track") || "no");
-      setSealedSurveySide(recordField(record, "Survey_side", "survey_side") || "left");
-      setSealedSurveyDirection(recordField(record, "Survey_direction", "survey_direction") || "");
       setSealedLanesPerCarriage(recordField(record, "Number_of_Lanes_per_carriageway", "number_of_lanes_per_carriageway") != null ? String(recordField(record, "Number_of_Lanes_per_carriageway", "number_of_lanes_per_carriageway")) : "");
       setSealedShoulderWidth(recordField(record, "Shoulder_Width_m", "shoulder_width_m") != null ? String(recordField(record, "Shoulder_Width_m", "shoulder_width_m")) : "");
       setSealedMedianType(recordField(record, "Median_type", "median_type") || "none");
@@ -1273,8 +1268,6 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
       setSealedSurfaceType("asphalt");
       setSealedPotholeDensity("low");
       setSealedCycleTrack("no");
-      setSealedSurveySide("left");
-      setSealedSurveyDirection("");
       setSealedLanesPerCarriage("");
       setSealedShoulderWidth("");
       setSealedMedianType("none");
@@ -1525,8 +1518,6 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
       data.Surface_type = sealedSurfaceType;
       data.Pothole_density = sealedPotholeDensity;
       data.Cycle_track = sealedCycleTrack;
-      data.Survey_side = sealedSurveySide;
-      if (sealedSurveyDirection) data.Survey_direction = sealedSurveyDirection;
       if (sealedLanesPerCarriage) data.Number_of_Lanes_per_carriageway = parseInt(sealedLanesPerCarriage);
       if (sealedShoulderWidth) data.Shoulder_Width_m = parseFloat(sealedShoulderWidth);
       data.Median_type = sealedMedianType;
@@ -2052,19 +2043,6 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
                   <select value={sealedCycleTrack} onChange={e => setSealedCycleTrack(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
                     {YES_NO_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                   </select>
-                </div>
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                <div>
-                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Survey Side</label>
-                  <select value={sealedSurveySide} onChange={e => setSealedSurveySide(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
-                    {SURVEY_SIDE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Survey Direction</label>
-                  <input type="text" placeholder="e.g. Northbound" value={sealedSurveyDirection} onChange={e => setSealedSurveyDirection(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff", outline: "none" }} />
                 </div>
               </div>
 

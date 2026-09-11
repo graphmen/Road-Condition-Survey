@@ -21,9 +21,10 @@ export interface SealedLaneDefectSnapshot {
 }
 
 export interface DualRoadLaneSnapshot {
-  segmentGeometry: SegmentGeometry;
+  segments: SegmentGeometry[];
   photos: string[];
   defects: SealedLaneDefectSnapshot;
+  vegetation?: string;
 }
 
 export const DEFAULT_SEALED_LANE_DEFECTS: SealedLaneDefectSnapshot = {

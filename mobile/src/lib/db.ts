@@ -301,6 +301,25 @@ export interface SurveyDraft {
   road_segment_end_time_2?: string;
   road_segment_avg_accuracy_m_2?: number;
   road_segment_point_count_2?: number;
+  /** Individual GPS segments per carriageway (dual road multi-segment collection). */
+  road_segment_parts?: Array<{
+    points: Array<{ lat: number; lng: number; alt?: number; acc: number; ts: number; orig_lat?: number; orig_lng?: number }>;
+    geojson: string;
+    length_m: number;
+    start_time: string;
+    end_time: string;
+    avg_accuracy_m: number;
+    point_count: number;
+  }>;
+  road_segment_parts_2?: Array<{
+    points: Array<{ lat: number; lng: number; alt?: number; acc: number; ts: number; orig_lat?: number; orig_lng?: number }>;
+    geojson: string;
+    length_m: number;
+    start_time: string;
+    end_time: string;
+    avg_accuracy_m: number;
+    point_count: number;
+  }>;
 
   /** Sealed dual collection: sequential parallel carriageway surveys in one record. */
   sealed_collection_mode?: "single" | "dual";
