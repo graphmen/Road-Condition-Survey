@@ -1,4 +1,4 @@
-const CACHE_NAME = "zim-roads-dashboard-v1";
+const CACHE_NAME = "zim-roads-dashboard-v2";
 const ASSETS_TO_CACHE = [
   "/",
   "/manifest.json",
@@ -49,6 +49,10 @@ self.addEventListener("fetch", (event) => {
       .then((response) => {
         if (response.status === 200) {
           const url = new URL(event.request.url);
+          // Never cache APK downloads or release metadata — always fetch fresh builds.
+          if (url.pathname.startsWith("/downloads/")) {
+            return response;
+          }
           const isStaticAsset = ASSETS_TO_CACHE.includes(url.pathname) || 
                                 url.pathname.startsWith("/_next/") ||
                                 url.pathname.endsWith(".js") ||
