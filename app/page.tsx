@@ -8,6 +8,7 @@ import InnerPanel from "@/components/panels/InnerPanel";
 import RightPanel from "@/components/panels/RightPanel";
 import FullPageModule from "@/components/panels/FullPageModule";
 import LoginModal from "@/components/LoginModal";
+import FeatureDetailModal from "@/components/FeatureDetailModal";
 import MapErrorBoundary from "@/components/MapErrorBoundary";
 import { useInactivityTimeout, clearInactivityTimestamp } from "@/hooks/useInactivityTimeout";
 import { validateStoredSession, clearAuthSession } from "@/lib/authClient";
@@ -16,6 +17,7 @@ import {
   buildMapGoto,
   fireMapGoto,
   getAssetName,
+  getCategoryKey,
   normalizePhotos,
   recordHasPhotos,
   mergePhotoLists,
@@ -26,6 +28,7 @@ import {
   canManageUsers,
   canReviewDeletions,
 } from "@/components/helpers";
+import { INITIAL_VISIBLE_LAYERS, ALL_OVERLAY_KEYS } from "@/lib/mapLayers";
 
 const MapView = dynamic(() => import("@/components/MapView"), {
   ssr: false,
@@ -41,6 +44,17 @@ const MapView = dynamic(() => import("@/components/MapView"), {
 
 // Full-page overlay modules
 const FULLPAGE_MODULES: NavModule[] = ["dashboard", "highways", "analytics", "survey", "database", "gallery", "reports", "documents", "export", "users", "approvals"];
+const NAV_STORAGE_KEY = "roads_active_module";
+const ALL_NAV_MODULES: NavModule[] = [
+  "dashboard", "assets", "highways", "analytics", "survey",
+  "database", "gallery", "reports", "documents", "export",
+  "users", "approvals", "settings",
+];
+
+function parseStoredNavModule(value: string | null): NavModule | null {
+  if (!value) return null;
+  return ALL_NAV_MODULES.includes(value as NavModule) ? (value as NavModule) : null;
+}
 
 const EMPTY_USER: UserProfile = {
   id: "",
@@ -62,10 +76,13 @@ export default function Home() {
 
   const [activeModule, setActiveModule]       = useState<NavModule>("assets");
   const [fullPageModule, setFullPageModule]   = useState<NavModule | null>(null);
+  const [navHydrated, setNavHydrated]         = useState(false);
   const [selectedRecord, setSelectedRecord]   = useState<any | null>(null);
+  const [featureModalOpen, setFeatureModalOpen] = useState(false);
   const [mapFocus, setMapFocus]               = useState<MapGotoDetail | null>(null);
   const [selectedRoad, setSelectedRoad]       = useState("all");
   const [lastSynced, setLastSynced]           = useState<Date | null>(null);
+  const [visibleLayers, setVisibleLayers]     = useState<Record<string, boolean>>(INITIAL_VISIBLE_LAYERS);
 
   const [innerOpen, setInnerOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
@@ -151,6 +168,34 @@ export default function Home() {
       if (!silent) setIsLoading(false);
     }
   };
+
+  // Remember the last page so a reload does not dump the user back on Layers
+  useEffect(() => {
+    if (isAuthenticated !== true) return;
+    if (navHydrated) return;
+
+    const stored = parseStoredNavModule(sessionStorage.getItem(NAV_STORAGE_KEY));
+    let next: NavModule | null = stored;
+    if (next === "users" && !canManageUsers(currentUser)) next = null;
+    if (next === "approvals" && !canReviewDeletions(currentUser)) next = null;
+
+    if (next) {
+      setActiveModule(next);
+      if (FULLPAGE_MODULES.includes(next)) {
+        setFullPageModule(next);
+        setInnerOpen(false);
+      } else {
+        setFullPageModule(null);
+        setInnerOpen(true);
+      }
+    }
+    setNavHydrated(true);
+  }, [isAuthenticated, currentUser, navHydrated]);
+
+  useEffect(() => {
+    if (!navHydrated) return;
+    sessionStorage.setItem(NAV_STORAGE_KEY, activeModule);
+  }, [navHydrated, activeModule]);
 
   // Load live server data after sign-in (skip stale local fallback that lacks photos)
   useEffect(() => {
@@ -250,7 +295,12 @@ export default function Home() {
     }
 
     setSelectedRecord(enriched);
-    if (!rightOpen) setRightOpen(true);
+    setFeatureModalOpen(true);
+
+    const cat = getCategoryKey(enriched);
+    if (cat && visibleLayers[cat] === false) {
+      setVisibleLayers((prev) => ({ ...prev, [cat]: true }));
+    }
 
     if (!focusBase) {
       setMapFocus(null);
@@ -261,12 +311,6 @@ export default function Home() {
     const focus: MapGotoDetail = { ...focusBase, label, preserveZoom: true };
 
     setMapFocus(focus);
-    setToast({
-      message: `Showing on map: ${label}  Â·  ${focus.lat.toFixed(5)}, ${focus.lng.toFixed(5)}`,
-      type: "success",
-    });
-
-    // 2) Fire go-to immediately (direct Leaflet + event)
     fireMapGoto(focus);
   };
 
@@ -286,6 +330,7 @@ export default function Home() {
     if (FULLPAGE_MODULES.includes(m)) {
       setFullPageModule(m);
       setInnerOpen(false);   // hide inner panel while full-page is open
+      setFeatureModalOpen(false);
     } else {
       setFullPageModule(null);
       setInnerOpen(true);    // re-show inner panel for assets/settings
@@ -448,6 +493,22 @@ export default function Home() {
                 onRoadFilter={setSelectedRoad}
                 onNavSelect={handleNavSelect}
                 currentUser={currentUser}
+                visibleLayers={visibleLayers}
+                onToggleLayer={(key) => setVisibleLayers((prev) => ({ ...prev, [key]: prev[key] === false }))}
+                onSetGroupVisible={(keys, visible) =>
+                  setVisibleLayers((prev) => {
+                    const next = { ...prev };
+                    keys.forEach((key) => { next[key] = visible; });
+                    return next;
+                  })
+                }
+                onSetAllVisible={(visible) =>
+                  setVisibleLayers((prev) => {
+                    const next = { ...prev };
+                    ALL_OVERLAY_KEYS.forEach((key) => { next[key] = visible; });
+                    return next;
+                  })
+                }
               />
             )}
           </div>
@@ -479,6 +540,7 @@ export default function Home() {
                 selectedRecord={selectedRecord}
                 mapFocus={mapFocus}
                 onSelectRecord={handleSelectRecord}
+                visibleLayers={visibleLayers}
               />
             </MapErrorBoundary>
           )}
@@ -512,12 +574,18 @@ export default function Home() {
         <div className={`right-panel${rightOpen ? "" : " collapsed"}`}>
           <RightPanel
             records={visibleRecords}
-            selectedRecord={selectedRecord}
-            onClose={() => setSelectedRecord(null)}
+            onSelectRecord={handleSelectRecord}
           />
         </div>
 
       </div>
+
+      {featureModalOpen && selectedRecord && (
+        <FeatureDetailModal
+          record={selectedRecord}
+          onClose={() => setFeatureModalOpen(false)}
+        />
+      )}
 
       {/* --- Footer ------------------------------------------------------------ */}
       <footer className="app-footer">

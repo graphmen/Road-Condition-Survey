@@ -12,7 +12,7 @@ interface LeftNavProps {
 
 const NAV_ITEMS: { id: NavModule; icon: React.ReactNode; label: string }[] = [
   { id: "dashboard", icon: <LayoutDashboard size={18} />, label: "Dashboard" },
-  { id: "assets", icon: <Map size={18} />, label: "Assets" },
+  { id: "assets", icon: <Map size={18} />, label: "Layers" },
   { id: "highways", icon: <TrendingUp size={18} />, label: "Highways" },
   { id: "analytics", icon: <BarChart2 size={18} />, label: "Analytics" },
   { id: "survey", icon: <ClipboardCheck size={18} />, label: "Survey" },

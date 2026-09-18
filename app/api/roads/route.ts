@@ -1068,6 +1068,173 @@ async function fetchAllCategoryTables(signal: AbortSignal): Promise<any[]> {
   return allRecords;
 }
 
+const CONDITION_COLUMN_BY_CATEGORY: Record<string, string> = {
+  sealed: "paved_road_condition",
+  gravel: "gravel_condition",
+  earth: "earth_road_condition",
+  bridge: "bridge_condition",
+  footbridge: "footbridge_condition",
+  rail_crossing: "rail_crossing_condition",
+  tollgate: "tollgate_condition",
+  layby: "layby_condition",
+  busstop: "busstop_condition",
+  junction: "junction_condition",
+  sign: "sign_condition",
+  shelvet: "shelvet_condition",
+  culvert: "culvet_serviceability",
+  piped_causeway: "causeway_condition",
+  drift: "drift_condition",
+  grid: "grid_condition",
+  catchpit: "catchpit_condition",
+  traffic_calming: "traffic_calming_condition",
+  traffic_lights: "traffic_lights_condition",
+  streetlight: "streetlight_condition",
+};
+
+const CONDITION_FILTER_VALUES: Record<string, string[]> = {
+  good: ["good", "excellent", "working", "active", "operational", "undamaged"],
+  fair: ["fair", "partially_blocked"],
+  poor: ["poor", "bad", "damaged", "blocked", "failed", "inactive"],
+  mixed: ["mixed"],
+  under_construction: ["under_construction", "under construction", "rehabilitation"],
+};
+
+function escapePostgrestFilter(value: string): string {
+  return value.replace(/[%(),]/g, "").trim();
+}
+
+async function fetchCategoryCounts(signal: AbortSignal): Promise<Record<string, number>> {
+  const headers: Record<string, string> = {
+    apikey: SUPABASE_ANON_KEY,
+    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+    Prefer: "count=exact",
+    Range: "0-0",
+  };
+  const entries = Object.entries(categoryToTable);
+  const results = await Promise.all(
+    entries.map(async ([cat, table]) => {
+      try {
+        const res = await fetch(
+          `${SUPABASE_URL}/rest/v1/${table}?select=survey_id`,
+          { headers, cache: "no-store", signal }
+        );
+        const contentRange = res.headers.get("content-range") || "";
+        const total = Number(contentRange.split("/")[1] || 0);
+        return [cat, Number.isFinite(total) ? total : 0] as const;
+      } catch {
+        return [cat, 0] as const;
+      }
+    })
+  );
+  return Object.fromEntries(results);
+}
+
+async function fetchDistinctRoads(category: string, signal: AbortSignal): Promise<string[]> {
+  const table = categoryToTable[category];
+  if (!table) return [];
+  const headers: Record<string, string> = {
+    apikey: SUPABASE_ANON_KEY,
+    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+    Prefer: "count=none",
+    Range: "0-4999",
+  };
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/${table}?select=road_name&road_name=not.is.null&order=road_name.asc`,
+      { headers, cache: "no-store", signal }
+    );
+    if (!res.ok) return [];
+    const rows: any[] = await res.json();
+    return Array.from(new Set(rows.map((r) => r.road_name).filter(Boolean))).sort();
+  } catch {
+    return [];
+  }
+}
+
+async function fetchCategoryPage(opts: {
+  category: string;
+  page: number;
+  pageSize: number;
+  search?: string;
+  road?: string;
+  condition?: string;
+  signal: AbortSignal;
+}): Promise<{ records: any[]; total: number }> {
+  const { category, page, pageSize, search, road, condition, signal } = opts;
+  const table = categoryToTable[category];
+  if (!table) return { records: [], total: 0 };
+
+  const from = Math.max(0, page) * pageSize;
+  const to = from + pageSize - 1;
+
+  const roadExtras = ROAD_TABLES.has(table) ? `,${ROAD_EXTRA_COLUMNS}` : "";
+  const categoryExtra = CATEGORY_EXTRA[category] ? `,${CATEGORY_EXTRA[category]}` : "";
+  const cols = `${TABLE_LIST_COLUMNS}${roadExtras}${categoryExtra}`.replace(/\s+/g, "");
+
+  const filters: string[] = [];
+  if (road && road !== "all") {
+    filters.push(`road_name=eq.${encodeURIComponent(road)}`);
+  }
+
+  const q = escapePostgrestFilter(search || "");
+  const searchOr = q
+    ? `or(road_name.ilike.*${q}*,section_name.ilike.*${q}*,surveyor_name.ilike.*${q}*)`
+    : "";
+
+  let conditionOr = "";
+  if (condition && condition !== "all") {
+    const col = CONDITION_COLUMN_BY_CATEGORY[category];
+    const values = CONDITION_FILTER_VALUES[condition];
+    if (col && values?.length) {
+      conditionOr = `or(${values.map((v) => `${col}.ilike.${escapePostgrestFilter(v)}`).join(",")})`;
+    }
+  }
+
+  if (searchOr && conditionOr) {
+    filters.push(`and=(${searchOr},${conditionOr})`);
+  } else if (searchOr) {
+    filters.push(searchOr.replace(/^or/, "or="));
+  } else if (conditionOr) {
+    filters.push(conditionOr.replace(/^or/, "or="));
+  }
+
+  const query = [
+    `select=${cols}`,
+    "order=created_at.desc",
+    ...filters,
+  ].join("&");
+
+  const headers: Record<string, string> = {
+    apikey: SUPABASE_ANON_KEY,
+    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+    Prefer: "count=exact",
+    Range: `${from}-${to}`,
+  };
+
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${query}`, {
+      headers,
+      cache: "no-store",
+      signal,
+    });
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      console.warn(`fetchCategoryPage ${table} failed: ${res.status} ${errText.slice(0, 200)}`);
+      return { records: [], total: 0 };
+    }
+    const rows: any[] = await res.json();
+    const contentRange = res.headers.get("content-range") || "";
+    const total = Number(contentRange.split("/")[1] || rows.length);
+    const records = rows.map((row) =>
+      slimRecordForList(rowToRecord(row, row.asset_category || category))
+    );
+    return { records, total: Number.isFinite(total) ? total : records.length };
+  } catch (e: any) {
+    console.warn(`fetchCategoryPage ${table} error:`, e?.message || e);
+    return { records: [], total: 0 };
+  }
+}
+
 /** Normalise a row from any individual category table into a dashboard record */
 function rowToRecord(row: any, cat: string): any {
   const raw = row.raw_data && typeof row.raw_data === "object" ? row.raw_data : null;
@@ -1258,6 +1425,60 @@ export async function GET(req: Request) {
   if (photoFor) {
     const result = await fetchPhotosForSurveyId(photoFor);
     return NextResponse.json(result);
+  }
+
+  // Paginated survey list: ?page=0&pageSize=24&category=sealed
+  const pageParam = url.searchParams.get("page");
+  const countsOnly = url.searchParams.get("counts") === "1";
+  if (pageParam !== null || countsOnly) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30_000);
+    try {
+      if (countsOnly) {
+        const categories = await fetchCategoryCounts(controller.signal);
+        return NextResponse.json({ categories, source: "server" });
+      }
+
+      const category = url.searchParams.get("category") || "sealed";
+      const page = Math.max(0, Number(pageParam) || 0);
+      const pageSize = Math.min(100, Math.max(1, Number(url.searchParams.get("pageSize")) || 24));
+      const search = url.searchParams.get("search") || "";
+      const road = url.searchParams.get("road") || "all";
+      const condition = url.searchParams.get("condition") || "all";
+      const includeMeta = url.searchParams.get("meta") !== "0";
+
+      const [pageResult, categories, roads] = await Promise.all([
+        fetchCategoryPage({
+          category,
+          page,
+          pageSize,
+          search,
+          road,
+          condition,
+          signal: controller.signal,
+        }),
+        includeMeta ? fetchCategoryCounts(controller.signal) : Promise.resolve(undefined),
+        includeMeta ? fetchDistinctRoads(category, controller.signal) : Promise.resolve(undefined),
+      ]);
+
+      return NextResponse.json({
+        records: pageResult.records,
+        count: pageResult.records.length,
+        total: pageResult.total,
+        page,
+        pageSize,
+        category,
+        categories: categories || {},
+        roads: roads || [],
+        source: "server",
+        paginated: true,
+      });
+    } catch (err: any) {
+      console.error("Paginated roads fetch failed:", err?.message || err);
+      return NextResponse.json({ error: "Paginated fetch failed", records: [], total: 0 }, { status: 502 });
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
 
   const forceRefresh = url.searchParams.get("refresh") === "1";

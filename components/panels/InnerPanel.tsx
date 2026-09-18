@@ -7,6 +7,7 @@ import {
 import type { NavModule } from "./LeftNav";
 import type { UserProfile } from "@/components/helpers";
 import { canManageUsers, canReviewDeletions } from "@/components/helpers";
+import LayerTreePanel from "./LayerTreePanel";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip as ChartTooltip, Cell,
   PieChart, Pie, Legend,
@@ -23,6 +24,10 @@ interface InnerPanelProps {
   onRoadFilter: (road: string) => void;
   onNavSelect?: (m: NavModule) => void;
   currentUser?: UserProfile;
+  visibleLayers?: Record<string, boolean>;
+  onToggleLayer?: (key: string) => void;
+  onSetGroupVisible?: (keys: string[], visible: boolean) => void;
+  onSetAllVisible?: (visible: boolean) => void;
 }
 
 const HIGHWAYS = [
@@ -352,7 +357,20 @@ function ExportInner({ records }: { records: any[] }) {
 // -----------------------------------------------------------
 // --- Main InnerPanel ---------------------------------------
 // -----------------------------------------------------------
-export default function InnerPanel({ module, records, selectedRecord, onSelectRecord, selectedRoad, onRoadFilter, onNavSelect, currentUser }: InnerPanelProps) {
+export default function InnerPanel({
+  module,
+  records,
+  selectedRecord,
+  onSelectRecord,
+  selectedRoad,
+  onRoadFilter,
+  onNavSelect,
+  currentUser,
+  visibleLayers = {},
+  onToggleLayer,
+  onSetGroupVisible,
+  onSetAllVisible,
+}: InnerPanelProps) {
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
   const [condFilter, setCondFilter] = useState("all");
@@ -377,7 +395,7 @@ export default function InnerPanel({ module, records, selectedRecord, onSelectRe
   const getTitle = () => {
     const map: Partial<Record<NavModule, {icon: React.ReactNode, label: string}>> = {
       dashboard: { icon: <LayoutDashboard size={15} className="inner-panel-title-icon" />, label: "Dashboard" },
-      assets:    { icon: <Map size={15} className="inner-panel-title-icon" />, label: "Road Assets" },
+      assets:    { icon: <Map size={15} className="inner-panel-title-icon" />, label: "Map Layers" },
       highways:  { icon: <TrendingUp size={15} className="inner-panel-title-icon" />, label: "Highway Network" },
       analytics: { icon: <BarChart2 size={15} className="inner-panel-title-icon" />, label: "Analytics" },
       survey:    { icon: <ClipboardCheck size={15} className="inner-panel-title-icon" />, label: "Survey Records" },
@@ -392,6 +410,18 @@ export default function InnerPanel({ module, records, selectedRecord, onSelectRe
   };
 
   const { icon, label } = getTitle();
+
+  if (module === "assets") {
+    return (
+      <LayerTreePanel
+        records={records}
+        visibleLayers={visibleLayers}
+        onToggleLayer={onToggleLayer ?? (() => {})}
+        onSetGroupVisible={onSetGroupVisible ?? (() => {})}
+        onSetAllVisible={onSetAllVisible ?? (() => {})}
+      />
+    );
+  }
 
   // --- Highways module --------------------------------------
   if (module === "highways") {

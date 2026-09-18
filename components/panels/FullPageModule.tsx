@@ -2,8 +2,8 @@
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
-import { useState, useEffect, useCallback, useRef } from "react";
-import { LayoutDashboard, TrendingUp, BarChart2, ClipboardCheck, Database, Download, ArrowUpDown, Search, X, ChevronDown, ChevronUp, Camera, FileText, BookOpen, Trash2, Compass, Users, ShieldAlert } from "lucide-react";
+import { useState, useEffect, useCallback, useRef, useMemo, memo } from "react";
+import { LayoutDashboard, TrendingUp, BarChart2, ClipboardCheck, Database, Download, ArrowUpDown, Search, X, ChevronDown, ChevronUp, Camera, FileText, BookOpen, Trash2, Compass, Users, ShieldAlert, ChevronLeft, ChevronRight } from "lucide-react";
 
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Legend, Tooltip as ChartTooltip,
@@ -12,8 +12,9 @@ import {
 import {
   getRecordStatus, getAssetType, getAssetName, formatStatusLabel, getStatusColor, normalizePhotos, mergePhotoLists, recordHasPhotos, getSadcValue,
   AUTHORITY_OPTIONS, CONDITION_WITH_CONSTRUCTION_OPTIONS,
-  formatGpsLabel,
+  formatGpsLabel, getCategoryKey,
 } from "@/components/helpers";
+import { OVERLAY_GROUPS, countByLayer } from "@/lib/mapLayers";
 import type { NavModule } from "./LeftNav";
 import {
   SEALED_ROAD_CLASS_OPTIONS,
@@ -650,74 +651,676 @@ function AnalyticsPage({ records }: { records: any[] }) {
 /* ═══════════════════════════════════════════════════════════════════════════
    SURVEY RECORDS
 ════════════════════════════════════════════════════════════════════════════ */
-function SurveyPage({ records, onSelectRecord }: { records: any[]; onSelectRecord: (r: any) => void }) {
-  const [search, setSearch] = useState("");
-  const [cond, setCond] = useState("all");
-  const [road, setRoad] = useState("all");
+const SURVEY_PAGE_SIZE = 24;
 
-  const roads = Array.from(new Set(records.map(r => r.road_name).filter(Boolean)));
+const SURVEY_DETAIL_EXCLUDED = new Set([
+  "_id", "_geolocation", "gps", "raw_data", "geom_point", "geom_segment",
+  "road_segment_geojson", "segment_geojson", "road_segment_points", "created_at",
+  "geom", "geometry", "type", "coordinates", "features", "properties",
+  "geom_point_wkt", "geom_segment_wkt", "id", "uuid", "photo", "photos", "_allPhotos",
+]);
 
-  const filtered = records.filter(r => {
-    const q = search.toLowerCase();
-    const matchQ = !q || getAssetName(r).toLowerCase().includes(q) || (r.road_name ?? "").toLowerCase().includes(q) || (r.surveyor_name ?? "").toLowerCase().includes(q);
-    const matchC = cond === "all" || getRecordStatus(r) === cond;
-    const matchR = road === "all" || r.road_name === road;
-    return matchQ && matchC && matchR;
-  });
+const SURVEY_DETAIL_CORE = new Set([
+  "road_name", "section_name", "surveyor_name", "survey_date", "province", "district",
+  "asset_category", "section", "road_condition", "source",
+  "image_SADC_compliant", "image_sadc_compliant", "sadc_compliant", "sign_sadc_compliant",
+]);
+
+function surveyFormatKey(key: string): string {
+  return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function surveyFormatValue(val: any): string {
+  if (val === null || val === undefined) return "—";
+  if (typeof val === "boolean") return val ? "YES" : "NO";
+  const s = String(val);
+  if (s.toLowerCase() === "yes" || s.toLowerCase() === "no") return s.toUpperCase();
+  return s.replace(/_/g, " ").toUpperCase();
+}
+
+const SurveyAssetCard = memo(function SurveyAssetCard({
+  record,
+  selected,
+  onOpen,
+  onShowOnMap,
+}: {
+  record: any;
+  selected?: boolean;
+  onOpen: (r: any) => void;
+  onShowOnMap: (r: any) => void;
+}) {
+  const status = getRecordStatus(record);
+  const poorBorder = status === "poor" ? "rgba(220,38,38,0.25)" : "var(--border)";
+  const gpsLabel = formatGpsLabel(record);
 
   return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--bg-app)" }}>
-      {/* Filter bar */}
-      <div style={{ padding: "14px 24px", borderBottom: "1px solid var(--border)", background: "#fafcfb", display: "flex", gap: 10, alignItems: "center", flexShrink: 0 }}>
-        <div style={{ position: "relative", flex: 2 }}>
-          <Search size={13} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
-          <input placeholder="Search asset, road, surveyor…" value={search} onChange={e => setSearch(e.target.value)}
-            style={{ width: "100%", padding: "8px 10px 8px 30px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 8, fontSize: 12, outline: "none", fontFamily: "var(--font-body)", color: "var(--text-primary)" }} />
+    <div
+      onClick={() => onOpen(record)}
+      style={{
+        background: selected ? "var(--bg-active)" : "#fff",
+        borderRadius: 10,
+        border: `1.5px solid ${selected ? "var(--green)" : poorBorder}`,
+        padding: "13px 15px",
+        cursor: "pointer",
+        transition: "border-color 0.15s, background 0.15s",
+        boxShadow: "var(--shadow-sm)",
+      }}
+      onMouseOver={(e) => {
+        if (!selected) e.currentTarget.style.borderColor = "var(--green)";
+      }}
+      onMouseOut={(e) => {
+        if (!selected) e.currentTarget.style.borderColor = poorBorder;
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+        <div style={{ fontWeight: 700, fontSize: 13, color: "var(--text-primary)" }}>{getAssetName(record)}</div>
+        <span className={`badge ${status}`}>{status}</span>
+      </div>
+      <div style={{ fontSize: 10.5, color: "var(--text-muted)", marginBottom: 8 }}>
+        {(record.road_name ?? "—").split(" (")[0]} · {record.section_name ?? "—"}
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5 }}>
+        <span style={{ color: "var(--green)", fontWeight: 700, textTransform: "uppercase", fontSize: 9.5 }}>
+          {getAssetType(record)}
+        </span>
+        <span style={{ color: "var(--text-muted)" }}>{record.survey_date ?? "—"}</span>
+      </div>
+      <div style={{ marginTop: 6, fontSize: 10.5, color: "var(--text-secondary)", fontFamily: "ui-monospace, monospace" }}>
+        GPS: {gpsLabel ?? "—"}
+      </div>
+      {record.surveyor_name && (
+        <div style={{ marginTop: 5, fontSize: 10, color: "var(--text-muted)" }}>👤 {record.surveyor_name}</div>
+      )}
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onShowOnMap(record);
+        }}
+        style={{
+          marginTop: 8,
+          fontSize: 10,
+          fontWeight: 700,
+          color: "var(--green)",
+          background: "none",
+          border: "none",
+          padding: 0,
+          cursor: "pointer",
+          fontFamily: "var(--font-body)",
+        }}
+      >
+        🗺 Show on map
+      </button>
+    </div>
+  );
+});
+
+function SurveyDetailDrawer({
+  record,
+  onClose,
+  onShowOnMap,
+}: {
+  record: any;
+  onClose: () => void;
+  onShowOnMap: (r: any) => void;
+}) {
+  const [fetchedPhotos, setFetchedPhotos] = useState<string[]>([]);
+  const [loadingPhotos, setLoadingPhotos] = useState(false);
+  const status = getRecordStatus(record);
+  const photos = useMemo(
+    () => mergePhotoLists(normalizePhotos(record), fetchedPhotos),
+    [record, fetchedPhotos]
+  );
+
+  useEffect(() => {
+    setFetchedPhotos([]);
+    const id = record.id || record._id || record.survey_id;
+    if (!id) return;
+    const embedded = normalizePhotos(record);
+    if (embedded.length > 0) {
+      setFetchedPhotos(embedded);
+      return;
+    }
+    let alive = true;
+    setLoadingPhotos(true);
+    fetch(`/api/roads?photoFor=${encodeURIComponent(id)}`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((data) => {
+        if (!alive) return;
+        const remote =
+          Array.isArray(data.photos) && data.photos.length > 0
+            ? data.photos
+            : data.photo
+              ? [data.photo]
+              : [];
+        if (remote.length > 0) setFetchedPhotos(remote);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (alive) setLoadingPhotos(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [record]);
+
+  const dynamicRows = Object.entries(record)
+    .filter(([key, val]) => {
+      if (SURVEY_DETAIL_EXCLUDED.has(key)) return false;
+      if (SURVEY_DETAIL_CORE.has(key)) return false;
+      if (val === null || val === undefined || val === "") return false;
+      if (typeof val === "object") return false;
+      return true;
+    })
+    .map(([key, val]) => ({
+      key,
+      label: surveyFormatKey(key),
+      value: surveyFormatValue(val),
+    }));
+
+  const gpsLabel = formatGpsLabel(record);
+
+  return (
+    <>
+      <div
+        onClick={onClose}
+        style={{
+          position: "absolute",
+          inset: 0,
+          background: "rgba(15, 23, 42, 0.35)",
+          zIndex: 40,
+        }}
+      />
+      <aside
+        style={{
+          position: "absolute",
+          top: 0,
+          right: 0,
+          bottom: 0,
+          width: "min(380px, 92vw)",
+          background: "#fff",
+          borderLeft: "1px solid var(--border)",
+          boxShadow: "-8px 0 28px rgba(0,0,0,0.12)",
+          zIndex: 50,
+          display: "flex",
+          flexDirection: "column",
+          animation: "surveyDrawerIn 0.2s ease-out",
+        }}
+      >
+        <div style={{
+          padding: "14px 16px",
+          borderBottom: "1px solid var(--border)",
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: 10,
+          flexShrink: 0,
+        }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "var(--green)", textTransform: "uppercase", letterSpacing: "0.6px", marginBottom: 4 }}>
+              Asset Inspector
+            </div>
+            <div style={{ fontWeight: 800, fontSize: 15, color: "var(--text-primary)", lineHeight: 1.25 }}>
+              {getAssetName(record)}
+            </div>
+            <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{getAssetType(record)}</div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+            <span className={`badge ${status}`}>{formatStatusLabel(status)}</span>
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                width: 30, height: 30, borderRadius: 8, border: "1px solid var(--border)",
+                background: "var(--bg-app)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+              }}
+              title="Close"
+            >
+              <X size={14} />
+            </button>
+          </div>
         </div>
-        <select value={cond} onChange={e => setCond(e.target.value)} style={{ padding: "8px 12px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 8, fontSize: 12, outline: "none", fontFamily: "var(--font-body)", color: "var(--text-secondary)", background: "#fff" }}>
-          <option value="all">All Conditions</option>
-          <option value="good">Good</option>
-          <option value="fair">Fair</option>
-          <option value="poor">Poor</option>
-          <option value="mixed">Mixed</option>
-          <option value="under_construction">Under construction</option>
-        </select>
-        <select value={road} onChange={e => setRoad(e.target.value)} style={{ padding: "8px 12px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 8, fontSize: 12, outline: "none", fontFamily: "var(--font-body)", color: "var(--text-secondary)", background: "#fff", flex: 1 }}>
-          <option value="all">All Highways</option>
-          {roads.map(r => <option key={r} value={r}>{(r ?? "").split(" (")[0]}</option>)}
-        </select>
-        <span style={{ fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap" }}>{filtered.length} records · click to open on map</span>
+
+        <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+              <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.6px", color: "var(--text-muted)" }}>
+                Photos Collected
+              </span>
+              <span style={{ fontSize: 10, fontWeight: 600, color: photos.length ? "var(--green)" : "var(--text-muted)" }}>
+                {loadingPhotos ? "…" : `${photos.length} photo${photos.length !== 1 ? "s" : ""}`}
+              </span>
+            </div>
+            {loadingPhotos ? (
+              <div style={{ textAlign: "center", padding: 14, color: "var(--text-muted)", fontSize: 11, background: "rgba(0,0,0,0.03)", borderRadius: 8 }}>
+                Loading photos…
+              </div>
+            ) : photos.length === 0 ? (
+              <div style={{ textAlign: "center", padding: 14, color: "var(--text-muted)", fontSize: 11, background: "rgba(0,0,0,0.03)", borderRadius: 8, border: "1px dashed rgba(0,0,0,0.1)" }}>
+                No photos captured for this asset
+              </div>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: photos.length === 1 ? "1fr" : "1fr 1fr", gap: 6 }}>
+                {photos.slice(0, 6).map((src, idx) => (
+                  <div key={idx} style={{ borderRadius: 8, overflow: "hidden", border: "1px solid rgba(0,102,51,0.15)", aspectRatio: "4/3" }}>
+                    <img src={src} alt={`Photo ${idx + 1}`} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+            {[
+              ["Road Route", (record.road_name ?? "—").split(" (")[0]],
+              ["Section", record.section_name ?? "—"],
+              ["Province", record.province],
+              ["District", record.district],
+              ["Surveyor", record.surveyor_name ?? "—"],
+              ["Date", record.survey_date ?? "—"],
+              ["GPS", gpsLabel ?? "—"],
+              ["SADC Compliant", (getSadcValue(record) || "").toUpperCase() || null],
+            ]
+              .filter(([, v]) => v != null && v !== "")
+              .map(([label, value]) => (
+                <div key={String(label)} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "7px 0", borderBottom: "1px solid rgba(0,102,51,0.06)" }}>
+                  <span style={{ fontSize: 10.5, color: "var(--text-muted)", fontWeight: 600 }}>{label}</span>
+                  <span style={{ fontSize: 11, color: "var(--text-primary)", fontWeight: 600, textAlign: "right" }}>{value}</span>
+                </div>
+              ))}
+
+            {dynamicRows.length > 0 && (
+              <>
+                <div style={{ fontSize: 9.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.5px", color: "var(--green)", borderTop: "1px solid var(--border)", paddingTop: 10, marginTop: 8, marginBottom: 4 }}>
+                  Telemetry Attributes
+                </div>
+                {dynamicRows.map((row) => (
+                  <div key={row.key} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "7px 0", borderBottom: "1px solid rgba(0,102,51,0.06)" }}>
+                    <span style={{ fontSize: 10.5, color: "var(--text-muted)", fontWeight: 600 }}>{row.label}</span>
+                    <span style={{ fontSize: 11, color: "var(--text-primary)", fontWeight: 600, textAlign: "right", maxWidth: "55%" }}>{row.value}</span>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+        </div>
+
+        <div style={{ padding: 14, borderTop: "1px solid var(--border)", flexShrink: 0 }}>
+          <button
+            type="button"
+            onClick={() => onShowOnMap(record)}
+            style={{
+              width: "100%",
+              padding: "10px 14px",
+              borderRadius: 8,
+              border: "none",
+              background: "var(--green)",
+              color: "#fff",
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: "pointer",
+              fontFamily: "var(--font-body)",
+            }}
+          >
+            🗺 Show on map
+          </button>
+        </div>
+      </aside>
+    </>
+  );
+}
+
+function SurveyPage({ records, onSelectRecord }: { records: any[]; onSelectRecord: (r: any) => void }) {
+  const [category, setCategory] = useState("sealed");
+  const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({});
+  const [search, setSearch] = useState("");
+  const [searchDebounced, setSearchDebounced] = useState("");
+  const [cond, setCond] = useState("all");
+  const [road, setRoad] = useState("all");
+  const [roads, setRoads] = useState<string[]>([]);
+  const [page, setPage] = useState(0);
+  const [pageRecords, setPageRecords] = useState<any[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [drawerRecord, setDrawerRecord] = useState<any | null>(null);
+
+  const fallbackCounts = useMemo(() => countByLayer(records, getCategoryKey), [records]);
+  const counts = Object.keys(categoryCounts).length > 0 ? categoryCounts : fallbackCounts;
+
+  const categoryStats = useMemo(() => {
+    const scoped = records.filter((r) => getCategoryKey(r) === category);
+    let good = 0;
+    let fair = 0;
+    let poor = 0;
+    for (const r of scoped) {
+      const s = getRecordStatus(r);
+      if (s === "good") good += 1;
+      else if (s === "fair") fair += 1;
+      else if (s === "poor") poor += 1;
+    }
+    return {
+      total: scoped.length || total || counts[category] || 0,
+      good,
+      fair,
+      poor,
+    };
+  }, [records, category, total, counts]);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setSearchDebounced(search.trim()), 300);
+    return () => window.clearTimeout(t);
+  }, [search]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let alive = true;
+
+    const load = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const params = new URLSearchParams({
+          page: String(page),
+          pageSize: String(SURVEY_PAGE_SIZE),
+          category,
+          meta: page === 0 ? "1" : "0",
+        });
+        if (searchDebounced) params.set("search", searchDebounced);
+        if (cond !== "all") params.set("condition", cond);
+        if (road !== "all") params.set("road", road);
+
+        const res = await fetch(`/api/roads?${params}`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (!alive) return;
+
+        setPageRecords(Array.isArray(data.records) ? data.records : []);
+        setTotal(Number(data.total) || 0);
+        if (data.categories && typeof data.categories === "object") {
+          setCategoryCounts(data.categories);
+        }
+        if (Array.isArray(data.roads)) {
+          setRoads(data.roads);
+        }
+      } catch (e: any) {
+        if (e?.name === "AbortError") return;
+        if (!alive) return;
+        setError(e?.message || "Failed to load surveys");
+        setPageRecords([]);
+        setTotal(0);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    };
+
+    load();
+    return () => {
+      alive = false;
+      controller.abort();
+    };
+  }, [category, page, searchDebounced, cond, road]);
+
+  const pages = Math.max(1, Math.ceil(total / SURVEY_PAGE_SIZE));
+  const pageSafe = Math.min(page, pages - 1);
+
+  useEffect(() => {
+    if (page > pages - 1) setPage(Math.max(0, pages - 1));
+  }, [page, pages]);
+
+  const activeLabel =
+    OVERLAY_GROUPS.flatMap((g) => g.items).find((i) => i.key === category)?.label ?? category;
+
+  const selectCategory = (key: string) => {
+    setCategory(key);
+    setRoad("all");
+    setPage(0);
+    setDrawerRecord(null);
+  };
+
+  const drawerId = drawerRecord
+    ? String(drawerRecord.id || drawerRecord._id || drawerRecord.survey_id || "")
+    : "";
+
+  return (
+    <div style={{ height: "100%", display: "flex", background: "var(--bg-app)", position: "relative", overflow: "hidden" }}>
+      {/* Left: asset type panel */}
+      <aside style={{
+        width: 220,
+        flexShrink: 0,
+        background: "#fff",
+        borderRight: "1px solid var(--border)",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+      }}>
+        <div style={{ padding: "14px 14px 10px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
+          <div style={{ fontSize: 10, fontWeight: 800, color: "var(--green)", textTransform: "uppercase", letterSpacing: "0.7px" }}>
+            Asset Type
+          </div>
+          <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 3 }}>
+            Select one category to browse
+          </div>
+        </div>
+        <div style={{ flex: 1, overflowY: "auto", padding: "8px 8px 12px" }}>
+          {OVERLAY_GROUPS.map((group) => (
+            <div key={group.id} style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 9.5, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.5px", padding: "4px 8px 6px" }}>
+                {group.label}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                {group.items.map((item) => {
+                  const count = counts[item.key] || 0;
+                  const active = category === item.key;
+                  return (
+                    <button
+                      key={item.key}
+                      type="button"
+                      onClick={() => selectCategory(item.key)}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 8,
+                        padding: "8px 10px",
+                        borderRadius: 8,
+                        border: active ? "1.5px solid var(--green)" : "1px solid transparent",
+                        background: active ? "var(--bg-active)" : "transparent",
+                        color: active ? "var(--green)" : "var(--text-secondary)",
+                        fontSize: 11.5,
+                        fontWeight: active ? 800 : 600,
+                        cursor: "pointer",
+                        textAlign: "left",
+                        fontFamily: "var(--font-body)",
+                      }}
+                    >
+                      <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                        <span aria-hidden>{item.emoji}</span>
+                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.label}</span>
+                      </span>
+                      <span style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        background: active ? "rgba(0,102,51,0.12)" : "rgba(0,0,0,0.05)",
+                        borderRadius: 10,
+                        padding: "1px 7px",
+                        flexShrink: 0,
+                      }}>
+                        {count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      </aside>
+
+      {/* Main column */}
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        {/* Per-asset stats (moved from right panel) */}
+        <div style={{
+          background: "var(--green)",
+          padding: "12px 20px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 16,
+          flexShrink: 0,
+          flexWrap: "wrap",
+        }}>
+          <div style={{ color: "rgba(255,255,255,0.85)", fontSize: 11, fontWeight: 700 }}>
+            {activeLabel} · condition snapshot
+          </div>
+          <div style={{ display: "flex", gap: 0, alignItems: "stretch" }}>
+            {[
+              { label: "Total", value: categoryStats.total, color: "#fff" },
+              { label: "Good", value: categoryStats.good, color: "#fff" },
+              { label: "Fair", value: categoryStats.fair, color: "#fff" },
+              { label: "Poor", value: categoryStats.poor, color: categoryStats.poor > 0 ? "#FFD100" : "#fff" },
+            ].map((stat, i) => (
+              <div key={stat.label} style={{ display: "flex", alignItems: "center" }}>
+                {i > 0 && <div style={{ width: 1, height: 28, background: "rgba(255,255,255,0.2)", margin: "0 14px" }} />}
+                <div style={{ textAlign: "center", minWidth: 52 }}>
+                  <div style={{ fontFamily: "var(--font-title)", fontSize: 22, fontWeight: 800, color: stat.color, lineHeight: 1 }}>
+                    {stat.value}
+                  </div>
+                  <div style={{ fontSize: 8.5, textTransform: "uppercase", letterSpacing: "0.5px", color: "rgba(255,255,255,0.7)", marginTop: 2 }}>
+                    {stat.label}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Filter bar */}
+        <div style={{ padding: "12px 20px", borderBottom: "1px solid var(--border)", background: "#fafcfb", display: "flex", gap: 10, alignItems: "center", flexShrink: 0, flexWrap: "wrap" }}>
+          <div style={{ position: "relative", flex: "2 1 200px", minWidth: 180 }}>
+            <Search size={13} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
+            <input
+              placeholder={`Search ${activeLabel.toLowerCase()}…`}
+              value={search}
+              onChange={(e) => { setSearch(e.target.value); setPage(0); }}
+              style={{ width: "100%", padding: "8px 10px 8px 30px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 8, fontSize: 12, outline: "none", fontFamily: "var(--font-body)", color: "var(--text-primary)" }}
+            />
+          </div>
+          <select
+            value={cond}
+            onChange={(e) => { setCond(e.target.value); setPage(0); }}
+            style={{ padding: "8px 12px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 8, fontSize: 12, outline: "none", fontFamily: "var(--font-body)", color: "var(--text-secondary)", background: "#fff" }}
+          >
+            <option value="all">All Conditions</option>
+            <option value="good">Good</option>
+            <option value="fair">Fair</option>
+            <option value="poor">Poor</option>
+            <option value="mixed">Mixed</option>
+            <option value="under_construction">Under construction</option>
+          </select>
+          <select
+            value={road}
+            onChange={(e) => { setRoad(e.target.value); setPage(0); }}
+            style={{ padding: "8px 12px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 8, fontSize: 12, outline: "none", fontFamily: "var(--font-body)", color: "var(--text-secondary)", background: "#fff", flex: "1 1 160px" }}
+          >
+            <option value="all">All Highways</option>
+            {roads.map((r) => (
+              <option key={r} value={r}>{(r ?? "").split(" (")[0]}</option>
+            ))}
+          </select>
+          <span style={{ fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+            {loading ? "Loading…" : `${total} records`}
+          </span>
+        </div>
+
+        {/* Cards grid */}
+        <div style={{ flex: 1, overflowY: "auto", padding: "14px 20px" }}>
+          {error ? (
+            <div style={{ textAlign: "center", color: "#dc2626", padding: 40, fontSize: 13 }}>{error}</div>
+          ) : loading && pageRecords.length === 0 ? (
+            <div style={{ textAlign: "center", color: "var(--text-muted)", padding: 40, fontSize: 13 }}>Loading {activeLabel.toLowerCase()}…</div>
+          ) : pageRecords.length === 0 ? (
+            <div style={{ textAlign: "center", color: "var(--text-muted)", padding: 40, fontSize: 13 }}>
+              No {activeLabel.toLowerCase()} match your filters.
+            </div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12, opacity: loading ? 0.6 : 1 }}>
+              {pageRecords.map((r, i) => {
+                const id = String(r.id || r._id || r.survey_id || "");
+                return (
+                  <SurveyAssetCard
+                    key={id || `${category}-${pageSafe}-${i}`}
+                    record={r}
+                    selected={!!drawerId && id === drawerId}
+                    onOpen={setDrawerRecord}
+                    onShowOnMap={onSelectRecord}
+                  />
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Pagination */}
+        <div style={{
+          padding: "10px 20px",
+          borderTop: "1px solid var(--border)",
+          background: "#fff",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          flexShrink: 0,
+          gap: 12,
+        }}>
+          <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+            Showing {total === 0 ? 0 : pageSafe * SURVEY_PAGE_SIZE + 1}–
+            {Math.min((pageSafe + 1) * SURVEY_PAGE_SIZE, total)} of {total}
+          </span>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <button
+              type="button"
+              disabled={pageSafe <= 0 || loading}
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              style={{
+                display: "flex", alignItems: "center", gap: 4, padding: "6px 10px", borderRadius: 8,
+                border: "1px solid var(--border)", background: pageSafe <= 0 ? "#f3f4f6" : "#fff",
+                color: "var(--text-secondary)", fontSize: 11, fontWeight: 700, cursor: pageSafe <= 0 ? "not-allowed" : "pointer",
+              }}
+            >
+              <ChevronLeft size={14} /> Prev
+            </button>
+            <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-primary)" }}>
+              Page {pageSafe + 1} / {pages}
+            </span>
+            <button
+              type="button"
+              disabled={pageSafe >= pages - 1 || loading}
+              onClick={() => setPage((p) => Math.min(pages - 1, p + 1))}
+              style={{
+                display: "flex", alignItems: "center", gap: 4, padding: "6px 10px", borderRadius: 8,
+                border: "1px solid var(--border)", background: pageSafe >= pages - 1 ? "#f3f4f6" : "#fff",
+                color: "var(--text-secondary)", fontSize: 11, fontWeight: 700, cursor: pageSafe >= pages - 1 ? "not-allowed" : "pointer",
+              }}
+            >
+              Next <ChevronRight size={14} />
+            </button>
+          </div>
+        </div>
       </div>
 
-      {/* Cards grid */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "14px 24px" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
-          {filtered.map((r, i) => {
-            const c = getRecordStatus(r);
-            const gpsLabel = formatGpsLabel(r);
-            return (
-              <div key={r._id ?? i} onClick={() => onSelectRecord(r)} style={{ background: "#fff", borderRadius: 10, border: `1px solid ${c === "poor" ? "rgba(220,38,38,0.25)" : "var(--border)"}`, padding: "13px 15px", cursor: "pointer", transition: "all 0.15s", boxShadow: "var(--shadow-sm)" }}
-                onMouseOver={e => (e.currentTarget.style.borderColor = "var(--green)")}
-                onMouseOut={e => (e.currentTarget.style.borderColor = c === "poor" ? "rgba(220,38,38,0.25)" : "var(--border)")}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
-                  <div style={{ fontWeight: 700, fontSize: 13, color: "var(--text-primary)" }}>{getAssetName(r)}</div>
-                  <span className={`badge ${c}`}>{c}</span>
-                </div>
-                <div style={{ fontSize: 10.5, color: "var(--text-muted)", marginBottom: 8 }}>{(r.road_name ?? "—").split(" (")[0]} · {r.section_name ?? "—"}</div>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5 }}>
-                  <span style={{ color: "var(--green)", fontWeight: 700, textTransform: "uppercase", fontSize: 9.5 }}>{getAssetType(r)}</span>
-                  <span style={{ color: "var(--text-muted)" }}>{r.survey_date ?? "—"}</span>
-                </div>
-                <div style={{ marginTop: 6, fontSize: 10.5, color: "var(--text-secondary)", fontFamily: "ui-monospace, monospace" }}>
-                  GPS: {gpsLabel ?? "—"}
-                </div>
-                {r.surveyor_name && <div style={{ marginTop: 5, fontSize: 10, color: "var(--text-muted)" }}>👤 {r.surveyor_name}</div>}
-                <div style={{ marginTop: 8, fontSize: 10, fontWeight: 700, color: "var(--green)" }}>🗺 Show on map</div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      {drawerRecord && (
+        <SurveyDetailDrawer
+          record={drawerRecord}
+          onClose={() => setDrawerRecord(null)}
+          onShowOnMap={onSelectRecord}
+        />
+      )}
     </div>
   );
 }
@@ -3329,29 +3932,213 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
 
 
 function DatabasePage({ records, onSelectRecord, onRefresh, onToast }: { records: any[]; onSelectRecord: (r: any) => void; onRefresh?: () => void; onToast?: (msg: string, type: "success" | "error" | "info") => void }) {
+  const [category, setCategory] = useState("sealed");
   const [search, setSearch] = useState("");
+  const [searchDebounced, setSearchDebounced] = useState("");
   const [page, setPage] = useState(0);
   const [sortCol, setSortCol] = useState<string>("survey_date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
-  // Filter States
   const [highwayFilter, setHighwayFilter] = useState("all");
-  const [typeFilter, setTypeFilter] = useState("all");
   const [condFilter, setCondFilter] = useState("all");
   const [provinceFilter, setProvinceFilter] = useState("all");
   const [districtFilter, setDistrictFilter] = useState("all");
   const [surveyorFilter, setSurveyorFilter] = useState("all");
-  const [selectedTable, setSelectedTable] = useState("all");
 
-  // Modal States
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editRecord, setEditRecord] = useState<any | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [drawerRecord, setDrawerRecord] = useState<any | null>(null);
+
+  const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({});
+  const [pageRecords, setPageRecords] = useState<any[]>([]);
+  const [total, setTotal] = useState(0);
+  const [roads, setRoads] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fallbackCounts = useMemo(() => countByLayer(records, getCategoryKey), [records]);
+  const counts = Object.keys(categoryCounts).length > 0 ? categoryCounts : fallbackCounts;
+
+  const categoryStats = useMemo(() => {
+    const scoped = records.filter((r) => getCategoryKey(r) === category);
+    let good = 0;
+    let fair = 0;
+    let poor = 0;
+    for (const r of scoped) {
+      const s = getRecordStatus(r);
+      if (s === "good") good += 1;
+      else if (s === "fair") fair += 1;
+      else if (s === "poor") poor += 1;
+    }
+    return {
+      total: scoped.length || total || counts[category] || 0,
+      good,
+      fair,
+      poor,
+    };
+  }, [records, category, total, counts]);
+
+  const useClientAdvanced =
+    provinceFilter !== "all" ||
+    districtFilter !== "all" ||
+    surveyorFilter !== "all" ||
+    highwayFilter !== "all";
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setSearchDebounced(search.trim()), 300);
+    return () => window.clearTimeout(t);
+  }, [search]);
+
+  useEffect(() => {
+    if (useClientAdvanced) return;
+
+    const controller = new AbortController();
+    let alive = true;
+
+    const load = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const params = new URLSearchParams({
+          page: String(page),
+          pageSize: String(PAGE_SIZE),
+          category,
+          meta: page === 0 ? "1" : "0",
+        });
+        if (searchDebounced) params.set("search", searchDebounced);
+        if (condFilter !== "all") params.set("condition", condFilter);
+
+        const res = await fetch(`/api/roads?${params}`, { cache: "no-store", signal: controller.signal });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (!alive) return;
+
+        const rows = Array.isArray(data.records) ? data.records : [];
+        setPageRecords(rows);
+        setTotal(Number(data.total) || rows.length);
+        if (data.categories && typeof data.categories === "object") setCategoryCounts(data.categories);
+        if (Array.isArray(data.roads)) setRoads(data.roads);
+      } catch (e: any) {
+        if (e?.name === "AbortError") return;
+        if (!alive) return;
+        setError(e?.message || "Failed to load database");
+        setPageRecords([]);
+        setTotal(0);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    };
+
+    load();
+    return () => {
+      alive = false;
+      controller.abort();
+    };
+  }, [category, page, searchDebounced, condFilter, useClientAdvanced, records]);
+
+  // Advanced location/surveyor filters → client-side on category-scoped records
+  const clientFiltered = useMemo(() => {
+    if (!useClientAdvanced) return null;
+    const q = searchDebounced.toLowerCase();
+    return records.filter((r) => {
+      if (getCategoryKey(r) !== category) return false;
+      const matchQ =
+        !q ||
+        getAssetName(r).toLowerCase().includes(q) ||
+        (r.road_name ?? "").toLowerCase().includes(q) ||
+        (r.surveyor_name ?? "").toLowerCase().includes(q);
+      const matchH = highwayFilter === "all" || (r.road_name ?? "").includes(highwayFilter);
+      const matchC = condFilter === "all" || getRecordStatus(r) === condFilter;
+      const matchProv = provinceFilter === "all" || r.province === provinceFilter;
+      const matchDist = districtFilter === "all" || r.district === districtFilter;
+      const matchSurveyor = surveyorFilter === "all" || r.surveyor_name === surveyorFilter;
+      return matchQ && matchH && matchC && matchProv && matchDist && matchSurveyor;
+    });
+  }, [useClientAdvanced, records, category, searchDebounced, highwayFilter, condFilter, provinceFilter, districtFilter, surveyorFilter]);
+
+  const workingRows = useClientAdvanced ? (clientFiltered || []) : pageRecords;
+  const workingTotal = useClientAdvanced ? workingRows.length : total;
+
+  const sorted = useMemo(() => {
+    const rows = [...workingRows];
+    rows.sort((a, b) => {
+      let va = "";
+      let vb = "";
+      if (sortCol === "asset_name") {
+        va = getAssetName(a);
+        vb = getAssetName(b);
+      } else if (sortCol === "condition") {
+        va = getRecordStatus(a);
+        vb = getRecordStatus(b);
+      } else if (sortCol === "gps") {
+        const latA = a._geolocation?.[0] ?? 0;
+        const latB = b._geolocation?.[0] ?? 0;
+        return sortDir === "asc" ? latA - latB : latB - latA;
+      } else {
+        va = String(a[sortCol] ?? "");
+        vb = String(b[sortCol] ?? "");
+      }
+      return sortDir === "asc" ? va.localeCompare(vb) : vb.localeCompare(va);
+    });
+    return rows;
+  }, [workingRows, sortCol, sortDir]);
+
+  const pages = Math.max(1, Math.ceil(workingTotal / PAGE_SIZE));
+  const pageSafe = Math.min(page, pages - 1);
+  const slice = useClientAdvanced
+    ? sorted.slice(pageSafe * PAGE_SIZE, (pageSafe + 1) * PAGE_SIZE)
+    : sorted;
+
+  useEffect(() => {
+    if (useClientAdvanced) setLoading(false);
+  }, [useClientAdvanced]);
+
+  useEffect(() => {
+    if (page > pages - 1) setPage(Math.max(0, pages - 1));
+  }, [page, pages]);
+
+  const activeLabel =
+    OVERLAY_GROUPS.flatMap((g) => g.items).find((i) => i.key === category)?.label ?? category;
+
+  const surveyorsList = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          records
+            .filter((r) => getCategoryKey(r) === category)
+            .map((r) => r.surveyor_name)
+            .filter(Boolean)
+        )
+      ).sort(),
+    [records, category]
+  );
+
+  const highwayOptions = useMemo(() => {
+    if (roads.length > 0) return roads;
+    return Array.from(
+      new Set(
+        records
+          .filter((r) => getCategoryKey(r) === category && r.road_name)
+          .map((r) => r.road_name)
+      )
+    ).sort();
+  }, [roads, records, category]);
 
   const handleSort = (col: string) => {
-    if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc");
-    else { setSortCol(col); setSortDir("asc"); }
+    if (sortCol === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortCol(col);
+      setSortDir("asc");
+    }
     setPage(0);
+  };
+
+  const selectCategory = (key: string) => {
+    setCategory(key);
+    setHighwayFilter("all");
+    setPage(0);
+    setDrawerRecord(null);
   };
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
@@ -3364,6 +4151,7 @@ function DatabasePage({ records, onSelectRecord, onRefresh, onToast }: { records
       const data = await res.json();
       if (res.ok && data.success) {
         if (onToast) onToast(data.message || "Record deleted successfully.", "success");
+        setDrawerRecord(null);
         if (onRefresh) onRefresh();
       } else {
         throw new Error(data.error || "Delete failed");
@@ -3378,7 +4166,7 @@ function DatabasePage({ records, onSelectRecord, onRefresh, onToast }: { records
       const isEdit = !!editRecord;
       const url = "/api/roads";
       const method = isEdit ? "PUT" : "POST";
-      
+
       const record: any = { ...formData };
 
       if (isEdit) {
@@ -3409,285 +4197,416 @@ function DatabasePage({ records, onSelectRecord, onRefresh, onToast }: { records
     }
   };
 
-  const filtered = records.filter(r => {
-    const q = search.toLowerCase();
-    const matchQ = !q || getAssetName(r).toLowerCase().includes(q) || (r.road_name ?? "").toLowerCase().includes(q) || (r.surveyor_name ?? "").toLowerCase().includes(q);
-    const matchH = highwayFilter === "all" || (r.road_name ?? "").includes(highwayFilter);
-    const matchC = condFilter === "all" || getRecordStatus(r) === condFilter;
-    const matchProv = provinceFilter === "all" || r.province === provinceFilter;
-    const matchDist = districtFilter === "all" || r.district === districtFilter;
-    const matchSurveyor = surveyorFilter === "all" || r.surveyor_name === surveyorFilter;
-    
-    let matchT = true;
-    if (selectedTable !== "all") {
-      matchT = r.asset_category === selectedTable;
-    } else if (typeFilter !== "all") {
-      const typeStr = getAssetType(r).toLowerCase().replace(/ /g, "_").replace("street_light", "streetlight");
-      matchT = typeStr === typeFilter || (typeFilter === "sealed_road" && typeStr === "concrete_road");
-    }
-    
-    return matchQ && matchH && matchC && matchT && matchProv && matchDist && matchSurveyor;
-  });
-
-  const sorted = [...filtered].sort((a, b) => {
-    let va = "";
-    let vb = "";
-    if (sortCol === "asset_name") {
-      va = getAssetName(a);
-      vb = getAssetName(b);
-    } else if (sortCol === "asset_type") {
-      va = getAssetType(a);
-      vb = getAssetType(b);
-    } else if (sortCol === "condition") {
-      va = getRecordStatus(a);
-      vb = getRecordStatus(b);
-    } else if (sortCol === "gps") {
-      const latA = a._geolocation?.[0] ?? 0;
-      const latB = b._geolocation?.[0] ?? 0;
-      return sortDir === "asc" ? latA - latB : latB - latA;
-    } else {
-      va = String(a[sortCol] ?? "");
-      vb = String(b[sortCol] ?? "");
-    }
-    return sortDir === "asc" ? va.localeCompare(vb) : vb.localeCompare(va);
-  });
-
-  const pages = Math.ceil(sorted.length / PAGE_SIZE);
-  const slice = sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
-
-  // Dynamic headers resolution
-  let headers: { col: string; label: string }[] = [];
-  if (selectedTable === "all") {
-    headers = [
-      { col: "asset_type", label: "Category" },
-      { col: "asset_name", label: "Asset Name" },
-      { col: "road_name", label: "Road / Highway" },
-      { col: "section_name", label: "Section" },
-      { col: "province", label: "Province" },
-      { col: "district", label: "District" },
-      { col: "condition", label: "Condition" },
-      { col: "survey_date", label: "Survey Date" },
-      { col: "surveyor_name", label: "Surveyor" },
-      { col: "gps", label: "GPS" }
-    ];
-  } else {
-    headers = [
-      { col: "asset_type", label: "Category" },
-      { col: "asset_name", label: "Asset Name" },
-      { col: "condition", label: "Condition" },
-      { col: "survey_date", label: "Survey Date" },
-      { col: "surveyor_name", label: "Surveyor" }
-    ];
-
-    // Gather specific attributes for the chosen category
-    const categoryKeysSet = new Set<string>();
-    records.forEach(r => {
-      if (r.asset_category === selectedTable) {
-        Object.keys(r).forEach(k => {
-          if (!EXCLUDED_KEYS.has(k) && k !== "road_name" && k !== "section_name" && k !== "surveyor_name" && k !== "survey_date" && k !== "province" && k !== "district") {
-            categoryKeysSet.add(k);
-          }
-        });
-      }
-    });
-    
-    Array.from(categoryKeysSet).forEach(k => {
-      headers.push({ col: k, label: formatKey(k) });
-    });
-
-    headers.push(
-      { col: "road_name", label: "Road / Highway" },
-      { col: "section_name", label: "Section" },
-      { col: "province", label: "Province" },
-      { col: "district", label: "District" },
-      { col: "gps", label: "GPS" }
-    );
-  }
-
-  const surveyorsList = Array.from(new Set(records.map(r => r.surveyor_name).filter(Boolean)));
+  const headers: { col: string; label: string }[] = [
+    { col: "asset_name", label: "Asset Name" },
+    { col: "road_name", label: "Road / Highway" },
+    { col: "section_name", label: "Section" },
+    { col: "province", label: "Province" },
+    { col: "district", label: "District" },
+    { col: "condition", label: "Condition" },
+    { col: "survey_date", label: "Survey Date" },
+    { col: "surveyor_name", label: "Surveyor" },
+    { col: "gps", label: "GPS" },
+  ];
 
   const Th = ({ col, label }: { col: string; label: string }) => (
-    <th onClick={() => handleSort(col)} style={{ cursor: "pointer", userSelect: "none", background: "#f0f7f3", borderBottom: "2px solid var(--border)", padding: "9px 12px", textAlign: "left", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.6px", color: sortCol === col ? "var(--green)" : "var(--text-muted)", whiteSpace: "nowrap" }}>
-      <span style={{ display: "flex", alignItems: "center", gap: 4 }}>{label}<ArrowUpDown size={10} /></span>
+    <th
+      onClick={() => handleSort(col)}
+      style={{
+        cursor: "pointer",
+        userSelect: "none",
+        background: "#f0f7f3",
+        borderBottom: "2px solid var(--border)",
+        padding: "9px 12px",
+        textAlign: "left",
+        fontSize: 10,
+        fontWeight: 700,
+        textTransform: "uppercase",
+        letterSpacing: "0.6px",
+        color: sortCol === col ? "var(--green)" : "var(--text-muted)",
+        whiteSpace: "nowrap",
+      }}
+    >
+      <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        {label}
+        <ArrowUpDown size={10} />
+      </span>
     </th>
   );
 
+  const drawerId = drawerRecord
+    ? String(drawerRecord.id || drawerRecord._id || drawerRecord.survey_id || "")
+    : "";
+
   return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--bg-app)" }}>
-      {/* Toolbar */}
-      <div style={{ padding: "12px 24px", borderBottom: "1px solid var(--border)", background: "#fafcfb", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", flexShrink: 0 }}>
-        {/* Search */}
-        <div style={{ position: "relative", flex: 2, minWidth: 180 }}>
-          <Search size={13} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
-          <input placeholder="Search records…" value={search} onChange={e => { setSearch(e.target.value); setPage(0); }}
-            style={{ width: "100%", padding: "7px 10px 7px 30px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 8, fontSize: 12, outline: "none", fontFamily: "var(--font-body)", color: "var(--text-primary)" }} />
+    <div style={{ height: "100%", display: "flex", background: "var(--bg-app)", position: "relative", overflow: "hidden" }}>
+      {/* Left: asset type panel */}
+      <aside style={{
+        width: 220,
+        flexShrink: 0,
+        background: "#fff",
+        borderRight: "1px solid var(--border)",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+      }}>
+        <div style={{ padding: "14px 14px 10px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
+          <div style={{ fontSize: 10, fontWeight: 800, color: "var(--green)", textTransform: "uppercase", letterSpacing: "0.7px" }}>
+            Asset Type
+          </div>
+          <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 3 }}>
+            Select one category to browse
+          </div>
+        </div>
+        <div style={{ flex: 1, overflowY: "auto", padding: "8px 8px 12px" }}>
+          {OVERLAY_GROUPS.map((group) => (
+            <div key={group.id} style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 9.5, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.5px", padding: "4px 8px 6px" }}>
+                {group.label}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                {group.items.map((item) => {
+                  const count = counts[item.key] || 0;
+                  const active = category === item.key;
+                  return (
+                    <button
+                      key={item.key}
+                      type="button"
+                      onClick={() => selectCategory(item.key)}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 8,
+                        padding: "8px 10px",
+                        borderRadius: 8,
+                        border: active ? "1.5px solid var(--green)" : "1px solid transparent",
+                        background: active ? "var(--bg-active)" : "transparent",
+                        color: active ? "var(--green)" : "var(--text-secondary)",
+                        fontSize: 11.5,
+                        fontWeight: active ? 800 : 600,
+                        cursor: "pointer",
+                        textAlign: "left",
+                        fontFamily: "var(--font-body)",
+                      }}
+                    >
+                      <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                        <span aria-hidden>{item.emoji}</span>
+                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.label}</span>
+                      </span>
+                      <span style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        background: active ? "rgba(0,102,51,0.12)" : "rgba(0,0,0,0.05)",
+                        borderRadius: 10,
+                        padding: "1px 7px",
+                        flexShrink: 0,
+                      }}>
+                        {count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      </aside>
+
+      {/* Main column */}
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        {/* Per-asset stats */}
+        <div style={{
+          background: "var(--green)",
+          padding: "12px 20px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 16,
+          flexShrink: 0,
+          flexWrap: "wrap",
+        }}>
+          <div style={{ color: "rgba(255,255,255,0.85)", fontSize: 11, fontWeight: 700 }}>
+            {activeLabel} · condition snapshot
+          </div>
+          <div style={{ display: "flex", gap: 0, alignItems: "stretch" }}>
+            {[
+              { label: "Total", value: categoryStats.total, color: "#fff" },
+              { label: "Good", value: categoryStats.good, color: "#fff" },
+              { label: "Fair", value: categoryStats.fair, color: "#fff" },
+              { label: "Poor", value: categoryStats.poor, color: categoryStats.poor > 0 ? "#FFD100" : "#fff" },
+            ].map((stat, i) => (
+              <div key={stat.label} style={{ display: "flex", alignItems: "center" }}>
+                {i > 0 && <div style={{ width: 1, height: 28, background: "rgba(255,255,255,0.2)", margin: "0 14px" }} />}
+                <div style={{ textAlign: "center", minWidth: 52 }}>
+                  <div style={{ fontFamily: "var(--font-title)", fontSize: 22, fontWeight: 800, color: stat.color, lineHeight: 1 }}>
+                    {stat.value}
+                  </div>
+                  <div style={{ fontSize: 8.5, textTransform: "uppercase", letterSpacing: "0.5px", color: "rgba(255,255,255,0.7)", marginTop: 2 }}>
+                    {stat.label}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
 
-        {/* Parameter Selector */}
-        <select value={selectedTable} onChange={e => { setSelectedTable(e.target.value); setPage(0); }} style={{ padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 8, fontSize: 12, outline: "none", background: "#fff", color: "var(--text-secondary)", fontFamily: "var(--font-body)", cursor: "pointer", fontWeight: "bold" }}>
-          <option value="all">🔍 All</option>
-          <option value="sealed">🛣️ Sealed Roads</option>
-          <option value="gravel">🪨 Gravel Roads</option>
-          <option value="earth">🚜 Earth Roads</option>
-          <option value="bridge">🌉 Bridges</option>
-          <option value="footbridge">🚶 Foot Bridges</option>
-          <option value="rail_crossing">🛤️ Rail Crossings</option>
-          <option value="tollgate">🪙 Tollgates</option>
-          <option value="drift">🌊 Drifts</option>
-          <option value="culvert">🕳️ Culverts</option>
-          <option value="piped_causeway">🌁 Piped Causeways</option>
-          <option value="shelvet">🧱 Shelverts</option>
-          <option value="grid">🐄 Cattle Grids</option>
-          <option value="layby">🅿️ Laybys</option>
-          <option value="busstop">🚌 Bus Stops</option>
-          <option value="junction">🔀 Junctions</option>
-          <option value="sign">⚠️ Road Signs</option>
-          <option value="traffic_lights">🚦 Traffic Lights</option>
-          <option value="streetlight">💡 Streetlights</option>
-        </select>
-
-        {/* Highway Filter */}
-        <select value={highwayFilter} onChange={e => { setHighwayFilter(e.target.value); setPage(0); }} style={{ padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 8, fontSize: 12, outline: "none", background: "#fff", color: "var(--text-secondary)", fontFamily: "var(--font-body)", cursor: "pointer" }}>
-          <option value="all">All Highways</option>
-          <option value="A1">A1 Route</option>
-          <option value="A2">A2 Route</option>
-          <option value="A3">A3 Route</option>
-          <option value="A4">A4 Route</option>
-          <option value="A5">A5 Route</option>
-        </select>
-
-        {/* Condition Filter */}
-        <select value={condFilter} onChange={e => { setCondFilter(e.target.value); setPage(0); }} style={{ padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 8, fontSize: 12, outline: "none", background: "#fff", color: "var(--text-secondary)", fontFamily: "var(--font-body)", cursor: "pointer" }}>
-          <option value="all">All Conditions</option>
-          <option value="good">Good</option>
-          <option value="fair">Fair</option>
-          <option value="poor">Poor</option>
-          <option value="mixed">Mixed</option>
-          <option value="under_construction">Under construction</option>
-        </select>
-
-        {/* Surveyor Filter */}
-        <select value={surveyorFilter} onChange={e => { setSurveyorFilter(e.target.value); setPage(0); }} style={{ padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 8, fontSize: 12, outline: "none", background: "#fff", color: "var(--text-secondary)", fontFamily: "var(--font-body)", cursor: "pointer" }}>
-          <option value="all">All Surveyors</option>
-          {surveyorsList.map(s => <option key={s} value={s}>{s}</option>)}
-        </select>
-
-        {/* Toggle Advanced Filters */}
-        <button onClick={() => setShowAdvanced(!showAdvanced)} style={{ padding: "7px 12px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 8, fontSize: 12, outline: "none", background: showAdvanced ? "var(--bg-active)" : "#fff", color: "var(--text-secondary)", fontFamily: "var(--font-body)", cursor: "pointer", display: "flex", alignItems: "center", gap: 5, transition: "all 0.15s" }}>
-          {showAdvanced ? "▲ Hide Location" : "▼ Location Filters"}
-        </button>
-
-        {/* Add Record button */}
-        <button onClick={() => { setEditRecord(null); setIsFormOpen(true); }} style={{ background: "var(--green)", color: "#fff", border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 11.5, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontFamily: "var(--font-body)" }}>
-          <span>+</span> Add Survey Record
-        </button>
-
-        <span style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: "auto", whiteSpace: "nowrap" }}>{filtered.length} rows · Page {page+1}/{Math.max(1,pages)}</span>
-      </div>
-
-      {/* Advanced Collapsible Filters Row */}
-      {showAdvanced && (
-        <div style={{ padding: "10px 24px 12px", borderBottom: "1px solid var(--border)", background: "#fafcfb", display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap", flexShrink: 0 }}>
-          {/* Province Filter */}
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase" }}>Province:</span>
-            <select value={provinceFilter} onChange={e => { setProvinceFilter(e.target.value); setDistrictFilter("all"); setPage(0); }} style={{ padding: "6px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 8, fontSize: 12, outline: "none", background: "#fff", color: "var(--text-secondary)", fontFamily: "var(--font-body)", cursor: "pointer" }}>
-              <option value="all">All Provinces</option>
-              {Object.keys(ZIM_PROVINCES_DISTRICTS).map(p => (
-                <option key={p} value={p}>{p}</option>
-              ))}
-            </select>
+        {/* Toolbar */}
+        <div style={{ padding: "12px 20px", borderBottom: "1px solid var(--border)", background: "#fafcfb", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", flexShrink: 0 }}>
+          <div style={{ position: "relative", flex: 2, minWidth: 180 }}>
+            <Search size={13} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
+            <input
+              placeholder={`Search ${activeLabel.toLowerCase()}…`}
+              value={search}
+              onChange={(e) => { setSearch(e.target.value); setPage(0); }}
+              style={{ width: "100%", padding: "7px 10px 7px 30px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 8, fontSize: 12, outline: "none", fontFamily: "var(--font-body)", color: "var(--text-primary)" }}
+            />
           </div>
 
-          {/* District Filter */}
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase" }}>District:</span>
-            <select value={districtFilter} onChange={e => { setDistrictFilter(e.target.value); setPage(0); }} disabled={provinceFilter === "all"} style={{ padding: "6px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 8, fontSize: 12, outline: "none", background: provinceFilter === "all" ? "#f4f6f5" : "#fff", color: "var(--text-secondary)", fontFamily: "var(--font-body)", cursor: provinceFilter === "all" ? "not-allowed" : "pointer" }}>
-              <option value="all">All Districts</option>
-              {provinceFilter !== "all" && (ZIM_PROVINCES_DISTRICTS[provinceFilter] || []).map(d => (
-                <option key={d} value={d}>{d}</option>
+          <select
+            value={highwayFilter}
+            onChange={(e) => { setHighwayFilter(e.target.value); setPage(0); }}
+            style={{ padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 8, fontSize: 12, outline: "none", background: "#fff", color: "var(--text-secondary)", fontFamily: "var(--font-body)", cursor: "pointer", maxWidth: 200 }}
+          >
+            <option value="all">All Highways</option>
+            <option value="A1">A1 Route</option>
+            <option value="A2">A2 Route</option>
+            <option value="A3">A3 Route</option>
+            <option value="A4">A4 Route</option>
+            <option value="A5">A5 Route</option>
+            {highwayOptions
+              .filter((r) => !/^A[1-5]\b/.test(r))
+              .slice(0, 40)
+              .map((r) => (
+                <option key={r} value={r}>{(r ?? "").split(" (")[0]}</option>
               ))}
-            </select>
-          </div>
+          </select>
 
-          {/* Clear Advanced filters link */}
-          {(provinceFilter !== "all" || districtFilter !== "all") && (
-            <button onClick={() => { setProvinceFilter("all"); setDistrictFilter("all"); setPage(0); }} style={{ background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontSize: 11.5, fontWeight: 700, fontFamily: "var(--font-body)", padding: 0, textDecoration: "underline" }}>
-              Clear Location Filters
-            </button>
+          <select
+            value={condFilter}
+            onChange={(e) => { setCondFilter(e.target.value); setPage(0); }}
+            style={{ padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 8, fontSize: 12, outline: "none", background: "#fff", color: "var(--text-secondary)", fontFamily: "var(--font-body)", cursor: "pointer" }}
+          >
+            <option value="all">All Conditions</option>
+            <option value="good">Good</option>
+            <option value="fair">Fair</option>
+            <option value="poor">Poor</option>
+            <option value="mixed">Mixed</option>
+            <option value="under_construction">Under construction</option>
+          </select>
+
+          <select
+            value={surveyorFilter}
+            onChange={(e) => { setSurveyorFilter(e.target.value); setPage(0); }}
+            style={{ padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 8, fontSize: 12, outline: "none", background: "#fff", color: "var(--text-secondary)", fontFamily: "var(--font-body)", cursor: "pointer" }}
+          >
+            <option value="all">All Surveyors</option>
+            {surveyorsList.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+
+          <button
+            onClick={() => setShowAdvanced(!showAdvanced)}
+            style={{ padding: "7px 12px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 8, fontSize: 12, outline: "none", background: showAdvanced ? "var(--bg-active)" : "#fff", color: "var(--text-secondary)", fontFamily: "var(--font-body)", cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}
+          >
+            {showAdvanced ? "▲ Hide Location" : "▼ Location Filters"}
+          </button>
+
+          <button
+            onClick={() => { setEditRecord(null); setIsFormOpen(true); }}
+            style={{ background: "var(--green)", color: "#fff", border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 11.5, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontFamily: "var(--font-body)" }}
+          >
+            <span>+</span> Add Survey Record
+          </button>
+
+          <span style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: "auto", whiteSpace: "nowrap" }}>
+            {loading ? "Loading…" : `${workingTotal} rows`} · Page {pageSafe + 1}/{pages}
+          </span>
+        </div>
+
+        {showAdvanced && (
+          <div style={{ padding: "10px 20px 12px", borderBottom: "1px solid var(--border)", background: "#fafcfb", display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap", flexShrink: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase" }}>Province:</span>
+              <select
+                value={provinceFilter}
+                onChange={(e) => { setProvinceFilter(e.target.value); setDistrictFilter("all"); setPage(0); }}
+                style={{ padding: "6px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 8, fontSize: 12, outline: "none", background: "#fff", color: "var(--text-secondary)", fontFamily: "var(--font-body)", cursor: "pointer" }}
+              >
+                <option value="all">All Provinces</option>
+                {Object.keys(ZIM_PROVINCES_DISTRICTS).map((p) => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase" }}>District:</span>
+              <select
+                value={districtFilter}
+                onChange={(e) => { setDistrictFilter(e.target.value); setPage(0); }}
+                disabled={provinceFilter === "all"}
+                style={{ padding: "6px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 8, fontSize: 12, outline: "none", background: provinceFilter === "all" ? "#f4f6f5" : "#fff", color: "var(--text-secondary)", fontFamily: "var(--font-body)", cursor: provinceFilter === "all" ? "not-allowed" : "pointer" }}
+              >
+                <option value="all">All Districts</option>
+                {provinceFilter !== "all" && (ZIM_PROVINCES_DISTRICTS[provinceFilter] || []).map((d) => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+              </select>
+            </div>
+            {(provinceFilter !== "all" || districtFilter !== "all") && (
+              <button
+                onClick={() => { setProvinceFilter("all"); setDistrictFilter("all"); setPage(0); }}
+                style={{ background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontSize: 11.5, fontWeight: 700, fontFamily: "var(--font-body)", padding: 0, textDecoration: "underline" }}
+              >
+                Clear Location Filters
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Table */}
+        <div style={{ flex: 1, overflowX: "auto", overflowY: "auto", opacity: loading ? 0.65 : 1 }}>
+          {error ? (
+            <div style={{ padding: 40, textAlign: "center", color: "#dc2626", fontSize: 13 }}>{error}</div>
+          ) : (
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11.5 }}>
+              <thead style={{ position: "sticky", top: 0, zIndex: 10 }}>
+                <tr>
+                  <th style={{ background: "#f0f7f3", borderBottom: "2px solid var(--border)", padding: "9px 12px", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.6px", color: "var(--text-muted)", width: 40 }}>#</th>
+                  {headers.map((h) => (
+                    <Th key={h.col} col={h.col} label={h.label} />
+                  ))}
+                  <th style={{ background: "#f0f7f3", borderBottom: "2px solid var(--border)", padding: "9px 12px", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.6px", color: "var(--text-muted)", width: 140 }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {slice.length === 0 ? (
+                  <tr>
+                    <td colSpan={headers.length + 2} style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>
+                      {loading ? `Loading ${activeLabel.toLowerCase()}…` : `No matching ${activeLabel.toLowerCase()} found.`}
+                    </td>
+                  </tr>
+                ) : (
+                  slice.map((r, i) => {
+                    const gpsLabel = formatGpsLabel(r);
+                    const id = String(r.id || r._id || r.survey_id || "");
+                    const selected = !!drawerId && id === drawerId;
+                    return (
+                      <tr
+                        key={id || i}
+                        onClick={() => setDrawerRecord(r)}
+                        title="Click row to inspect"
+                        style={{
+                          cursor: "pointer",
+                          transition: "background 0.1s",
+                          background: selected ? "var(--bg-active)" : "transparent",
+                        }}
+                        onMouseOver={(e) => {
+                          if (!selected) e.currentTarget.style.background = "var(--bg-hover)";
+                        }}
+                        onMouseOut={(e) => {
+                          e.currentTarget.style.background = selected ? "var(--bg-active)" : "transparent";
+                        }}
+                      >
+                        <td style={{ padding: "8px 12px", borderBottom: "1px solid rgba(0,102,51,0.06)", color: "var(--text-muted)", fontWeight: 600 }}>
+                          {pageSafe * PAGE_SIZE + i + 1}
+                        </td>
+                        {headers.map((h) => {
+                          let valContent: React.ReactNode = "—";
+                          if (h.col === "asset_name") valContent = getAssetName(r);
+                          else if (h.col === "condition") {
+                            const c = getRecordStatus(r);
+                            valContent = <span className={`badge ${c}`}>{formatStatusLabel(c)}</span>;
+                          } else if (h.col === "gps") {
+                            valContent = gpsLabel ? (
+                              <span style={{ fontFamily: "ui-monospace, monospace" }}>{gpsLabel}</span>
+                            ) : "—";
+                          } else {
+                            const rawVal = r[h.col];
+                            valContent = rawVal !== null && rawVal !== undefined && rawVal !== "" ? formatValue(rawVal) : "—";
+                          }
+                          return (
+                            <td
+                              key={h.col}
+                              style={{
+                                padding: "8px 12px",
+                                borderBottom: "1px solid rgba(0,102,51,0.06)",
+                                color: h.col === "asset_name" ? "var(--text-primary)" : "var(--text-secondary)",
+                                fontWeight: h.col === "asset_name" ? 600 : 400,
+                                whiteSpace: "nowrap",
+                                maxWidth: 280,
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                              }}
+                            >
+                              {valContent}
+                            </td>
+                          );
+                        })}
+                        <td style={{ padding: "8px 12px", borderBottom: "1px solid rgba(0,102,51,0.06)", whiteSpace: "nowrap" }} onClick={(e) => e.stopPropagation()}>
+                          <button
+                            type="button"
+                            onClick={() => onSelectRecord(r)}
+                            title="Show on map"
+                            style={{ background: "var(--bg-active)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--green)", cursor: "pointer", marginRight: 8, fontWeight: 700, fontSize: 11, fontFamily: "var(--font-body)", padding: "4px 8px" }}
+                          >
+                            🗺 Map
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { setEditRecord(r); setIsFormOpen(true); }}
+                            style={{ background: "none", border: "none", color: "var(--green)", cursor: "pointer", marginRight: 10, fontWeight: 700, fontSize: 11, fontFamily: "var(--font-body)" }}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => handleDelete(e, r._id || r.id || r.survey_id)}
+                            style={{ background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontWeight: 700, fontSize: 11, fontFamily: "var(--font-body)" }}
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
           )}
         </div>
+
+        {/* Pagination */}
+        <div style={{ padding: "10px 20px", borderTop: "1px solid var(--border)", background: "#fafcfb", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+          <button
+            onClick={() => setPage((p) => Math.max(0, p - 1))}
+            disabled={pageSafe === 0 || loading}
+            style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid var(--border)", background: "#fff", fontSize: 11.5, fontWeight: 600, cursor: pageSafe === 0 ? "not-allowed" : "pointer", fontFamily: "var(--font-body)", color: "var(--text-secondary)" }}
+          >
+            ← Previous
+          </button>
+          <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+            Showing {workingTotal === 0 ? 0 : pageSafe * PAGE_SIZE + 1}–{Math.min((pageSafe + 1) * PAGE_SIZE, workingTotal)} of {workingTotal}
+          </span>
+          <button
+            onClick={() => setPage((p) => Math.min(pages - 1, p + 1))}
+            disabled={pageSafe >= pages - 1 || loading}
+            style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid var(--border)", background: "#fff", fontSize: 11.5, fontWeight: 600, cursor: pageSafe >= pages - 1 ? "not-allowed" : "pointer", fontFamily: "var(--font-body)", color: "var(--text-secondary)" }}
+          >
+            Next →
+          </button>
+        </div>
+      </div>
+
+      {drawerRecord && (
+        <SurveyDetailDrawer
+          record={drawerRecord}
+          onClose={() => setDrawerRecord(null)}
+          onShowOnMap={onSelectRecord}
+        />
       )}
 
-      {/* Database Dynamic Table */}
-      <div style={{ flex: 1, overflowX: "auto", overflowY: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11.5 }}>
-          <thead style={{ position: "sticky", top: 0, zIndex: 10 }}>
-            <tr>
-              <th style={{ background: "#f0f7f3", borderBottom: "2px solid var(--border)", padding: "9px 12px", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.6px", color: "var(--text-muted)", width: 40 }}>#</th>
-              {headers.map(h => (
-                <Th key={h.col} col={h.col} label={h.label} />
-              ))}
-              <th style={{ background: "#f0f7f3", borderBottom: "2px solid var(--border)", padding: "9px 12px", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.6px", color: "var(--text-muted)", width: 110 }}>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {slice.length === 0 ? (
-              <tr>
-                <td colSpan={headers.length + 2} style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>
-                  No matching survey records found.
-                </td>
-              </tr>
-            ) : slice.map((r, i) => {
-              const gpsLabel = formatGpsLabel(r);
-              return (
-                <tr key={r._id ?? i} onClick={() => onSelectRecord(r)} title="Click row to show on map" style={{ cursor: "pointer", transition: "background 0.1s" }}
-                  onMouseOver={e => (e.currentTarget.style.background = "var(--bg-hover)")}
-                  onMouseOut={e => (e.currentTarget.style.background = "transparent")}>
-                  <td style={{ padding: "8px 12px", borderBottom: "1px solid rgba(0,102,51,0.06)", color: "var(--text-muted)", fontWeight: 600 }}>{page * PAGE_SIZE + i + 1}</td>
-                  {headers.map(h => {
-                    let valContent: React.ReactNode = "—";
-                    if (h.col === "asset_name") {
-                      valContent = getAssetName(r);
-                    } else if (h.col === "asset_type") {
-                      valContent = getAssetType(r);
-                    } else if (h.col === "condition") {
-                      const c = getRecordStatus(r);
-                      valContent = <span className={`badge ${c}`}>{formatStatusLabel(c)}</span>;
-                    } else if (h.col === "gps") {
-                      valContent = gpsLabel ? (
-                        <span style={{ fontFamily: "ui-monospace, monospace" }}>{gpsLabel}</span>
-                      ) : "—";
-                    } else {
-                      const rawVal = r[h.col];
-                      valContent = rawVal !== null && rawVal !== undefined && rawVal !== "" ? formatValue(rawVal) : "—";
-                    }
-                    return (
-                      <td key={h.col} style={{ padding: "8px 12px", borderBottom: "1px solid rgba(0,102,51,0.06)", color: h.col === "asset_name" ? "var(--text-primary)" : "var(--text-secondary)", fontWeight: h.col === "asset_name" ? 600 : 400, whiteSpace: "nowrap", maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis" }}>
-                        {valContent}
-                      </td>
-                    );
-                  })}
-                  <td style={{ padding: "8px 12px", borderBottom: "1px solid rgba(0,102,51,0.06)", whiteSpace: "nowrap" }} onClick={e => e.stopPropagation()}>
-                    <button type="button" onClick={() => onSelectRecord(r)} title="Show on map" style={{ background: "var(--bg-active)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--green)", cursor: "pointer", marginRight: 8, fontWeight: 700, fontSize: 11, fontFamily: "var(--font-body)", padding: "4px 8px" }}>🗺 Map</button>
-                    <button type="button" onClick={() => { setEditRecord(r); setIsFormOpen(true); }} style={{ background: "none", border: "none", color: "var(--green)", cursor: "pointer", marginRight: 10, fontWeight: 700, fontSize: 11, fontFamily: "var(--font-body)" }}>Edit</button>
-                    <button type="button" onClick={(e) => handleDelete(e, r._id)} style={{ background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontWeight: 700, fontSize: 11, fontFamily: "var(--font-body)" }}>Delete</button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Pagination */}
-      <div style={{ padding: "10px 24px", borderTop: "1px solid var(--border)", background: "#fafcfb", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
-        <button onClick={() => setPage(p => Math.max(0, p-1))} disabled={page === 0} style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid var(--border)", background: "#fff", fontSize: 11.5, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-body)", color: "var(--text-secondary)", transition: "all 0.13s" }}>← Previous</button>
-        <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Showing {page * PAGE_SIZE + 1}–{Math.min((page+1)*PAGE_SIZE, filtered.length)} of {filtered.length}</span>
-        <button onClick={() => setPage(p => Math.min(pages-1, p+1))} disabled={page >= pages-1} style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid var(--border)", background: "#fff", fontSize: 11.5, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-body)", color: "var(--text-secondary)", transition: "all 0.13s" }}>Next →</button>
-      </div>
-
-      {/* Survey Form Modal */}
       <SurveyFormModal isOpen={isFormOpen} onClose={() => setIsFormOpen(false)} record={editRecord} onSave={handleSave} onToast={onToast} />
     </div>
   );
