@@ -6,16 +6,15 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip as ChartTooltip,
 } from "recharts";
 import { getRecordStatus, getAssetType, getAssetName, getSadcValue } from "@/components/helpers";
+import { HIGHWAY_CORRIDORS, recordsForHighway } from "@/lib/highways";
 
 interface RightPanelProps {
   records: any[];
   onSelectRecord?: (r: any) => void;
 }
 
-const HIGHWAYS = ["A1", "A2", "A3", "A4", "A5"];
-
 function hwCount(records: any[], id: string) {
-  return records.filter(r => (r.road_name ?? "").includes(id)).length;
+  return recordsForHighway(records, id).length;
 }
 
 const EXCLUDED_KEYS = new Set([
@@ -65,9 +64,9 @@ export default function RightPanel({ records, onSelectRecord }: RightPanelProps)
     { name: "Under construction", value: underConstruction, color: "#2563eb" },
   ].filter(d => d.value > 0);
 
-  const hwData = HIGHWAYS.map(id => ({
-    name: id,
-    assets: hwCount(records, id),
+  const hwData = HIGHWAY_CORRIDORS.map(h => ({
+    name: h.id,
+    assets: hwCount(records, h.id),
   })).filter(d => d.assets > 0);
 
   const compliant    = records.filter(r => getSadcValue(r) === "yes").length;

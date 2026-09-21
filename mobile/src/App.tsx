@@ -4,7 +4,7 @@ import type { SurveyDraft } from "./lib/db";
 import { slimRawData } from "./lib/slimRawData";
 import { fetchWithTimeout, prepareSyncPayload } from "./lib/prepareSyncPayload";
 import { assetUrl } from "./lib/assets";
-import { SegmentTracker, PAUSED_ROAD_CONTEXT_KEY, SEGMENT_SESSION_KEY } from "./components/SegmentTracker";
+import { SegmentTracker, PAUSED_ROAD_CONTEXT_KEY, SEGMENT_SESSION_KEY, appendPausedLineExcludePoint } from "./components/SegmentTracker";
 import type { SegmentGeometry } from "./components/SegmentTracker";
 import { SurveyProgressPanel } from "./components/SurveyProgressPanel";
 import { MyProgressPage } from "./components/MyProgressPage";
@@ -101,6 +101,7 @@ import {
   Play,
   Pause,
   Map,
+  AlertTriangle,
 } from "lucide-react";
 
 type RoadCategory = "sealed" | "gravel" | "earth";
@@ -129,6 +130,7 @@ const SHELVT_SERVICEABILITY_OPTIONS = [
 const CULVERT_PIPE_DIAMETER_OPTIONS = [
   { value: "450", label: "450 mm" },
   { value: "600", label: "600 mm" },
+  { value: "750", label: "750 mm" },
   { value: "900", label: "900 mm" },
   { value: "1200", label: "1200 mm" },
 ] as const;
@@ -325,6 +327,16 @@ const ASSET_CLASSES = [
     grad: "linear-gradient(135deg, #a78bfa, #6d28d9)"
   },
   {
+    id: "road_rupture",
+    label: "Road Rupture",
+    type: "Amenity",
+    category: "amenities",
+    icon: <AlertTriangle size={20} />,
+    desc: "Pin a washaway, collapse, or under-construction break in the road.",
+    color: "#b91c1c",
+    grad: "linear-gradient(135deg, #ef4444, #991b1b)"
+  },
+  {
     id: "sign",
     label: "Road Sign",
     type: "Furniture",
@@ -476,8 +488,9 @@ export default function App() {
   };
 
   // Form Fields State
-  const [assetCategory, setAssetCategory] = useState<"sealed" | "gravel" | "earth" | "bridge" | "footbridge" | "rail_crossing" | "tollgate" | "layby" | "busstop" | "junction" | "sign" | "shelvet" | "culvert" | "piped_causeway" | "drift" | "catchpit" | "grid" | "traffic_calming" | "traffic_lights" | "streetlight">("sealed");
+  const [assetCategory, setAssetCategory] = useState<"sealed" | "gravel" | "earth" | "bridge" | "footbridge" | "rail_crossing" | "tollgate" | "layby" | "busstop" | "junction" | "road_rupture" | "sign" | "shelvet" | "culvert" | "piped_causeway" | "drift" | "catchpit" | "grid" | "traffic_calming" | "traffic_lights" | "streetlight">("sealed");
   const [segmentGeometry, setSegmentGeometry] = useState<SegmentGeometry | null>(null);
+  const [segmentRecordingActive, setSegmentRecordingActive] = useState(false);
   const isRoadType = assetCategory === "sealed" || assetCategory === "gravel" || assetCategory === "earth";
   const [pausedRoadContext, setPausedRoadContext] = useState<PausedRoadContext | null>(() => loadPausedRoadContext());
   const [autoResumeSegment, setAutoResumeSegment] = useState(false);
@@ -548,6 +561,7 @@ export default function App() {
   const [bestGpsAccuracy, setBestGpsAccuracy] = useState<number | null>(null);
   const liveGpsPosRef = React.useRef<{ lat: number; lng: number; alt: number; acc: number } | null>(null);
   const bestGpsPosRef = React.useRef<{ lat: number; lng: number; alt: number; acc: number } | null>(null);
+  const debugPointGpsLogAtRef = React.useRef(0);
   const pointGpsEngineRef = React.useRef<"bg" | "cap" | "web" | null>(null);
   const [imageSadcCompliant, setImageSadcCompliant] = useState<"yes" | "no" | "mixed">("yes");
   const [photos, setPhotos] = useState<string[]>([]);
@@ -657,6 +671,9 @@ export default function App() {
   };
 
   const hasSecurableRoadData = totalCollectedSegmentSurveys().length > 0;
+  const roadSegmentInProgress =
+    isRoadType && (segmentRecordingActive || !!segmentGeometry);
+  const canSaveOrQueueRoad = !isRoadType || (hasSecurableRoadData && !roadSegmentInProgress);
 
   const sealedDualCollectionStarted =
     assetCategory === "sealed" &&
@@ -730,7 +747,11 @@ export default function App() {
     const roadClassForLimit =
       assetCategory === "sealed" ? sealedClass
       : assetCategory === "gravel" ? gravelClass : earthClass;
-    const segCheck = validateSegmentLengthM(segmentGeometry.length_m, roadClassForLimit);
+    const segCheck = validateSegmentLengthM(
+      segmentGeometry.length_m,
+      roadClassForLimit,
+      assetCategory
+    );
     if (!segCheck.ok) {
       showToast(segCheck.message, "error");
       return false;
@@ -997,6 +1018,11 @@ export default function App() {
   const [junctionMarkings, setJunctionMarkings] = useState("yes");
   const [junctionSignage, setJunctionSignage] = useState("good");
 
+  const [ruptureKind, setRuptureKind] = useState("rupture");
+  const [ruptureCause, setRuptureCause] = useState("washaway");
+  const [ruptureDetour, setRuptureDetour] = useState("no");
+  const [ruptureCondition, setRuptureCondition] = useState("poor");
+
   // Road Sign Fields
   const [signType, setSignType] = useState("warning");
   const [signCondition, setSignCondition] = useState("good");
@@ -1125,6 +1151,19 @@ export default function App() {
     if (!bestGpsPosRef.current || accuracy < bestGpsPosRef.current.acc) {
       bestGpsPosRef.current = fix;
     }
+    // #region agent log
+    try {
+      const now = Date.now();
+      if (now - debugPointGpsLogAtRef.current >= 3000) {
+        debugPointGpsLogAtRef.current = now;
+        const raw = localStorage.getItem(SEGMENT_SESSION_KEY);
+        const sess = raw ? JSON.parse(raw) : null;
+        const last = sess?.points?.[sess.points.length - 1];
+        const distM = last ? Math.round(Math.hypot((last.lat - latitude) * 111320, (last.lng - longitude) * 111320 * Math.cos(latitude * Math.PI / 180)) * 10) / 10 : null;
+        fetch('http://127.0.0.1:7881/ingest/63c8d1b8-da33-490e-a74c-51bee6811989',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5deffd'},body:JSON.stringify({sessionId:'5deffd',runId:'pre-fix',hypothesisId:'B',location:'App.tsx:applyPointGpsFix',message:'point gps vs paused session',data:{point:{lat:latitude,lng:longitude},sessPhase:sess?.phase??null,sessCount:sess?.points?.length??0,sessLast:last?{lat:last.lat,lng:last.lng}:null,distFromSessLastM:distM},timestamp:Date.now()})}).catch(()=>{});
+      }
+    } catch { /* ignore */ }
+    // #endregion
   }, []);
 
   const stopPointGpsEngine = React.useCallback(async () => {
@@ -1289,6 +1328,7 @@ export default function App() {
           busstopType, busstopCondition, busstopShelter, busstopDrainage, busstopFurnitureCondition, busstopRefuseBin,
           // Junction
           junctionType, junctionCondition, junctionControl, junctionMarkings, junctionSignage,
+          ruptureKind, ruptureCause, ruptureDetour, ruptureCondition,
           // Sign
           signType, signCondition, signSadcCompliant, signVisibility, signName,
           // Piped Causeway
@@ -1354,6 +1394,7 @@ export default function App() {
     laybyCondition, laybySurface, laybyLength, laybyDrainage, laybyWidth, laybyFurniture, laybyRefuseBin,
     busstopType, busstopCondition, busstopShelter, busstopDrainage, busstopFurnitureCondition, busstopRefuseBin,
     junctionType, junctionCondition, junctionControl, junctionMarkings, junctionSignage,
+    ruptureKind, ruptureCause, ruptureDetour, ruptureCondition,
     signType, signCondition, signSadcCompliant, signVisibility, signName,
     causewayName, causewayPipeMaterial, causewayPipeDiameter, causewayDrainage, causewayServiceability,
     causewayCondition, causewayType, causewayLength, causewayOpenings, causewayBoxSize,
@@ -1560,6 +1601,10 @@ export default function App() {
       if (s.junctionControl !== undefined) setJunctionControl(s.junctionControl);
       if (s.junctionMarkings !== undefined) setJunctionMarkings(s.junctionMarkings);
       if (s.junctionSignage !== undefined) setJunctionSignage(s.junctionSignage);
+      if (s.ruptureKind !== undefined) setRuptureKind(s.ruptureKind);
+      if (s.ruptureCause !== undefined) setRuptureCause(s.ruptureCause);
+      if (s.ruptureDetour !== undefined) setRuptureDetour(s.ruptureDetour);
+      if (s.ruptureCondition !== undefined) setRuptureCondition(s.ruptureCondition);
       // Sign
       if (s.signType !== undefined) setSignType(s.signType);
       if (s.signCondition !== undefined) setSignCondition(s.signCondition);
@@ -1823,6 +1868,10 @@ export default function App() {
     setCatchpitCondition("good");
     setTrafficCalmingType("speed_hump");
     setTrafficCalmingCondition("good");
+    setRuptureKind("rupture");
+    setRuptureCause("washaway");
+    setRuptureDetour("no");
+    setRuptureCondition("poor");
     setEditingDraftId(null);
     setSelectedCategory(null);
     setPhotos([]);
@@ -1833,6 +1882,8 @@ export default function App() {
   };
 
   const getDraftCategory = (draft: SurveyDraft) => {
+    if (draft.asset_category) return draft.asset_category;
+    if (draft.rupture_kind) return "road_rupture";
     if (draft.bridge) return "bridge";
     if (draft.footbridge_name) return "footbridge";
     if (draft.culvet_class) return "culvert";
@@ -2167,6 +2218,11 @@ export default function App() {
       setJunctionControl(draft.junction_control || "signs");
       setJunctionMarkings(draft.junction_road_markings || "yes");
       setJunctionSignage(draft.junction_signage || "good");
+    } else if (category === "road_rupture") {
+      setRuptureKind(draft.rupture_kind || "rupture");
+      setRuptureCause(draft.rupture_cause || "washaway");
+      setRuptureDetour(draft.rupture_detour || "no");
+      setRuptureCondition(draft.rupture_condition || "poor");
     } else if (category === "sign") {
       setSignType(draft.sign_type || "warning");
       setSignCondition(draft.sign_condition || "good");
@@ -2230,6 +2286,15 @@ export default function App() {
 
     // Coordinates required — at least one completed segment with attributes
     if (isRoadType) {
+      if (roadSegmentInProgress) {
+        showToast(
+          saveAsDraft
+            ? "Finish the current GPS segment (or discard it) before saving a draft."
+            : "Finish the current GPS segment (or discard it) before queueing for sync.",
+          "error"
+        );
+        return;
+      }
       if (!hasSecurableRoadData) {
         showToast(
           saveAsDraft
@@ -2504,6 +2569,14 @@ export default function App() {
         junction_road_markings: junctionMarkings,
         junction_signage: junctionSignage,
       };
+    } else if (assetCategory === "road_rupture") {
+      draftData = {
+        ...baseData,
+        rupture_kind: ruptureKind,
+        rupture_cause: ruptureKind === "rupture" ? ruptureCause : undefined,
+        rupture_detour: ruptureDetour,
+        rupture_condition: ruptureKind === "under_construction" ? "under_construction" : ruptureCondition,
+      };
     } else if (assetCategory === "sign") {
       draftData = {
         ...baseData,
@@ -2662,6 +2735,23 @@ export default function App() {
     if (keepPausedLine && pausedSnapshot) {
       persistPausedRoadContext(pausedSnapshot);
       setSelectedCategory(null);
+      {
+        const parts = (gpsForSave || gps || "").trim().split(/\s+/);
+        const pointLat = Number(parts[0]);
+        const pointLng = Number(parts[1]);
+        appendPausedLineExcludePoint(pointLat, pointLng);
+        // #region agent log
+        let sessLast = null as { lat: number; lng: number } | null;
+        let sessCount = 0;
+        try {
+          const sess = JSON.parse(localStorage.getItem(SEGMENT_SESSION_KEY) || "null");
+          sessCount = sess?.points?.length || 0;
+          const last = sess?.points?.[sessCount - 1];
+          if (last) sessLast = { lat: last.lat, lng: last.lng };
+        } catch { /* ignore */ }
+        fetch('http://127.0.0.1:7881/ingest/63c8d1b8-da33-490e-a74c-51bee6811989',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5deffd'},body:JSON.stringify({sessionId:'5deffd',runId:'post-fix',hypothesisId:'E',location:'App.tsx:savePointKeepLine',message:'saved point while line paused',data:{assetCategory,point:{lat:pointLat,lng:pointLng},sessCount,sessLast},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
+      }
       showToast(
         `Point saved. Resume ${pausedSnapshot.roadCategory} line (${pausedSnapshot.pointCount} GPS pts) when ready.`,
         "info"
@@ -2707,6 +2797,7 @@ export default function App() {
       layby: "survey_laybys",
       busstop: "survey_busstops",
       junction: "survey_junctions",
+      road_rupture: "survey_road_ruptures",
       sign: "survey_road_signs",
       shelvet: "survey_shelvets",
       culvert: "survey_culverts",
@@ -2921,6 +3012,14 @@ export default function App() {
         row.junction_control = draft.junction_control || null;
         row.junction_road_markings = draft.junction_road_markings || null;
         row.junction_signage = draft.junction_signage || null;
+      } else if (tableName === "survey_road_ruptures") {
+        row.rupture_kind = draft.rupture_kind || null;
+        row.rupture_cause = draft.rupture_cause || null;
+        row.rupture_detour = draft.rupture_detour || null;
+        row.rupture_condition = draft.rupture_condition || null;
+        row.road_condition = draft.rupture_kind === "under_construction"
+          ? "under_construction"
+          : (draft.rupture_condition || "poor");
       } else if (tableName === "survey_road_signs") {
         row.sign_type = draft.sign_type || null;
         row.sign_condition = draft.sign_condition || null;
@@ -2990,6 +3089,7 @@ export default function App() {
       else if (draft.streetlight_type) draftName = `Streetlight: ${draft.streetlight_type}`;
       else if (draft.rail_crossing_name) draftName = `Rail Crossing: ${draft.rail_crossing_name}`;
       else if (draft.junction_type) draftName = `Junction: ${String(draft.junction_type).replace("_", "-")}`;
+      else if (draft.rupture_kind) draftName = draft.rupture_kind === "under_construction" ? "Under construction" : "Road rupture";
       else if (draft.catchpit_condition) draftName = `Catchpit (${draft.catchpit_condition})`;
       else if (draft.traffic_calming_type) draftName = `Traffic Calming: ${String(draft.traffic_calming_type).replace("_", " ")}`;
 
@@ -3302,7 +3402,7 @@ export default function App() {
                   }
                 `}</style>
                 {[
-                  { id: "all", label: "All Assets", count: 20 },
+                  { id: "all", label: "All Assets", count: 21 },
                   { id: "roads", label: "Roads", count: 3 },
                   { id: "structures", label: "Structures", count: 4 },
                   { id: "drainage", label: "Drainage", count: 5 },
@@ -3844,7 +3944,7 @@ export default function App() {
                 <span> · {totalSurveyLengthKm(currentRoadSegmentSurveys())} km total</span>
                 <p className="mobile-notice-info-hint">
                   Tap <strong>Start GPS Recording</strong> above for the next segment.
-                  {hasSecurableRoadData && " Queue for Sync anytime to secure what you have collected."}
+                  {hasSecurableRoadData && !roadSegmentInProgress && " Queue for Sync when you are not recording."}
                 </p>
               </div>
             )}
@@ -3862,11 +3962,13 @@ export default function App() {
                 }
                 maxSegmentLengthM={segmentMaxLengthM(
                   assetCategory === "sealed" ? sealedClass
-                  : assetCategory === "gravel" ? gravelClass : earthClass
+                  : assetCategory === "gravel" ? gravelClass : earthClass,
+                  assetCategory
                 )}
                 segmentLimitHint={fmtSegmentLimitHint(
                   assetCategory === "sealed" ? sealedClass
-                  : assetCategory === "gravel" ? gravelClass : earthClass
+                  : assetCategory === "gravel" ? gravelClass : earthClass,
+                  assetCategory
                 )}
                 onSegmentComplete={(geo) => {
                   setSegmentGeometry(geo);
@@ -3886,6 +3988,7 @@ export default function App() {
                 existingGeometry={segmentGeometry}
                 accuracyThreshold={gpsAccuracyLimit}
                 autoResume={autoResumeSegment}
+                onRecordingStateChange={setSegmentRecordingActive}
                 photoCount={photos.length}
                 maxPhotos={MAX_ROAD_PHOTOS}
                 onAddPhoto={async () => {
@@ -3980,7 +4083,9 @@ export default function App() {
                   {" "}· {totalSurveyLengthKm(currentRoadSegmentSurveys())} km on Road {isSealedDualMode ? dualRoadPhase : 1}
                 </div>
                 <p className="mobile-segment-actions-hint">
-                  Record the next segment above, or secure your work below.
+                  {segmentRecordingActive
+                    ? "Finish or discard the current GPS recording before saving or queueing."
+                    : "Record the next segment above, or secure your work below."}
                 </p>
                 <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
                   <button
@@ -3988,6 +4093,7 @@ export default function App() {
                     onClick={(e) => handleSaveForm(e, false)}
                     className="mobile-btn"
                     style={{ flex: 1, minWidth: "140px" }}
+                    disabled={roadSegmentInProgress}
                   >
                     <PlusCircle size={14} />
                     {isSealedDualMode && dualRoadPhase === 1 ? "Queue Road 1 for Sync" : "Queue for Sync"}
@@ -4690,6 +4796,7 @@ export default function App() {
                       <option value="tertiary_feeder">Tertiary Feeder</option>
                       <option value="tertiary_access">Tertiary Access</option>
                       <option value="urban_local">Urban Local</option>
+                      <option value="urban_cbd">CBD</option>
                       <option value="industrial">Industrial</option>
                     </select>
                   </div>
@@ -5172,6 +5279,50 @@ export default function App() {
               </fieldset>
             )}
 
+            {/* Conditional Form: Road Rupture */}
+            {assetCategory === "road_rupture" && (
+              <fieldset style={{ border: "1px solid var(--border-color)", padding: "12px", borderRadius: "var(--radius-md)", display: "flex", flexDirection: "column", gap: "10px" }}>
+                <legend style={{ fontSize: "10px", fontWeight: "700", textTransform: "uppercase", color: "var(--text-accent)", padding: "0 6px" }}>Road Rupture</legend>
+                <div className="mobile-form-group">
+                  <label className="mobile-label">What is at this point?</label>
+                  <select value={ruptureKind} onChange={(e) => setRuptureKind(e.target.value)} className="mobile-select">
+                    <option value="rupture">Road rupture (break / washaway)</option>
+                    <option value="under_construction">Under construction / rehabilitation</option>
+                  </select>
+                </div>
+                {ruptureKind === "rupture" && (
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Cause</label>
+                    <select value={ruptureCause} onChange={(e) => setRuptureCause(e.target.value)} className="mobile-select">
+                      <option value="washaway">Washaway</option>
+                      <option value="collapse">Collapse</option>
+                      <option value="missing_pavement">Missing pavement</option>
+                      <option value="cut_off">Road cut off</option>
+                      <option value="other">Other</option>
+                    </select>
+                  </div>
+                )}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                  <div className="mobile-form-group">
+                    <label className="mobile-label">Detour available</label>
+                    <select value={ruptureDetour} onChange={(e) => setRuptureDetour(e.target.value)} className="mobile-select">
+                      <option value="yes">Yes</option>
+                      <option value="no">No</option>
+                    </select>
+                  </div>
+                  {ruptureKind === "rupture" && (
+                    <div className="mobile-form-group">
+                      <label className="mobile-label">Severity</label>
+                      <select value={ruptureCondition} onChange={(e) => setRuptureCondition(e.target.value)} className="mobile-select">
+                        <option value="fair">Partial / passable</option>
+                        <option value="poor">Impassable</option>
+                      </select>
+                    </div>
+                  )}
+                </div>
+              </fieldset>
+            )}
+
             {/* Conditional Form: Road Sign */}
             {assetCategory === "sign" && (
               <fieldset style={{ border: "1px solid var(--border-color)", padding: "12px", borderRadius: "var(--radius-md)", display: "flex", flexDirection: "column", gap: "10px" }}>
@@ -5544,7 +5695,7 @@ export default function App() {
                   onClick={(e) => handleSaveForm(e, true)}
                   className="mobile-btn mobile-btn-outline"
                   style={{ flex: 1 }}
-                  disabled={isRoadType && !hasSecurableRoadData}
+                  disabled={!canSaveOrQueueRoad}
                 >
                   Save Draft
                 </button>
@@ -5552,7 +5703,7 @@ export default function App() {
                   type="submit"
                   className="mobile-btn"
                   style={{ flex: 1 }}
-                  disabled={isRoadType && !hasSecurableRoadData}
+                  disabled={!canSaveOrQueueRoad}
                 >
                   <PlusCircle size={14} />
                   <span>
@@ -5571,9 +5722,9 @@ export default function App() {
                   Complete at least one segment (GPS + attributes) to save or queue.
                 </p>
               )}
-              {isRoadType && hasSecurableRoadData && segmentGeometry && (
+              {isRoadType && roadSegmentInProgress && (
                 <p style={{ fontSize: "10px", color: "var(--text-muted)", margin: 0, textAlign: "center" }}>
-                  Queue anytime — completed segments are saved; the current in-progress segment is excluded.
+                  Save and Queue are locked while a segment is recording or its attributes are unfinished.
                 </p>
               )}
               {editingDraftId && (
@@ -5725,6 +5876,7 @@ export default function App() {
                   else if (draft.streetlight_type) title = `Streetlight: ${draft.streetlight_type}`;
                   else if (draft.rail_crossing_name) title = `Rail Crossing: ${draft.rail_crossing_name}`;
                   else if (draft.junction_type) title = `Junction: ${String(draft.junction_type).replace("_", "-")}`;
+                  else if (draft.rupture_kind) title = draft.rupture_kind === "under_construction" ? "Under construction" : "Road rupture";
                   else if (draft.busstop_type) title = `Bus Stop: ${String(draft.busstop_type).replace("_", " ")}`;
                   else if (draft.layby_surface) title = `Lay-by: ${draft.layby_surface}`;
                   else if (draft.sign_type) title = `Road Sign: ${draft.sign_type}`;

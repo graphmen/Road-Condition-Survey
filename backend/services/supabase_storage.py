@@ -37,6 +37,7 @@ category_to_table = {
     "layby": "survey_laybys",
     "busstop": "survey_busstops",
     "junction": "survey_junctions",
+    "road_rupture": "survey_road_ruptures",
     "sign": "survey_road_signs",
     "shelvet": "survey_shelvets",
     "culvert": "survey_culverts",
@@ -358,6 +359,17 @@ def _build_row(record: dict, table_name: str) -> dict:
         row["junction_control"] = inner.get("junction_control")
         row["junction_road_markings"] = inner.get("junction_road_markings")
         row["junction_signage"] = inner.get("junction_signage")
+
+    elif table_name == "survey_road_ruptures":
+        row["rupture_kind"] = inner.get("rupture_kind")
+        row["rupture_cause"] = inner.get("rupture_cause")
+        row["rupture_detour"] = inner.get("rupture_detour")
+        row["rupture_condition"] = inner.get("rupture_condition")
+        row["road_condition"] = (
+            "under_construction"
+            if inner.get("rupture_kind") == "under_construction"
+            else (inner.get("rupture_condition") or "poor")
+        )
 
     elif table_name == "survey_road_signs":
         row["sign_name"] = inner.get("sign_name")

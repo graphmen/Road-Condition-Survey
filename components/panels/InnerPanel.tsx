@@ -1,12 +1,11 @@
 import { useState } from "react";
-import { Search, Download, Map, TrendingUp, BarChart2, ClipboardCheck, Database, Camera, FileText, BookOpen, LayoutDashboard, Smartphone, ExternalLink, Users, ShieldAlert, ChevronRight, Settings as SettingsIcon } from "lucide-react";
+import { Search, Download, Map, TrendingUp, BarChart2, ClipboardCheck, Database, Camera, FileText, BookOpen, LayoutDashboard } from "lucide-react";
 import {
   getAssetType, getAssetName, getRecordStatus, getCategoryKey, formatStatusLabel, getSadcValue, getStatusColor,
   formatGpsLabel,
 } from "@/components/helpers";
 import type { NavModule } from "./LeftNav";
-import type { UserProfile } from "@/components/helpers";
-import { canManageUsers, canReviewDeletions } from "@/components/helpers";
+import { recordsForHighway, matchHighwayId } from "@/lib/highways";
 import LayerTreePanel from "./LayerTreePanel";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip as ChartTooltip, Cell,
@@ -22,8 +21,6 @@ interface InnerPanelProps {
   onSelectRecord: (r: any) => void;
   selectedRoad: string;
   onRoadFilter: (road: string) => void;
-  onNavSelect?: (m: NavModule) => void;
-  currentUser?: UserProfile;
   visibleLayers?: Record<string, boolean>;
   onToggleLayer?: (key: string) => void;
   onSetGroupVisible?: (keys: string[], visible: boolean) => void;
@@ -39,11 +36,11 @@ const HIGHWAYS = [
 ];
 
 function highwayCount(records: any[], id: string) {
-  return records.filter(r => (r.road_name ?? "").includes(id)).length;
+  return recordsForHighway(records, id).length;
 }
 
 function highwayGood(records: any[], id: string) {
-  const hw = records.filter(r => (r.road_name ?? "").includes(id));
+  const hw = recordsForHighway(records, id);
   if (!hw.length) return 0;
   return Math.round((hw.filter(r => getRecordStatus(r) === "good").length / hw.length) * 100);
 }
@@ -364,8 +361,6 @@ export default function InnerPanel({
   onSelectRecord,
   selectedRoad,
   onRoadFilter,
-  onNavSelect,
-  currentUser,
   visibleLayers = {},
   onToggleLayer,
   onSetGroupVisible,
@@ -437,7 +432,7 @@ export default function InnerPanel({
               const cnt = highwayCount(records, h.id);
               const gPct = highwayGood(records, h.id);
               return (
-                <div key={h.id} className={`highway-item${selectedRoad.includes(h.id) ? " active" : ""}`} onClick={() => onRoadFilter(selectedRoad.includes(h.id) ? "all" : records.find(r => (r.road_name ?? "").includes(h.id))?.road_name ?? "all")}>
+                <div key={h.id} className={`highway-item${selectedRoad.includes(h.id) ? " active" : ""}`} onClick={() => onRoadFilter(selectedRoad.includes(h.id) ? "all" : records.find(r => matchHighwayId(r) === h.id)?.road_name ?? "all")}>
                   <div className="highway-badge">{h.id}</div>
                   <div className="highway-info">
                     <div className="highway-name">{h.name}</div>
@@ -513,166 +508,6 @@ export default function InnerPanel({
     );
   }
 
-  // --- Settings module --------------------------------------
-  if (module === "settings") {
-    return (
-      <>
-        <div className="inner-panel-header">
-          <div className="inner-panel-title">
-            <SettingsIcon size={16} color="#006633" />
-            <span>System Settings &amp; Administration</span>
-          </div>
-        </div>
-        <div className="inner-panel-body" style={{ padding: 14, display: "flex", flexDirection: "column", gap: 14 }}>
-
-          {canManageUsers(currentUser) && (
-          <>
-          {/* User Provisioning & Access Control Card */}
-          <div style={{
-            background: "#fff",
-            border: "1px solid var(--border)",
-            borderRadius: 12,
-            padding: 14,
-            boxShadow: "0 2px 6px rgba(0,0,0,0.03)"
-          }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-              <Users size={18} color="#006633" />
-              <div style={{ fontFamily: "var(--font-title)", fontWeight: 800, fontSize: 13.5, color: "var(--text-primary)" }}>
-                User Management &amp; Access Controls
-              </div>
-            </div>
-            <p style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.45, marginBottom: 12 }}>
-              Provision team accounts, assign jurisdiction scopes (Province/District), and manage unified web &amp; mobile user credentials.
-            </p>
-            <button
-              onClick={() => onNavSelect?.("users")}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                background: "#006633",
-                color: "#fff",
-                border: "none",
-                borderRadius: 8,
-                padding: "8px 14px",
-                fontSize: 11.5,
-                fontWeight: 700,
-                cursor: "pointer"
-              }}
-            >
-              <Users size={14} /> Open User Provisioning <ChevronRight size={14} />
-            </button>
-          </div>
-          </>
-          )}
-
-          {canReviewDeletions(currentUser) && (
-          <>
-          {/* Soft-Delete Approvals & Audit Trail Card */}
-          <div style={{
-            background: "#fff",
-            border: "1px solid var(--border)",
-            borderRadius: 12,
-            padding: 14,
-            boxShadow: "0 2px 6px rgba(0,0,0,0.03)"
-          }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-              <ShieldAlert size={18} color="#dc2626" />
-              <div style={{ fontFamily: "var(--font-title)", fontWeight: 800, fontSize: 13.5, color: "var(--text-primary)" }}>
-                Soft-Delete Approvals &amp; Audit Log
-              </div>
-            </div>
-            <p style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.45, marginBottom: 12 }}>
-              Review, approve, or reject pending deletion requests escalated up the supervisor chain and audit past soft-deletions.
-            </p>
-            <button
-              onClick={() => onNavSelect?.("approvals")}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                background: "#dc2626",
-                color: "#fff",
-                border: "none",
-                borderRadius: 8,
-                padding: "8px 14px",
-                fontSize: 11.5,
-                fontWeight: 700,
-                cursor: "pointer"
-              }}
-            >
-              <ShieldAlert size={14} /> Open Pending Approvals Queue <ChevronRight size={14} />
-            </button>
-          </div>
-          </>
-          )}
-
-          {/* Mobile Collector App Card */}
-          <div style={{
-            background: "rgba(0,102,51,0.04)",
-            border: "1px solid rgba(0,102,51,0.12)",
-            borderRadius: 12,
-            padding: 14,
-          }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-              <Smartphone size={17} color="#006633" />
-              <div style={{ fontFamily: "var(--font-title)", fontWeight: 800, fontSize: 13.5, color: "#006633" }}>
-                Mobile Collector App Download
-              </div>
-            </div>
-            <p style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.45, marginBottom: 12 }}>
-              Share this download link with field collectors to install the offline-ready Android APK surveyor application.
-              You can also preview the collector forms in your browser before installing.
-            </p>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            <a
-              href="/download"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                background: "#006633",
-                color: "#fff",
-                textDecoration: "none",
-                borderRadius: 8,
-                padding: "8px 14px",
-                fontSize: 11.5,
-                fontWeight: 700,
-              }}
-            >
-              <ExternalLink size={13} /> Open Download Page
-            </a>
-            <a
-              href="/collector"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                background: "rgba(0,102,51,0.08)",
-                color: "#006633",
-                textDecoration: "none",
-                borderRadius: 8,
-                padding: "8px 14px",
-                fontSize: 11.5,
-                fontWeight: 700,
-                border: "1px solid rgba(0,102,51,0.2)",
-              }}
-            >
-              <Smartphone size={13} /> Preview in Browser
-            </a>
-            </div>
-          </div>
-
-        </div>
-      </>
-    );
-  }
-
-  // --- Default: Assets / Survey list ------------------------
   return (
     <>
       <div className="inner-panel-header">
@@ -704,6 +539,7 @@ export default function InnerPanel({
             <option value="layby">Laybys</option>
             <option value="busstop">Bus Stops</option>
             <option value="junction">Junctions</option>
+            <option value="road_rupture">Road Ruptures</option>
             <option value="sign">⚠️ Road Signs</option>
             <option value="traffic_lights">Traffic Lights</option>
             <option value="streetlight">Streetlights</option>

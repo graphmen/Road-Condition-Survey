@@ -40,6 +40,7 @@ DROP TABLE IF EXISTS survey_drifts CASCADE;
 DROP TABLE IF EXISTS survey_grids CASCADE;
 DROP TABLE IF EXISTS survey_traffic_lights CASCADE;
 DROP TABLE IF EXISTS survey_streetlights CASCADE;
+DROP TABLE IF EXISTS survey_road_ruptures CASCADE;
 
 -- ---------------------------------------------------------
 -- Trigger Functions for Geometries
@@ -715,6 +716,30 @@ CREATE TABLE IF NOT EXISTS survey_traffic_calming (
     traffic_calming_condition TEXT
 );
 
+-- ---------------------------------------------------------
+-- 21. Road Ruptures (Point amenity)
+-- ---------------------------------------------------------
+CREATE TABLE IF NOT EXISTS survey_road_ruptures (
+    survey_id TEXT PRIMARY KEY,
+    asset_category TEXT,
+    road_name TEXT,
+    section_name TEXT,
+    surveyor_name TEXT,
+    survey_date TEXT,
+    gps_point TEXT,
+    image_sadc_compliant TEXT,
+    photo TEXT,
+    raw_data JSONB,
+    source TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    geom_point GEOMETRY(Point, 4326),
+    road_condition TEXT,
+    rupture_kind TEXT,
+    rupture_cause TEXT,
+    rupture_detour TEXT,
+    rupture_condition TEXT
+);
+
 -- Phase 2 sealed road columns (mobile parity)
 ALTER TABLE survey_sealed_roads ADD COLUMN IF NOT EXISTS surface_type TEXT;
 ALTER TABLE survey_sealed_roads ADD COLUMN IF NOT EXISTS pothole_density TEXT;
@@ -768,6 +793,7 @@ ALTER TABLE survey_traffic_lights ADD COLUMN IF NOT EXISTS photos JSONB;
 ALTER TABLE survey_streetlights ADD COLUMN IF NOT EXISTS photos JSONB;
 ALTER TABLE survey_catchpits ADD COLUMN IF NOT EXISTS photos JSONB;
 ALTER TABLE survey_traffic_calming ADD COLUMN IF NOT EXISTS photos JSONB;
+ALTER TABLE survey_road_ruptures ADD COLUMN IF NOT EXISTS photos JSONB;
 
 -- ---------------------------------------------------------
 -- Disable RLS to allow direct anonymous writes (matching previous table rules)
@@ -792,6 +818,7 @@ ALTER TABLE survey_traffic_lights DISABLE ROW LEVEL SECURITY;
 ALTER TABLE survey_streetlights DISABLE ROW LEVEL SECURITY;
 ALTER TABLE survey_catchpits DISABLE ROW LEVEL SECURITY;
 ALTER TABLE survey_traffic_calming DISABLE ROW LEVEL SECURITY;
+ALTER TABLE survey_road_ruptures DISABLE ROW LEVEL SECURITY;
 
 -- ---------------------------------------------------------
 -- Create GIS Indices
@@ -819,6 +846,7 @@ CREATE INDEX IF NOT EXISTS idx_traffic_lights_geom_point ON survey_traffic_light
 CREATE INDEX IF NOT EXISTS idx_streetlights_geom_point ON survey_streetlights USING GIST (geom_point);
 CREATE INDEX IF NOT EXISTS idx_catchpits_geom_point ON survey_catchpits USING GIST (geom_point);
 CREATE INDEX IF NOT EXISTS idx_traffic_calming_geom_point ON survey_traffic_calming USING GIST (geom_point);
+CREATE INDEX IF NOT EXISTS idx_road_ruptures_geom_point ON survey_road_ruptures USING GIST (geom_point);
 
 -- ---------------------------------------------------------
 -- Apply Triggers
@@ -843,6 +871,7 @@ CREATE OR REPLACE TRIGGER trigger_update_traffic_lights_geom BEFORE INSERT OR UP
 CREATE OR REPLACE TRIGGER trigger_update_streetlights_geom BEFORE INSERT OR UPDATE ON survey_streetlights FOR EACH ROW EXECUTE FUNCTION update_point_asset_geom();
 CREATE OR REPLACE TRIGGER trigger_update_catchpits_geom BEFORE INSERT OR UPDATE ON survey_catchpits FOR EACH ROW EXECUTE FUNCTION update_point_asset_geom();
 CREATE OR REPLACE TRIGGER trigger_update_traffic_calming_geom BEFORE INSERT OR UPDATE ON survey_traffic_calming FOR EACH ROW EXECUTE FUNCTION update_point_asset_geom();
+CREATE OR REPLACE TRIGGER trigger_update_road_ruptures_geom BEFORE INSERT OR UPDATE ON survey_road_ruptures FOR EACH ROW EXECUTE FUNCTION update_point_asset_geom();
 
 -- ---------------------------------------------------------
 -- Create Unified View for GET Compatibility
@@ -886,7 +915,9 @@ SELECT survey_id, asset_category, road_name, section_name, surveyor_name, survey
 UNION ALL
 SELECT survey_id, asset_category, road_name, section_name, surveyor_name, survey_date, gps_point, photo, photos, NULL AS segment_geojson, NULL::DOUBLE PRECISION AS segment_length_m, NULL::INTEGER AS segment_point_count, NULL::DOUBLE PRECISION AS segment_avg_accuracy, NULL AS segment_start_time, NULL AS segment_end_time, catchpit_condition AS road_condition, NULL AS road_class, raw_data, source, created_at, geom_point, NULL::GEOMETRY(LineString, 4326) AS geom_segment FROM survey_catchpits
 UNION ALL
-SELECT survey_id, asset_category, road_name, section_name, surveyor_name, survey_date, gps_point, photo, photos, NULL AS segment_geojson, NULL::DOUBLE PRECISION AS segment_length_m, NULL::INTEGER AS segment_point_count, NULL::DOUBLE PRECISION AS segment_avg_accuracy, NULL AS segment_start_time, NULL AS segment_end_time, traffic_calming_condition AS road_condition, NULL AS road_class, raw_data, source, created_at, geom_point, NULL::GEOMETRY(LineString, 4326) AS geom_segment FROM survey_traffic_calming;
+SELECT survey_id, asset_category, road_name, section_name, surveyor_name, survey_date, gps_point, photo, photos, NULL AS segment_geojson, NULL::DOUBLE PRECISION AS segment_length_m, NULL::INTEGER AS segment_point_count, NULL::DOUBLE PRECISION AS segment_avg_accuracy, NULL AS segment_start_time, NULL AS segment_end_time, traffic_calming_condition AS road_condition, NULL AS road_class, raw_data, source, created_at, geom_point, NULL::GEOMETRY(LineString, 4326) AS geom_segment FROM survey_traffic_calming
+UNION ALL
+SELECT survey_id, asset_category, road_name, section_name, surveyor_name, survey_date, gps_point, photo, photos, NULL AS segment_geojson, NULL::DOUBLE PRECISION AS segment_length_m, NULL::INTEGER AS segment_point_count, NULL::DOUBLE PRECISION AS segment_avg_accuracy, NULL AS segment_start_time, NULL AS segment_end_time, COALESCE(rupture_condition, road_condition) AS road_condition, NULL AS road_class, raw_data, source, created_at, geom_point, NULL::GEOMETRY(LineString, 4326) AS geom_segment FROM survey_road_ruptures;
 
 -- ---------------------------------------------------------
 -- RBAC, User Profiles, Soft Deletes & Audit Logs

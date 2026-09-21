@@ -11,6 +11,7 @@ export type OverlayLayerKey =
   | "layby"
   | "busstop"
   | "junction"
+  | "road_rupture"
   | "sign"
   | "shelvet"
   | "culvert"
@@ -124,6 +125,7 @@ export const OVERLAY_GROUPS: OverlayGroupDef[] = [
       { key: "layby", label: "Lay-bys", emoji: "🅿️", geoserverLayer: `${GEOSERVER_WORKSPACE}:survey_laybys` },
       { key: "busstop", label: "Bus Stops", emoji: "🚌", geoserverLayer: `${GEOSERVER_WORKSPACE}:survey_busstops` },
       { key: "junction", label: "Junctions", emoji: "🔀", geoserverLayer: `${GEOSERVER_WORKSPACE}:survey_junctions` },
+      { key: "road_rupture", label: "Road Ruptures", emoji: "⚠️", geoserverLayer: `${GEOSERVER_WORKSPACE}:survey_road_ruptures` },
     ],
   },
   {

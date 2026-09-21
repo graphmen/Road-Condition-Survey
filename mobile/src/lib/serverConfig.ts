@@ -39,12 +39,14 @@ export function resolveStoredServerUrl(): string {
     return normalizeServerUrl(saved);
   }
 
-  if (saved && !isLocalDevServerUrl(saved)) {
-    return normalizeServerUrl(saved);
+  // Vite collector: talk to this origin so /api is same-origin (see vite proxy).
+  // Ignore a saved production URL — browsers block localhost → vercel CORS.
+  if (typeof window !== "undefined" && window.location.port === "5173") {
+    return window.location.origin;
   }
 
-  if (typeof window !== "undefined" && window.location.origin.includes("5173")) {
-    return "http://localhost:3002";
+  if (saved && !isLocalDevServerUrl(saved)) {
+    return normalizeServerUrl(saved);
   }
 
   if (typeof window !== "undefined") {

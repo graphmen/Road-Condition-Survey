@@ -379,6 +379,12 @@ export function getSadcValue(r: any): "yes" | "no" | "mixed" | "" {
 export function getRecordStatus(record: any): RecordStatus {
   if (!record) return "good";
 
+  if (record.rupture_kind === "under_construction") return "under_construction";
+  if (record.rupture_kind === "rupture") {
+    return normalizeConditionValue(record.rupture_condition || "poor");
+  }
+  if (record.rupture_condition) return normalizeConditionValue(record.rupture_condition);
+
   if (record.catchpit_condition) return normalizeConditionValue(record.catchpit_condition);
   if (record.traffic_calming_condition) return normalizeConditionValue(record.traffic_calming_condition);
 
@@ -441,6 +447,7 @@ export function getAssetType(record: any): string {
       layby: "Lay By",
       busstop: "Bus Stop",
       junction: "Junction",
+      road_rupture: "Road Rupture",
       sign: "Road Sign",
       shelvet: "Shelvert",
       culvert: "Culvert",
@@ -459,6 +466,7 @@ export function getAssetType(record: any): string {
   if (record.culvet_class) return "Culvert";
   if (record.shelvets_type) return "Shelvert";
   if (record.junction_type) return "Junction";
+  if (record.rupture_kind) return "Road Rupture";
   if (record.bus_stop_present || record.busstop_type) return "Bus Stop";
   if (record.gravel_road_name) return "Gravel Road";
   if (record.paved_road_name) {
@@ -546,6 +554,15 @@ export function getAssetName(record: any): string {
       const jt = pick("junction_type");
       return jt ? `Junction (${titleCase(jt)})` : roadBit ? `${roadBit} Junction` : "Junction";
     }
+    case "road_rupture": {
+      const kind = pick("rupture_kind");
+      const cause = pick("rupture_cause");
+      if (kind === "under_construction") {
+        return roadBit ? `${roadBit} Under Construction` : "Under Construction";
+      }
+      if (cause) return roadBit ? `${roadBit} Rupture (${titleCase(cause)})` : `Road Rupture (${titleCase(cause)})`;
+      return roadBit ? `${roadBit} Road Rupture` : "Road Rupture";
+    }
     case "grid":
       return grid || (roadBit ? `${roadBit} Grid` : "Grid");
     case "catchpit":
@@ -626,6 +643,7 @@ export function getCategoryKey(record: any): string {
   if (type === "Lay By" || type === "Layby") return "layby";
   if (type === "Bus Stop") return "busstop";
   if (type === "Junction") return "junction";
+  if (type === "Road Rupture") return "road_rupture";
   if (type === "Road Sign") return "sign";
   if (type === "Shelvert" || type === "Shelvet") return "shelvet";
   if (type === "Culvert") return "culvert";

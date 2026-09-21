@@ -10,6 +10,7 @@ export const ROAD_CLASS_OPTIONS: Option[] = [
   { value: "urban_arterial", label: "Urban Arterial" },
   { value: "urban_collector", label: "Urban Collector" },
   { value: "urban_local", label: "Urban Local" },
+  { value: "urban_cbd", label: "CBD" },
   { value: "industrial", label: "Industrial" },
 ];
 

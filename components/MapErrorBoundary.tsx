@@ -27,7 +27,15 @@ export default class MapErrorBoundary extends React.Component<Props, State> {
       msg.includes("Map container is being reused") ||
       msg.includes("Map container is already initialized")
     ) {
-      // Remount children with a fresh key on next tick
+      try {
+        (window as any).__motidMap?.remove();
+      } catch {
+        /* already gone */
+      }
+      (window as any).__motidMap = null;
+      document.querySelectorAll(".leaflet-container").forEach((el) => {
+        delete (el as any)._leaflet_id;
+      });
       window.setTimeout(() => {
         this.setState((s) => ({ hasError: false, resetKey: s.resetKey + 1 }));
       }, 50);

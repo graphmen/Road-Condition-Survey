@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import roadsData from "@/public/roads-data.json";
-import { mergePhotoLists, normalizePhotos, slimRecordForList } from "@/components/helpers";
+import { mergePhotoLists, normalizePhotos, slimRecordForList, getRecordStatus, getCategoryKey, getAssetName, getSadcValue } from "@/components/helpers";
 import { buildSyncRawData, limitSyncPhotos } from "@/lib/syncPayload";
 import fs from "fs";
 import path from "path";
@@ -546,6 +546,7 @@ function inferAssetCategory(record: any): string {
   if (record.layby_condition || record.layby_surface) return "layby";
   if (record.busstop_type || record.bus_stop_present) return "busstop";
   if (record.junction_type || record.junction_condition) return "junction";
+  if (record.rupture_kind || record.rupture_cause) return "road_rupture";
   if (record.sign_type || record.sign_condition || record.sign_name) return "sign";
   if (record.shelvets_type || record.shelvet_condition) return "shelvet";
   if (record.culvet_class || record.culvet_serviceability) return "culvert";
@@ -596,6 +597,7 @@ const categoryToTable: Record<string, string> = {
   layby: "survey_laybys",
   busstop: "survey_busstops",
   junction: "survey_junctions",
+  road_rupture: "survey_road_ruptures",
   sign: "survey_road_signs",
   shelvet: "survey_shelvets",
   culvert: "survey_culverts",
@@ -807,6 +809,14 @@ const mapDraftToSupabaseTable = (draft: any, tableName: string) => {
     row.junction_control = draft.junction_control || null;
     row.junction_road_markings = draft.junction_road_markings || null;
     row.junction_signage = draft.junction_signage || null;
+  } else if (tableName === "survey_road_ruptures") {
+    row.rupture_kind = draft.rupture_kind || null;
+    row.rupture_cause = draft.rupture_cause || null;
+    row.rupture_detour = draft.rupture_detour || null;
+    row.rupture_condition = draft.rupture_condition || null;
+    row.road_condition = draft.rupture_kind === "under_construction"
+      ? "under_construction"
+      : (draft.rupture_condition || "poor");
   } else if (tableName === "survey_road_signs") {
     row.sign_name = draft.sign_name || null;
     row.sign_type = draft.sign_type || null;
@@ -865,11 +875,13 @@ const mapDraftToSupabaseTable = (draft: any, tableName: string) => {
 // --- Server-side in-memory cache (survives Next.js hot-reload in dev) ---
 let _cachedRecords: any[] | null = null;
 let _cacheTimestamp = 0;
+let _categoryCountsCache: { at: number; data: Record<string, number> } | null = null;
 const CACHE_TTL_MS = 15_000; // 15 seconds — keep dashboard fresh during active field sync
 
 function invalidateServerCache() {
   _cachedRecords = null;
   _cacheTimestamp = 0;
+  _categoryCountsCache = null;
 }
 
 /** Persist merged records to roads-data.json — slim blobs; has_photo flags for gallery. */
@@ -935,6 +947,7 @@ const CATEGORY_EXTRA: Record<string, string> = {
   layby: "layby_condition,layby_surface",
   busstop: "busstop_type,busstop_condition",
   junction: "junction_type,junction_condition",
+  road_rupture: "rupture_kind,rupture_cause,rupture_detour,rupture_condition",
   sign: "sign_type,sign_name,sign_condition",
   shelvet: "shelvets_type,shelvet_condition",
   culvert: "culvet_class,culvet_type,culvet_serviceability",
@@ -1079,6 +1092,7 @@ const CONDITION_COLUMN_BY_CATEGORY: Record<string, string> = {
   layby: "layby_condition",
   busstop: "busstop_condition",
   junction: "junction_condition",
+  road_rupture: "rupture_condition",
   sign: "sign_condition",
   shelvet: "shelvet_condition",
   culvert: "culvet_serviceability",
@@ -1099,56 +1113,366 @@ const CONDITION_FILTER_VALUES: Record<string, string[]> = {
   under_construction: ["under_construction", "under construction", "rehabilitation"],
 };
 
+const NAME_COLUMN_BY_CATEGORY: Record<string, string> = {
+  sealed: "paved_road_name",
+  gravel: "gravel_road_name",
+  earth: "earth_road_name",
+  bridge: "bridge",
+  footbridge: "footbridge_name",
+  rail_crossing: "rail_crossing_name",
+  tollgate: "tollgate_name",
+  busstop: "busstop_type",
+  junction: "junction_type",
+  road_rupture: "rupture_kind",
+  sign: "sign_name",
+  shelvet: "shelvets_type",
+  piped_causeway: "causeway_name",
+  drift: "drift_name",
+  grid: "grid_name",
+  traffic_calming: "traffic_calming_type",
+  traffic_lights: "traffic_lights_location",
+  streetlight: "streetlight_type",
+};
+
+const COUNTS_TTL_MS = 30_000;
+
 function escapePostgrestFilter(value: string): string {
   return value.replace(/[%(),]/g, "").trim();
 }
 
-async function fetchCategoryCounts(signal: AbortSignal): Promise<Record<string, number>> {
-  const headers: Record<string, string> = {
+function restHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  return {
     apikey: SUPABASE_ANON_KEY,
     Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-    Prefer: "count=exact",
-    Range: "0-0",
+    ...extra,
   };
-  const entries = Object.entries(categoryToTable);
-  const results = await Promise.all(
-    entries.map(async ([cat, table]) => {
-      try {
-        const res = await fetch(
-          `${SUPABASE_URL}/rest/v1/${table}?select=survey_id`,
-          { headers, cache: "no-store", signal }
-        );
-        const contentRange = res.headers.get("content-range") || "";
-        const total = Number(contentRange.split("/")[1] || 0);
-        return [cat, Number.isFinite(total) ? total : 0] as const;
-      } catch {
-        return [cat, 0] as const;
-      }
-    })
-  );
-  return Object.fromEntries(results);
 }
 
-async function fetchDistinctRoads(category: string, signal: AbortSignal): Promise<string[]> {
+function conditionOrExpr(category: string, condition: string): string {
+  const col = CONDITION_COLUMN_BY_CATEGORY[category];
+  const values = CONDITION_FILTER_VALUES[condition];
+  if (!col || !values?.length) return "";
+  return `or(${values.map((v) => `${col}.ilike.${escapePostgrestFilter(v)}`).join(",")})`;
+}
+
+function searchOrExpr(category: string, search: string): string {
+  const q = escapePostgrestFilter(search);
+  if (!q) return "";
+  const parts = [
+    `road_name.ilike.*${q}*`,
+    `section_name.ilike.*${q}*`,
+    `surveyor_name.ilike.*${q}*`,
+  ];
+  const nameCol = NAME_COLUMN_BY_CATEGORY[category];
+  if (nameCol && nameCol !== "road_name") parts.push(`${nameCol}.ilike.*${q}*`);
+  return `or(${parts.join(",")})`;
+}
+
+function buildCategoryFilters(opts: {
+  category: string;
+  search?: string;
+  road?: string;
+  condition?: string;
+  surveyor?: string;
+  sadc?: string;
+}): string[] {
+  const { category, search, road, condition, surveyor, sadc } = opts;
+  const filters: string[] = [];
+
+  if (road && road !== "all") {
+    const compact = escapePostgrestFilter(road);
+    if (/^A[1-5]$/i.test(compact)) {
+      filters.push(`road_name=ilike.*${compact}*`);
+    } else {
+      filters.push(`road_name=eq.${encodeURIComponent(road)}`);
+    }
+  }
+  if (surveyor && surveyor !== "all") {
+    filters.push(`surveyor_name=eq.${encodeURIComponent(surveyor)}`);
+  }
+  if (sadc && sadc !== "all") {
+    filters.push(`image_sadc_compliant=ilike.${escapePostgrestFilter(sadc)}`);
+  }
+
+  const ors: string[] = [];
+  const searchOr = searchOrExpr(category, search || "");
+  const conditionOr = condition && condition !== "all" ? conditionOrExpr(category, condition) : "";
+  if (searchOr) ors.push(searchOr);
+  if (conditionOr) ors.push(conditionOr);
+  if (ors.length === 1) filters.push(ors[0].replace(/^or/, "or="));
+  else if (ors.length > 1) filters.push(`and=(${ors.join(",")})`);
+
+  return filters;
+}
+
+function listSelectCols(category: string): string {
+  const table = categoryToTable[category];
+  const roadExtras = table && ROAD_TABLES.has(table) ? `,${ROAD_EXTRA_COLUMNS}` : "";
+  const categoryExtra = CATEGORY_EXTRA[category] ? `,${CATEGORY_EXTRA[category]}` : "";
+  return `${TABLE_LIST_COLUMNS}${roadExtras}${categoryExtra}`.replace(/\s+/g, "");
+}
+
+function resolveOrder(category: string, sort?: string, dir?: string): string {
+  const direction = dir === "asc" ? "asc" : "desc";
+  const col =
+    sort === "asset_name" ? (NAME_COLUMN_BY_CATEGORY[category] || "road_name")
+    : sort === "condition" ? (CONDITION_COLUMN_BY_CATEGORY[category] || "created_at")
+    : sort === "gps" ? "gps_point"
+    : sort === "road_name" ? "road_name"
+    : sort === "section_name" ? "section_name"
+    : sort === "surveyor_name" ? "surveyor_name"
+    : sort === "survey_date" ? "survey_date"
+    : "created_at";
+  return `order=${col}.${direction}`;
+}
+
+function countsFromCachedRecords(): Record<string, number> | null {
+  if (!_cachedRecords || _cachedRecords.length === 0) return null;
+  const data: Record<string, number> = {};
+  for (const r of _cachedRecords) {
+    const key = getCategoryKey(r) || r.asset_category || "unknown";
+    data[key] = (data[key] || 0) + 1;
+  }
+  _categoryCountsCache = { at: Date.now(), data };
+  return data;
+}
+
+function recordMatchesBrowse(r: any, opts: {
+  category: string;
+  search?: string;
+  road?: string;
+  condition?: string;
+  surveyor?: string;
+  sadc?: string;
+  province?: string;
+  district?: string;
+}): boolean {
+  const cat = getCategoryKey(r) || r.asset_category;
+  if (cat !== opts.category) return false;
+
+  if (opts.road && opts.road !== "all") {
+    const roadName = String(r.road_name || "");
+    if (/^A[1-5]$/i.test(opts.road)) {
+      if (!roadName.toUpperCase().includes(opts.road.toUpperCase())) return false;
+    } else if (roadName !== opts.road) {
+      return false;
+    }
+  }
+
+  if (opts.surveyor && opts.surveyor !== "all" && r.surveyor_name !== opts.surveyor) return false;
+
+  if (opts.sadc && opts.sadc !== "all") {
+    if (getSadcValue(r) !== opts.sadc) return false;
+  }
+
+  if (opts.province && opts.province !== "all" && r.province !== opts.province) return false;
+  if (opts.district && opts.district !== "all" && r.district !== opts.district) return false;
+
+  if (opts.condition && opts.condition !== "all" && getRecordStatus(r) !== opts.condition) return false;
+
+  const q = (opts.search || "").trim().toLowerCase();
+  if (q) {
+    const blob = [
+      r.road_name,
+      r.section_name,
+      r.surveyor_name,
+      r.asset_name,
+      getAssetName(r),
+      r.province,
+      r.district,
+    ].join(" ").toLowerCase();
+    if (!blob.includes(q)) return false;
+  }
+
+  return true;
+}
+
+function browseSortValue(r: any, sort?: string): string {
+  if (sort === "asset_name") return String(getAssetName(r) || "");
+  if (sort === "condition") return String(getRecordStatus(r) || "");
+  if (sort === "gps") return String(r.gps || r.gps_point || "");
+  if (sort === "province") return String(r.province || "");
+  if (sort === "district") return String(r.district || "");
+  if (sort === "road_name") return String(r.road_name || "");
+  if (sort === "section_name") return String(r.section_name || "");
+  if (sort === "surveyor_name") return String(r.surveyor_name || "");
+  return String(r.survey_date || r.created_at || "");
+}
+
+function browseFromCache(opts: {
+  category: string;
+  page: number;
+  pageSize: number;
+  search?: string;
+  road?: string;
+  condition?: string;
+  surveyor?: string;
+  sadc?: string;
+  province?: string;
+  district?: string;
+  sort?: string;
+  dir?: string;
+}): {
+  records: any[];
+  total: number;
+  categories: Record<string, number>;
+  roads: string[];
+  surveyors: string[];
+  stats: { total: number; good: number; fair: number; poor: number };
+} {
+  const all = _cachedRecords || [];
+  const categories: Record<string, number> = {};
+  const stats = { total: 0, good: 0, fair: 0, poor: 0 };
+  const roadSet = new Set<string>();
+  const surveyorSet = new Set<string>();
+  const matched: any[] = [];
+
+  for (const r of all) {
+    const cat = getCategoryKey(r) || r.asset_category || "unknown";
+    categories[cat] = (categories[cat] || 0) + 1;
+    if (cat !== opts.category) continue;
+    if (r.road_name) roadSet.add(String(r.road_name));
+    if (r.surveyor_name) surveyorSet.add(String(r.surveyor_name));
+    stats.total += 1;
+    const status = getRecordStatus(r);
+    if (status === "good") stats.good += 1;
+    else if (status === "fair") stats.fair += 1;
+    else if (status === "poor") stats.poor += 1;
+    if (recordMatchesBrowse(r, opts)) matched.push(r);
+  }
+
+  const dirAsc = opts.dir === "asc";
+  matched.sort((a, b) => {
+    const cmp = browseSortValue(a, opts.sort).localeCompare(browseSortValue(b, opts.sort));
+    return dirAsc ? cmp : -cmp;
+  });
+
+  const from = Math.max(0, opts.page) * opts.pageSize;
+  _categoryCountsCache = { at: Date.now(), data: categories };
+  return {
+    records: matched.slice(from, from + opts.pageSize),
+    total: matched.length,
+    categories,
+    roads: Array.from(roadSet).sort((a, b) => a.localeCompare(b)),
+    surveyors: Array.from(surveyorSet).sort((a, b) => a.localeCompare(b)),
+    stats,
+  };
+}
+
+async function fetchCategoryCounts(signal: AbortSignal): Promise<Record<string, number>> {
+  const fromRecords = countsFromCachedRecords();
+  if (fromRecords) return fromRecords;
+  if (_categoryCountsCache && Date.now() - _categoryCountsCache.at < COUNTS_TTL_MS) {
+    return _categoryCountsCache.data;
+  }
+  const headers = restHeaders({ Prefer: "count=exact", Range: "0-0" });
+  const entries = Object.entries(categoryToTable);
+  const data: Record<string, number> = {};
+  for (let i = 0; i < entries.length; i += 5) {
+    const chunk = entries.slice(i, i + 5);
+    const results = await Promise.all(
+      chunk.map(async ([cat, table]) => {
+        try {
+          const res = await fetch(
+            `${SUPABASE_URL}/rest/v1/${table}?select=survey_id`,
+            { headers, cache: "no-store", signal }
+          );
+          const total = Number((res.headers.get("content-range") || "").split("/")[1] || 0);
+          return [cat, Number.isFinite(total) ? total : 0] as const;
+        } catch {
+          return [cat, 0] as const;
+        }
+      })
+    );
+    for (const [cat, count] of results) data[cat] = count;
+  }
+  _categoryCountsCache = { at: Date.now(), data };
+  return data;
+}
+
+async function fetchDistinctColumn(category: string, column: string, signal: AbortSignal): Promise<string[]> {
   const table = categoryToTable[category];
   if (!table) return [];
-  const headers: Record<string, string> = {
-    apikey: SUPABASE_ANON_KEY,
-    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-    Prefer: "count=none",
-    Range: "0-4999",
-  };
   try {
     const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/${table}?select=road_name&road_name=not.is.null&order=road_name.asc`,
-      { headers, cache: "no-store", signal }
+      `${SUPABASE_URL}/rest/v1/${table}?select=${column}&${column}=not.is.null&order=${column}.asc`,
+      { headers: restHeaders({ Prefer: "count=none", Range: "0-4999" }), cache: "no-store", signal }
     );
     if (!res.ok) return [];
     const rows: any[] = await res.json();
-    return Array.from(new Set(rows.map((r) => r.road_name).filter(Boolean))).sort();
+    return Array.from(new Set(rows.map((r) => r[column]).filter(Boolean))).sort();
   } catch {
     return [];
   }
+}
+
+async function countTable(table: string, extraQuery: string, signal: AbortSignal): Promise<number> {
+  const qs = extraQuery ? `select=survey_id&${extraQuery}` : "select=survey_id";
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${qs}`, {
+      headers: restHeaders({ Prefer: "count=exact", Range: "0-0" }),
+      cache: "no-store",
+      signal,
+    });
+    const total = Number((res.headers.get("content-range") || "").split("/")[1] || 0);
+    return Number.isFinite(total) ? total : 0;
+  } catch {
+    return 0;
+  }
+}
+
+async function fetchCategoryStats(category: string, signal: AbortSignal): Promise<{ total: number; good: number; fair: number; poor: number }> {
+  if (_cachedRecords && _cachedRecords.length > 0) {
+    let total = 0;
+    let good = 0;
+    let fair = 0;
+    let poor = 0;
+    for (const r of _cachedRecords) {
+      if ((getCategoryKey(r) || r.asset_category) !== category) continue;
+      total += 1;
+      const s = getRecordStatus(r);
+      if (s === "good") good += 1;
+      else if (s === "fair") fair += 1;
+      else if (s === "poor") poor += 1;
+    }
+    return { total, good, fair, poor };
+  }
+
+  const table = categoryToTable[category];
+  if (!table) return { total: 0, good: 0, fair: 0, poor: 0 };
+  const col = CONDITION_COLUMN_BY_CATEGORY[category];
+  if (!col) {
+    const total = await countTable(table, "", signal);
+    return { total, good: 0, fair: 0, poor: 0 };
+  }
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/${table}?select=${col}`,
+      { headers: restHeaders({ Prefer: "count=exact", Range: "0-4999" }), cache: "no-store", signal }
+    );
+    if (!res.ok) return { total: 0, good: 0, fair: 0, poor: 0 };
+    const rows: any[] = await res.json();
+    const total = Number((res.headers.get("content-range") || "").split("/")[1] || rows.length);
+    let good = 0;
+    let fair = 0;
+    let poor = 0;
+    const goodVals = new Set(CONDITION_FILTER_VALUES.good);
+    const fairVals = new Set(CONDITION_FILTER_VALUES.fair);
+    const poorVals = new Set(CONDITION_FILTER_VALUES.poor);
+    for (const row of rows) {
+      const raw = String(row[col] ?? "").toLowerCase().trim();
+      if (goodVals.has(raw) || [...goodVals].some((v) => raw.includes(v))) good += 1;
+      else if (fairVals.has(raw) || [...fairVals].some((v) => raw.includes(v))) fair += 1;
+      else if (poorVals.has(raw) || [...poorVals].some((v) => raw.includes(v))) poor += 1;
+    }
+    return { total: Number.isFinite(total) ? total : rows.length, good, fair, poor };
+  } catch {
+    return { total: 0, good: 0, fair: 0, poor: 0 };
+  }
+}
+
+function mapCategoryRows(category: string, rows: any[]): any[] {
+  return rows.map((row) => slimRecordForList(rowToRecord(row, row.asset_category || category)));
 }
 
 async function fetchCategoryPage(opts: {
@@ -1158,62 +1482,60 @@ async function fetchCategoryPage(opts: {
   search?: string;
   road?: string;
   condition?: string;
+  surveyor?: string;
+  sadc?: string;
+  province?: string;
+  district?: string;
+  sort?: string;
+  dir?: string;
   signal: AbortSignal;
 }): Promise<{ records: any[]; total: number }> {
-  const { category, page, pageSize, search, road, condition, signal } = opts;
+  const { category, page, pageSize, search, road, condition, surveyor, sadc, province, district, sort, dir, signal } = opts;
   const table = categoryToTable[category];
   if (!table) return { records: [], total: 0 };
 
-  const from = Math.max(0, page) * pageSize;
-  const to = from + pageSize - 1;
+  const filters = buildCategoryFilters({ category, search, road, condition, surveyor, sadc });
+  const cols = listSelectCols(category);
+  const order = resolveOrder(category, sort, dir);
+  const locationFilter = (province && province !== "all") || (district && district !== "all");
+  const derivedSort = sort === "province" || sort === "district";
+  const queryBase = [`select=${cols}`, order, ...filters].join("&");
 
-  const roadExtras = ROAD_TABLES.has(table) ? `,${ROAD_EXTRA_COLUMNS}` : "";
-  const categoryExtra = CATEGORY_EXTRA[category] ? `,${CATEGORY_EXTRA[category]}` : "";
-  const cols = `${TABLE_LIST_COLUMNS}${roadExtras}${categoryExtra}`.replace(/\s+/g, "");
-
-  const filters: string[] = [];
-  if (road && road !== "all") {
-    filters.push(`road_name=eq.${encodeURIComponent(road)}`);
-  }
-
-  const q = escapePostgrestFilter(search || "");
-  const searchOr = q
-    ? `or(road_name.ilike.*${q}*,section_name.ilike.*${q}*,surveyor_name.ilike.*${q}*)`
-    : "";
-
-  let conditionOr = "";
-  if (condition && condition !== "all") {
-    const col = CONDITION_COLUMN_BY_CATEGORY[category];
-    const values = CONDITION_FILTER_VALUES[condition];
-    if (col && values?.length) {
-      conditionOr = `or(${values.map((v) => `${col}.ilike.${escapePostgrestFilter(v)}`).join(",")})`;
+  if (locationFilter || derivedSort) {
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${queryBase}`, {
+        headers: restHeaders({ Prefer: "count=none", Range: "0-4999" }),
+        cache: "no-store",
+        signal,
+      });
+      if (!res.ok) {
+        const errText = await res.text().catch(() => "");
+        console.warn(`fetchCategoryPage ${table} failed: ${res.status} ${errText.slice(0, 200)}`);
+        return { records: [], total: 0 };
+      }
+      let records = mapCategoryRows(category, await res.json());
+      if (province && province !== "all") records = records.filter((r) => r.province === province);
+      if (district && district !== "all") records = records.filter((r) => r.district === district);
+      if (derivedSort) {
+        const key = sort === "district" ? "district" : "province";
+        records.sort((a, b) => {
+          const cmp = String(a[key] ?? "").localeCompare(String(b[key] ?? ""));
+          return dir === "asc" ? cmp : -cmp;
+        });
+      }
+      const from = Math.max(0, page) * pageSize;
+      return { records: records.slice(from, from + pageSize), total: records.length };
+    } catch (e: any) {
+      console.warn(`fetchCategoryPage ${table} error:`, e?.message || e);
+      return { records: [], total: 0 };
     }
   }
 
-  if (searchOr && conditionOr) {
-    filters.push(`and=(${searchOr},${conditionOr})`);
-  } else if (searchOr) {
-    filters.push(searchOr.replace(/^or/, "or="));
-  } else if (conditionOr) {
-    filters.push(conditionOr.replace(/^or/, "or="));
-  }
-
-  const query = [
-    `select=${cols}`,
-    "order=created_at.desc",
-    ...filters,
-  ].join("&");
-
-  const headers: Record<string, string> = {
-    apikey: SUPABASE_ANON_KEY,
-    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-    Prefer: "count=exact",
-    Range: `${from}-${to}`,
-  };
-
+  const from = Math.max(0, page) * pageSize;
+  const to = from + pageSize - 1;
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${query}`, {
-      headers,
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${queryBase}`, {
+      headers: restHeaders({ Prefer: "count=exact", Range: `${from}-${to}` }),
       cache: "no-store",
       signal,
     });
@@ -1223,11 +1545,8 @@ async function fetchCategoryPage(opts: {
       return { records: [], total: 0 };
     }
     const rows: any[] = await res.json();
-    const contentRange = res.headers.get("content-range") || "";
-    const total = Number(contentRange.split("/")[1] || rows.length);
-    const records = rows.map((row) =>
-      slimRecordForList(rowToRecord(row, row.asset_category || category))
-    );
+    const total = Number((res.headers.get("content-range") || "").split("/")[1] || rows.length);
+    const records = mapCategoryRows(category, rows);
     return { records, total: Number.isFinite(total) ? total : records.length };
   } catch (e: any) {
     console.warn(`fetchCategoryPage ${table} error:`, e?.message || e);
@@ -1307,6 +1626,7 @@ function rowToRecord(row: any, cat: string): any {
     row.layby_condition ||
     row.busstop_condition ||
     row.junction_condition ||
+    row.rupture_condition ||
     row.sign_condition ||
     row.shelvet_condition ||
     row.culvet_serviceability ||
@@ -1329,6 +1649,7 @@ function rowToRecord(row: any, cat: string): any {
   else if (cat === "layby")         { record.layby_condition      = record.layby_condition || cond; }
   else if (cat === "busstop")       { record.busstop_condition = record.busstop_condition || cond; record.bus_stop_condition = record.bus_stop_condition || cond; record.bus_stop_present = true; }
   else if (cat === "junction")      { record.junction_condition   = record.junction_condition || cond; }
+  else if (cat === "road_rupture")  { record.rupture_condition = record.rupture_condition || cond; record.rupture_kind = record.rupture_kind || (cond === "under_construction" ? "under_construction" : "rupture"); }
   else if (cat === "sign")          { record.sign_condition       = record.sign_condition || cond; }
   else if (cat === "shelvet")       { record.shelvet_condition    = record.shelvet_condition || cond; }
   else if (cat === "culvert")       { record.culvet_serviceability = record.culvet_serviceability || cond; }
@@ -1445,21 +1766,55 @@ export async function GET(req: Request) {
       const search = url.searchParams.get("search") || "";
       const road = url.searchParams.get("road") || "all";
       const condition = url.searchParams.get("condition") || "all";
+      const surveyor = url.searchParams.get("surveyor") || "all";
+      const sadc = url.searchParams.get("sadc") || "all";
+      const province = url.searchParams.get("province") || "all";
+      const district = url.searchParams.get("district") || "all";
+      const sort = url.searchParams.get("sort") || "created_at";
+      const dir = url.searchParams.get("dir") || "desc";
       const includeMeta = url.searchParams.get("meta") !== "0";
+      const browseOpts = {
+        category,
+        page,
+        pageSize,
+        search,
+        road,
+        condition,
+        surveyor,
+        sadc,
+        province,
+        district,
+        sort,
+        dir,
+      };
 
-      const [pageResult, categories, roads] = await Promise.all([
-        fetchCategoryPage({
-          category,
+      if (_cachedRecords && _cachedRecords.length > 0) {
+        const cached = browseFromCache(browseOpts);
+        return NextResponse.json({
+          records: cached.records,
+          count: cached.records.length,
+          total: cached.total,
           page,
           pageSize,
-          search,
-          road,
-          condition,
-          signal: controller.signal,
-        }),
-        includeMeta ? fetchCategoryCounts(controller.signal) : Promise.resolve(undefined),
-        includeMeta ? fetchDistinctRoads(category, controller.signal) : Promise.resolve(undefined),
-      ]);
+          category,
+          categories: includeMeta ? cached.categories : {},
+          roads: includeMeta ? cached.roads : [],
+          surveyors: includeMeta ? cached.surveyors : [],
+          stats: includeMeta ? cached.stats : { total: cached.total, good: 0, fair: 0, poor: 0 },
+          source: "server",
+          paginated: true,
+          cached: true,
+        });
+      }
+
+      const pageResult = await fetchCategoryPage({ ...browseOpts, signal: controller.signal });
+      const [roads, surveyors, stats] = includeMeta
+        ? await Promise.all([
+            fetchDistinctColumn(category, "road_name", controller.signal),
+            fetchDistinctColumn(category, "surveyor_name", controller.signal),
+            fetchCategoryStats(category, controller.signal),
+          ])
+        : [undefined, undefined, undefined];
 
       return NextResponse.json({
         records: pageResult.records,
@@ -1468,8 +1823,10 @@ export async function GET(req: Request) {
         page,
         pageSize,
         category,
-        categories: categories || {},
+        categories: includeMeta ? { [category]: pageResult.total } : {},
         roads: roads || [],
+        surveyors: surveyors || [],
+        stats: stats || { total: pageResult.total, good: 0, fair: 0, poor: 0 },
         source: "server",
         paginated: true,
       });
@@ -1582,6 +1939,7 @@ export async function GET(req: Request) {
 
       _cachedRecords = merged.map(slimRecordForList);
       _cacheTimestamp = Date.now();
+      _categoryCountsCache = { at: Date.now(), data: byCat };
       writeLocalCache(merged);
 
       return NextResponse.json({

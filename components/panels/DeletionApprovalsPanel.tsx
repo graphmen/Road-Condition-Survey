@@ -1,8 +1,11 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { UserProfile, DeletionRequest, ROLE_LABELS } from "@/components/helpers";
-import { AlertOctagon, CheckCircle2, XCircle, RefreshCw, FileText, ShieldAlert, Clock } from "lucide-react";
+import { AlertOctagon, CheckCircle2, RefreshCw, Search } from "lucide-react";
+import ListPager, { LIST_FILTER } from "./ListPager";
+
+const PAGE_SIZE = 12;
 
 interface DeletionApprovalsPanelProps {
   currentUser: UserProfile;
@@ -17,6 +20,10 @@ export default function DeletionApprovalsPanel({ currentUser, onToast, onRefresh
   const [reviewNotes, setReviewNotes] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState<"pending" | "history">("pending");
+  const [search, setSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [provinceFilter, setProvinceFilter] = useState("all");
+  const [page, setPage] = useState(0);
 
   const fetchDeletions = async () => {
     setIsLoading(true);
@@ -78,6 +85,56 @@ export default function DeletionApprovalsPanel({ currentUser, onToast, onRefresh
 
   const pendingList = requests.filter(r => r.status === "pending");
   const historyList = requests.filter(r => r.status !== "pending");
+  const tabList = activeTab === "pending" ? pendingList : historyList;
+
+  const categoryOptions = useMemo(() => {
+    const set = new Set<string>();
+    tabList.forEach((r) => {
+      const c = r.asset_category?.trim();
+      if (c) set.add(c);
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [tabList]);
+
+  const provinceOptions = useMemo(() => {
+    const set = new Set<string>();
+    tabList.forEach((r) => {
+      const p = r.province?.trim();
+      if (p) set.add(p);
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [tabList]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return tabList.filter((r) => {
+      if (categoryFilter !== "all" && (r.asset_category || "") !== categoryFilter) return false;
+      if (provinceFilter !== "all" && (r.province || "") !== provinceFilter) return false;
+      if (!q) return true;
+      const hay = [
+        r.asset_name,
+        r.survey_id,
+        r.asset_category,
+        r.requested_by_name,
+        r.reason,
+        r.province,
+        r.district,
+        r.reviewed_by_name,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return hay.includes(q);
+    });
+  }, [tabList, search, categoryFilter, provinceFilter]);
+
+  const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE) || 1);
+  const pageSafe = Math.min(page, pages - 1);
+  const pageSlice = filtered.slice(pageSafe * PAGE_SIZE, (pageSafe + 1) * PAGE_SIZE);
+
+  useEffect(() => {
+    if (page > pages - 1) setPage(Math.max(0, pages - 1));
+  }, [page, pages]);
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--bg-app)", overflow: "hidden" }}>
@@ -106,7 +163,7 @@ export default function DeletionApprovalsPanel({ currentUser, onToast, onRefresh
       {/* Tabs */}
       <div style={{ background: "#fff", borderBottom: "1px solid var(--border)", padding: "0 24px", display: "flex", gap: 8 }}>
         <button
-          onClick={() => setActiveTab("pending")}
+          onClick={() => { setActiveTab("pending"); setPage(0); setCategoryFilter("all"); setProvinceFilter("all"); }}
           style={{
             padding: "12px 16px", border: "none", borderBottom: activeTab === "pending" ? "3px solid #dc2626" : "3px solid transparent",
             background: "none", cursor: "pointer", fontSize: 12, fontWeight: 800,
@@ -120,7 +177,7 @@ export default function DeletionApprovalsPanel({ currentUser, onToast, onRefresh
         </button>
 
         <button
-          onClick={() => setActiveTab("history")}
+          onClick={() => { setActiveTab("history"); setPage(0); setCategoryFilter("all"); setProvinceFilter("all"); }}
           style={{
             padding: "12px 16px", border: "none", borderBottom: activeTab === "history" ? "3px solid #006633" : "3px solid transparent",
             background: "none", cursor: "pointer", fontSize: 12, fontWeight: 800,
@@ -134,6 +191,33 @@ export default function DeletionApprovalsPanel({ currentUser, onToast, onRefresh
         </button>
       </div>
 
+      <div style={{ padding: "12px 24px", borderBottom: "1px solid var(--border)", background: "#fafcfb", display: "flex", gap: 10, alignItems: "center", flexShrink: 0, flexWrap: "wrap" }}>
+        <div style={{ position: "relative", flex: "2 1 220px", minWidth: 180 }}>
+          <Search size={13} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
+          <input
+            placeholder="Search asset, requester, reason…"
+            value={search}
+            onChange={(e) => { setSearch(e.target.value); setPage(0); }}
+            style={{ ...LIST_FILTER, width: "100%", padding: "8px 10px 8px 30px", color: "var(--text-primary)" }}
+          />
+        </div>
+        <select value={categoryFilter} onChange={(e) => { setCategoryFilter(e.target.value); setPage(0); }} style={LIST_FILTER}>
+          <option value="all">All asset types</option>
+          {categoryOptions.map((c) => (
+            <option key={c} value={c}>{c}</option>
+          ))}
+        </select>
+        <select value={provinceFilter} onChange={(e) => { setProvinceFilter(e.target.value); setPage(0); }} style={LIST_FILTER}>
+          <option value="all">All provinces</option>
+          {provinceOptions.map((p) => (
+            <option key={p} value={p}>{p}</option>
+          ))}
+        </select>
+        <span style={{ fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+          {isLoading ? "Loading…" : `${filtered.length} of ${tabList.length}`}
+        </span>
+      </div>
+
       {/* Workspace */}
       <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
         {isLoading ? (
@@ -141,7 +225,7 @@ export default function DeletionApprovalsPanel({ currentUser, onToast, onRefresh
             <div style={{ width: 28, height: 28, border: "3px solid rgba(220,38,38,0.15)", borderTop: "3px solid #dc2626", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
             Loading approval queue...
           </div>
-        ) : (activeTab === "pending" ? pendingList : historyList).length === 0 ? (
+        ) : tabList.length === 0 ? (
           <div style={{ textAlign: "center", padding: "60px 20px", color: "var(--text-muted)", background: "#fff", borderRadius: 12, border: "1px solid var(--border)" }}>
             <CheckCircle2 size={48} style={{ opacity: 0.2, marginBottom: 12 }} />
             <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text-primary)" }}>
@@ -151,9 +235,14 @@ export default function DeletionApprovalsPanel({ currentUser, onToast, onRefresh
               {activeTab === "pending" ? "All field asset deletion requests in your scope have been reviewed." : "Reviewed deletion actions will appear here in the audit log."}
             </div>
           </div>
+        ) : filtered.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "60px 20px", color: "var(--text-muted)", background: "#fff", borderRadius: 12, border: "1px solid var(--border)" }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text-primary)" }}>No requests match these filters</div>
+            <div style={{ fontSize: 12, marginTop: 4 }}>Clear search or change asset type or province.</div>
+          </div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 16 }}>
-            {(activeTab === "pending" ? pendingList : historyList).map(r => (
+            {pageSlice.map(r => (
               <div
                 key={r.id}
                 style={{
@@ -205,6 +294,10 @@ export default function DeletionApprovalsPanel({ currentUser, onToast, onRefresh
           </div>
         )}
       </div>
+
+      {!isLoading && filtered.length > 0 && (
+        <ListPager page={pageSafe} pageSize={PAGE_SIZE} total={filtered.length} onPage={setPage} />
+      )}
 
       {/* Review Modal */}
       {selectedRequest && (

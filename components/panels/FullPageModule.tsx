@@ -1,21 +1,22 @@
 "use client";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
-
-import { useState, useEffect, useCallback, useRef, useMemo, memo } from "react";
-import { LayoutDashboard, TrendingUp, BarChart2, ClipboardCheck, Database, Download, ArrowUpDown, Search, X, ChevronDown, ChevronUp, Camera, FileText, BookOpen, Trash2, Compass, Users, ShieldAlert, ChevronLeft, ChevronRight } from "lucide-react";
-
+import { useState, useEffect, useMemo, memo } from "react";
+import { LayoutDashboard, Route, BarChart2, ClipboardCheck, Download, ArrowUpDown, Search, X, ChevronDown, ChevronUp, Camera, FileText, BookOpen, Trash2, Compass, Users, ShieldAlert, ChevronLeft, ChevronRight, LayoutGrid, Table2, Settings } from "lucide-react";
 import {
-  ResponsiveContainer, PieChart, Pie, Cell, Legend, Tooltip as ChartTooltip,
-  BarChart, Bar, XAxis, YAxis, LineChart, Line, CartesianGrid, AreaChart, Area,
-} from "recharts";
-import {
-  getRecordStatus, getAssetType, getAssetName, formatStatusLabel, getStatusColor, normalizePhotos, mergePhotoLists, recordHasPhotos, getSadcValue,
+  getRecordStatus, getAssetType, getAssetName, formatStatusLabel, getStatusColor, normalizePhotos, mergePhotoLists, getSadcValue,
   AUTHORITY_OPTIONS, CONDITION_WITH_CONSTRUCTION_OPTIONS,
-  formatGpsLabel, getCategoryKey,
+  formatGpsLabel,
 } from "@/components/helpers";
-import { OVERLAY_GROUPS, countByLayer } from "@/lib/mapLayers";
+import { OVERLAY_GROUPS } from "@/lib/mapLayers";
+import { ZIM_PROVINCES_DISTRICTS } from "@/lib/zimbabwe";
 import type { NavModule } from "./LeftNav";
+import GalleryPage from "./GalleryPage";
+import AnalyticsPage from "./AnalyticsPage";
+import HighwaysPage from "./HighwaysPage";
+import ExportPage from "./ExportPage";
+import ReportsPage from "./ReportsPage";
+import DashboardPage from "./DashboardPage";
+import SettingsPage from "./SettingsPage";
+import { useCategoryBrowse } from "@/hooks/useCategoryBrowse";
 import {
   SEALED_ROAD_CLASS_OPTIONS,
   SEALED_ROAD_TYPE_OPTIONS,
@@ -33,18 +34,6 @@ import {
 } from "../sealedRoadConfig";
 
 /* ─── helpers ─────────────────────────────────────────────────────────────── */
-const HIGHWAYS = [
-  { id: "A1", name: "Harare – Chirundu",       color: "#006633", km: "335 km" },
-  { id: "A2", name: "Harare – Mutare",         color: "#007a3d", km: "263 km" },
-  { id: "A3", name: "Harare – Bulawayo",       color: "#004d26", km: "439 km" },
-  { id: "A4", name: "Bulawayo – Beitbridge",   color: "#FFD100", km: "323 km" },
-  { id: "A5", name: "Bulawayo – Plumtree",     color: "#e0b800", km: "102 km" },
-];
-
-function hwRecords(records: any[], id: string) {
-  return records.filter(r => (r.road_name ?? "").includes(id));
-}
-
 const EXCLUDED_KEYS = new Set([
   "_id",
   "_geolocation",
@@ -82,571 +71,12 @@ const formatValue = (val: any): string => {
   return s.replace(/_/g, " ").toUpperCase();
 };
 
-const getGeometry = (record: any): any => {
-  if (!record) return null;
-  const geojsonStr = record.road_segment_geojson || record.segment_geojson || record.raw_data?.road_segment_geojson || record.raw_data?.segment_geojson;
-  if (geojsonStr) {
-    try {
-      const geojson = typeof geojsonStr === "string" ? JSON.parse(geojsonStr) : geojsonStr;
-      if (geojson) {
-        if (geojson.type === "Feature" && geojson.geometry) {
-          return geojson.geometry;
-        }
-        if (geojson.type === "LineString" && Array.isArray(geojson.coordinates)) {
-          return geojson;
-        }
-      }
-    } catch (e) {
-      console.error("Error parsing geometry:", e);
-    }
-  }
 
-  // Fallback: Check for trace coordinate strings
-  const searchObjects = [record, record.raw_data].filter(Boolean);
-  for (const obj of searchObjects) {
-    for (const key of Object.keys(obj)) {
-      if (key.toLowerCase().endsWith("_trace") || key.toLowerCase().includes("trace")) {
-        const traceStr = obj[key];
-        if (typeof traceStr === "string" && traceStr.trim().length > 0) {
-          try {
-            const points: [number, number][] = [];
-            const parts = traceStr.split(";");
-            for (const part of parts) {
-              if (!part.trim()) continue;
-              const coords = part.trim().split(" ");
-              if (coords.length >= 2) {
-                const lat = Number(coords[0]);
-                const lng = Number(coords[1]);
-                if (!isNaN(lat) && !isNaN(lng)) {
-                  points.push([lat, lng]);
-                }
-              }
-            }
-            if (points.length > 0) {
-              return {
-                type: "LineString",
-                coordinates: points.map(p => [p[1], p[0]]) // Swap [lat, lng] to [lng, lat] for GeoJSON standard
-              };
-            }
-          } catch (e) {
-            console.error(`Error parsing trace string in key ${key}:`, e);
-          }
-        }
-      }
-    }
-  }
+/* Dashboard page lives in ./DashboardPage.tsx */
 
-  if (
-    Array.isArray(record._geolocation) &&
-    record._geolocation.length >= 2 &&
-    typeof record._geolocation[0] === "number" &&
-    typeof record._geolocation[1] === "number"
-  ) {
-    return {
-      type: "Point",
-      coordinates: [record._geolocation[1], record._geolocation[0]]
-    };
-  }
-  return null;
-};
+/* Highways page lives in ./HighwaysPage.tsx */
 
-const ASSET_TYPES = [
-  { key: "sealed_road",      label: "Sealed Road",      check: (r: any) => getAssetType(r) === "Sealed Road" || getAssetType(r) === "Concrete Road" },
-  { key: "gravel_road",     label: "Gravel Road",     check: (r: any) => getAssetType(r) === "Gravel Road" },
-  { key: "earth_road",      label: "Earth Road",      check: (r: any) => getAssetType(r) === "Earth Road" },
-  { key: "bridge",          label: "Bridge",          check: (r: any) => getAssetType(r) === "Bridge" },
-  { key: "foot_bridge",     label: "Foot Bridge",     check: (r: any) => getAssetType(r) === "Foot Bridge" },
-  { key: "rail_crossing",   label: "Rail Crossing",   check: (r: any) => getAssetType(r) === "Rail Crossing" },
-  { key: "tollgate",        label: "Tollgate",        check: (r: any) => getAssetType(r) === "Tollgate" },
-  { key: "lay_by",          label: "Lay By",          check: (r: any) => getAssetType(r) === "Lay By" },
-  { key: "bus_stop",        label: "Bus Stop",        check: (r: any) => getAssetType(r) === "Bus Stop" },
-  { key: "junction",        label: "Junction",        check: (r: any) => getAssetType(r) === "Junction" },
-  { key: "road_sign",       label: "Road Sign",       check: (r: any) => getAssetType(r) === "Road Sign" },
-  { key: "shelvet",         label: "Shelvert",        check: (r: any) => getAssetType(r) === "Shelvert" || getAssetType(r) === "Shelvert" },
-  { key: "culvert",         label: "Culvert",         check: (r: any) => getAssetType(r) === "Culvert" },
-  { key: "piped_causeway",  label: "Piped Causeway",  check: (r: any) => getAssetType(r) === "Piped Causeway" },
-  { key: "drift",           label: "Drift",           check: (r: any) => getAssetType(r) === "Drift" },
-  { key: "grid",            label: "Grid",            check: (r: any) => getAssetType(r) === "Grid" },
-  { key: "traffic_lights",  label: "Traffic Lights",  check: (r: any) => getAssetType(r) === "Traffic Lights" },
-  { key: "streetlight",     label: "Streetlight",     check: (r: any) => getAssetType(r) === "Streetlight" || getAssetType(r) === "Street Light" }
-];
-
-const COND_COLORS: Record<string, string> = {
-  good: "#006633",
-  fair: "#f59e0b",
-  poor: "#dc2626",
-  mixed: "#7c3aed",
-  under_construction: "#2563eb",
-};
-
-export const ZIM_PROVINCES_DISTRICTS: Record<string, string[]> = {
-  "Harare": ["Harare", "Chitungwiza", "Epworth"],
-  "Bulawayo": ["Bulawayo"],
-  "Manicaland": ["Mutare", "Chimanimani", "Chipinge", "Makoni", "Mutasa", "Nyanga", "Buhera"],
-  "Mashonaland Central": ["Bindura", "Centenary", "Guruve", "Mt Darwin", "Mazowe", "Mukumbura", "Mbire", "Rushinga"],
-  "Mashonaland East": ["Marondera", "Goromonzi", "Murewa", "Mutoko", "Mudzi", "Sekes", "Chikomba", "Wedza", "UMP", "Makoni"],
-  "Mashonaland West": ["Chinhoyi", "Kadoma", "Chegutu", "Kariba", "Makonde", "Hurungwe", "Zvimba", "Sanyati"],
-  "Masvingo": ["Masvingo", "Chiredzi", "Chivi", "Gutu", "Mwenezi", "Bikita", "Zaka"],
-  "Matabeleland North": ["Lupane", "Binga", "Bubi", "Hwange", "Nkayi", "Tsholotsho", "Umguza"],
-  "Matabeleland South": ["Gwanda", "Beitbridge", "Bulilima", "Mangwe", "Insiza", "Matobo", "Umzingwane"],
-  "Midlands": ["Gweru", "Kwekwe", "Gokwe North", "Gokwe South", "Mberengwa", "Shurugwi", "Zvishavane", "Chirumhanzu"]
-};
-
-/* ─── sub-components ──────────────────────────────────────────────────────── */
-function KpiTile({ num, label, color = "var(--green)", sub }: { num: string|number; label: string; color?: string; sub?: string }) {
-  return (
-    <div style={{ background: "#fff", border: "1px solid var(--border)", borderRadius: 12, padding: "18px 20px", flex: 1, minWidth: 120, boxShadow: "var(--shadow-sm)", display: "flex", flexDirection: "column", gap: 2 }}>
-      <div style={{ fontFamily: "var(--font-title)", fontSize: 32, fontWeight: 800, color, lineHeight: 1 }}>{num}</div>
-      <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.6px" }}>{label}</div>
-      {sub && <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>{sub}</div>}
-    </div>
-  );
-}
-
-function SectionTitle({ children }: { children: React.ReactNode }) {
-  return (
-    <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "1px", color: "var(--green)", borderBottom: "2px solid var(--gold)", paddingBottom: 5, marginBottom: 14 }}>
-      {children}
-    </div>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   DASHBOARD
-════════════════════════════════════════════════════════════════════════════ */
-function DashboardPage({ records, lastSynced }: { records: any[]; lastSynced?: Date | null }) {
-  const total  = records.length;
-  const good   = records.filter(r => getRecordStatus(r) === "good").length;
-  const fair   = records.filter(r => getRecordStatus(r) === "fair").length;
-  const poor   = records.filter(r => getRecordStatus(r) === "poor").length;
-  const mixed  = records.filter(r => getRecordStatus(r) === "mixed").length;
-  const underConstruction = records.filter(r => getRecordStatus(r) === "under_construction").length;
-  const surveyors = new Set(records.map(r => r.surveyor_name).filter(Boolean)).size;
-  const dates  = records.map(r => r.survey_date).filter(Boolean).sort();
-  const dateRange = dates.length ? `${dates[0]} → ${dates[dates.length - 1]}` : "N/A";
-
-  const condData = [
-    { name: "Good", value: good, color: "#006633" },
-    { name: "Fair", value: fair, color: "#f59e0b" },
-    { name: "Poor", value: poor, color: "#dc2626" },
-    { name: "Mixed", value: mixed, color: "#7c3aed" },
-    { name: "Under construction", value: underConstruction, color: "#2563eb" },
-  ].filter(d => d.value > 0);
-
-  const typeData = ASSET_TYPES.map(t => ({ name: t.label, count: records.filter(t.check).length })).filter(d => d.count > 0);
-
-  const hwData = HIGHWAYS.map(h => {
-    const hw = hwRecords(records, h.id);
-    return {
-      name: h.id,
-      total: hw.length,
-      good: hw.filter(r => getRecordStatus(r) === "good").length,
-      fair: hw.filter(r => getRecordStatus(r) === "fair").length,
-      poor: hw.filter(r => getRecordStatus(r) === "poor").length,
-      mixed: hw.filter(r => getRecordStatus(r) === "mixed").length,
-      under_construction: hw.filter(r => getRecordStatus(r) === "under_construction").length,
-    };
-  }).filter(d => d.total > 0);
-
-  const surveyorData = Array.from(
-    records.reduce((map, r) => { const s = r.surveyor_name ?? "Unknown"; map.set(s, (map.get(s) ?? 0) + 1); return map; }, new Map<string, number>())
-  ).map(([name, count]) => ({ name, count })).sort((a, b) => (b as any).count - (a as any).count).slice(0, 8);
-
-  const worstAssets = records.filter(r => getRecordStatus(r) === "poor").slice(0, 8);
-
-  return (
-    <div style={{ padding: "20px 24px", overflowY: "auto", height: "100%", background: "var(--bg-app)", display: "flex", flexDirection: "column", gap: 20 }}>
-      {/* KPI row */}
-      <div>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "2px solid var(--gold)", paddingBottom: 5, marginBottom: 14 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "1px", color: "var(--green)" }}>
-            Network Overview — {dateRange}
-          </div>
-          {lastSynced && (
-            <span style={{ fontSize: 10.5, color: "var(--text-muted)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.5px" }}>
-              🕒 Last Updated: {lastSynced.toLocaleTimeString()}
-            </span>
-          )}
-        </div>
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-          <KpiTile num={total}   label="Total Assets" sub="All highways" />
-          <KpiTile num={good}    label="Good Condition" color="#006633" sub={`${total ? Math.round(good/total*100) : 0}% of network`} />
-          <KpiTile num={fair}    label="Fair Condition" color="#d97706" sub={`${total ? Math.round(fair/total*100) : 0}% of network`} />
-          <KpiTile num={poor}    label="Poor Condition" color="#dc2626" sub={`${total ? Math.round(poor/total*100) : 0}% — needs attention`} />
-          <KpiTile num={surveyors} label="Surveyors" color="#1d6fa4" sub="Active field officers" />
-        </div>
-      </div>
-
-      {/* Charts row 1 */}
-      <div className="dashboard-row-3col">
-        <div style={{ background: "#fff", borderRadius: 12, padding: 16, border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)" }}>
-          <SectionTitle>Condition Distribution</SectionTitle>
-          <div style={{ height: 220 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={condData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} innerRadius={35} paddingAngle={3} label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`} labelLine={false} fontSize={11}>
-                  {condData.map((e, i) => <Cell key={i} fill={e.color} />)}
-                </Pie>
-                <Legend iconSize={9} wrapperStyle={{ fontSize: 11 }} />
-                <ChartTooltip />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        <div style={{ background: "#fff", borderRadius: 12, padding: 16, border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)" }}>
-          <SectionTitle>Asset Type Breakdown</SectionTitle>
-          <div style={{ height: 220 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={typeData} layout="vertical" margin={{ left: 8, right: 20, top: 5, bottom: 0 }}>
-                <XAxis type="number" fontSize={9} tick={{ fill: "#6b8072" }} tickLine={false} />
-                <YAxis type="category" dataKey="name" fontSize={9} tick={{ fill: "#3d5a48" }} width={70} tickLine={false} />
-                <ChartTooltip contentStyle={{ fontSize: 11, borderRadius: 6 }} />
-                <Bar dataKey="count" radius={[0, 4, 4, 0]} barSize={12} fill="#006633" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        <div style={{ background: "#fff", borderRadius: 12, padding: 16, border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)" }}>
-          <SectionTitle>Surveyors Activity</SectionTitle>
-          <div style={{ height: 220 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={surveyorData} layout="vertical" margin={{ left: 8, right: 20, top: 5, bottom: 0 }}>
-                <XAxis type="number" fontSize={9} tick={{ fill: "#6b8072" }} tickLine={false} />
-                <YAxis type="category" dataKey="name" fontSize={9} tick={{ fill: "#3d5a48" }} width={90} tickLine={false} />
-                <ChartTooltip contentStyle={{ fontSize: 11, borderRadius: 6 }} />
-                <Bar dataKey="count" name="Records" radius={[0, 4, 4, 0]} barSize={12} fill="#FFD100" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      </div>
-
-      {/* Highway stacked bars + worst assets */}
-      <div className="dashboard-row-2col">
-        <div style={{ background: "#fff", borderRadius: 12, padding: 16, border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)" }}>
-          <SectionTitle>Highway Condition Breakdown</SectionTitle>
-          <div style={{ height: 220 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={hwData} margin={{ left: -10, right: 10, top: 5, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,102,51,0.08)" />
-                <XAxis dataKey="name" fontSize={11} tick={{ fill: "#3d5a48" }} tickLine={false} />
-                <YAxis fontSize={9} tick={{ fill: "#6b8072" }} tickLine={false} />
-                <ChartTooltip contentStyle={{ fontSize: 11, borderRadius: 6 }} />
-                <Legend iconSize={9} wrapperStyle={{ fontSize: 10 }} />
-                <Bar dataKey="good" name="Good" stackId="a" fill="#006633" />
-                <Bar dataKey="fair" name="Fair" stackId="a" fill="#f59e0b" />
-                <Bar dataKey="poor" name="Poor" stackId="a" fill="#dc2626" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        <div style={{ background: "#fff", borderRadius: 12, padding: 16, border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)" }}>
-          <SectionTitle>⚠ Poor Condition Assets</SectionTitle>
-          <div style={{ overflowY: "auto", maxHeight: 220, display: "flex", flexDirection: "column", gap: 6 }}>
-            {worstAssets.length === 0 ? (
-              <div style={{ color: "var(--text-muted)", fontSize: 12, textAlign: "center", paddingTop: 20 }}>No poor condition assets 🎉</div>
-            ) : worstAssets.map((r, i) => (
-              <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 10px", background: "rgba(220,38,38,0.04)", borderRadius: 6, border: "1px solid rgba(220,38,38,0.1)", fontSize: 11.5 }}>
-                <div>
-                  <div style={{ fontWeight: 600, color: "var(--text-primary)" }}>{getAssetName(r)}</div>
-                  <div style={{ fontSize: 10, color: "var(--text-muted)" }}>{(r.road_name ?? "—").split(" (")[0]} · {r.section_name ?? "—"}</div>
-                </div>
-                <span className="badge poor">Poor</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   HIGHWAYS
-════════════════════════════════════════════════════════════════════════════ */
-function HighwaysPage({ records }: { records: any[] }) {
-  const [selected, setSelected] = useState<string | null>(null);
-
-  return (
-    <div style={{ padding: "20px 24px", overflowY: "auto", height: "100%", background: "var(--bg-app)", display: "flex", flexDirection: "column", gap: 16 }}>
-      <SectionTitle>A-Class Highway Network</SectionTitle>
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 16 }}>
-        {HIGHWAYS.map(h => {
-          const hw = hwRecords(records, h.id);
-          const g = hw.filter(r => getRecordStatus(r) === "good").length;
-          const f = hw.filter(r => getRecordStatus(r) === "fair").length;
-          const p = hw.filter(r => getRecordStatus(r) === "poor").length;
-          const total = hw.length;
-          const gPct = total ? Math.round(g / total * 100) : 0;
-          const types = ASSET_TYPES.map(t => ({ label: t.label, count: hw.filter(t.check).length })).filter(d => d.count > 0);
-
-          return (
-            <div key={h.id} style={{ background: "#fff", borderRadius: 12, border: `2px solid ${selected === h.id ? h.color : "var(--border)"}`, padding: 16, boxShadow: "var(--shadow-sm)", cursor: "pointer", transition: "all 0.18s" }}
-              onClick={() => setSelected(selected === h.id ? null : h.id)}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
-                <div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 3 }}>
-                    <div style={{ background: h.color, color: "#fff", fontWeight: 800, fontSize: 14, padding: "4px 12px", borderRadius: 6, fontFamily: "var(--font-title)" }}>{h.id}</div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)" }}>Highway {h.id}</div>
-                  </div>
-                  <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{h.name}</div>
-                </div>
-                <div style={{ textAlign: "right" }}>
-                  <div style={{ fontFamily: "var(--font-title)", fontSize: 22, fontWeight: 800, color: "var(--green)" }}>{total}</div>
-                  <div style={{ fontSize: 9, color: "var(--text-muted)", textTransform: "uppercase" }}>assets</div>
-                </div>
-              </div>
-
-              {/* Stacked condition bar */}
-              <div style={{ height: 10, borderRadius: 5, overflow: "hidden", display: "flex", marginBottom: 8 }}>
-                <div style={{ flex: g, background: "#006633" }} />
-                <div style={{ flex: f, background: "#f59e0b" }} />
-                <div style={{ flex: p, background: "#dc2626" }} />
-                {total === 0 && <div style={{ flex: 1, background: "#e2e8f0" }} />}
-              </div>
-
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, marginBottom: 12 }}>
-                <span style={{ color: "#006633", fontWeight: 700 }}>{g} Good ({gPct}%)</span>
-                <span style={{ color: "#d97706", fontWeight: 700 }}>{f} Fair</span>
-                <span style={{ color: "#dc2626", fontWeight: 700 }}>{p} Poor</span>
-              </div>
-
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <span style={{ background: "#f0f7f3", border: "1px solid var(--border)", borderRadius: 4, padding: "2px 8px", fontSize: 9.5, color: "var(--text-muted)", fontWeight: 600 }}>{h.km}</span>
-                {types.slice(0, 4).map(t => (
-                  <span key={t.label} style={{ background: "#f0f7f3", border: "1px solid var(--border)", borderRadius: 4, padding: "2px 8px", fontSize: 9.5, color: "var(--text-secondary)", fontWeight: 600 }}>{t.label}: {t.count}</span>
-                ))}
-              </div>
-
-              {selected === h.id && (
-                <div style={{ marginTop: 12, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.6px", color: "var(--text-muted)", marginBottom: 8 }}>Asset Type Breakdown</div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-                    {types.map(t => (
-                      <div key={t.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11.5 }}>
-                        <span style={{ color: "var(--text-secondary)" }}>{t.label}</span>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <div style={{ width: 80, height: 5, background: "var(--bg-app)", borderRadius: 3, overflow: "hidden" }}>
-                            <div style={{ height: "100%", width: `${total ? t.count/total*100 : 0}%`, background: "var(--green)", borderRadius: 3 }} />
-                          </div>
-                          <span style={{ fontWeight: 700, color: "var(--green)", width: 24, textAlign: "right" }}>{t.count}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   ANALYTICS
-════════════════════════════════════════════════════════════════════════════ */
-type ATab = "overview" | "condition" | "assets" | "compliance" | "surveyors";
-
-function AnalyticsPage({ records }: { records: any[] }) {
-  const [tab, setTab] = useState<ATab>("overview");
-  const total  = records.length;
-  const good   = records.filter(r => getRecordStatus(r) === "good").length;
-  const fair   = records.filter(r => getRecordStatus(r) === "fair").length;
-  const poor   = records.filter(r => getRecordStatus(r) === "poor").length;
-  const mixed  = records.filter(r => getRecordStatus(r) === "mixed").length;
-  const underConstruction = records.filter(r => getRecordStatus(r) === "under_construction").length;
-
-  const condData = [
-    { name: "Good", value: good, color: "#006633" },
-    { name: "Fair", value: fair, color: "#f59e0b" },
-    { name: "Poor", value: poor, color: "#dc2626" },
-    { name: "Mixed", value: mixed, color: "#7c3aed" },
-    { name: "Under construction", value: underConstruction, color: "#2563eb" },
-  ].filter(d => d.value > 0);
-
-  const typeData = ASSET_TYPES.map(t => ({ name: t.label, count: records.filter(t.check).length })).filter(d => d.count > 0);
-
-  const hwData = HIGHWAYS.map(h => {
-    const hw = hwRecords(records, h.id);
-    return {
-      name: h.id,
-      good: hw.filter(r => getRecordStatus(r) === "good").length,
-      fair: hw.filter(r => getRecordStatus(r) === "fair").length,
-      poor: hw.filter(r => getRecordStatus(r) === "poor").length,
-      mixed: hw.filter(r => getRecordStatus(r) === "mixed").length,
-      under_construction: hw.filter(r => getRecordStatus(r) === "under_construction").length,
-    };
-  });
-
-  const compliant    = records.filter(r => getSadcValue(r) === "yes").length;
-  const nonCompliant = records.filter(r => getSadcValue(r) === "no").length;
-  const sadcMixed    = records.filter(r => getSadcValue(r) === "mixed").length;
-  const sadcData = [
-    { name: "Compliant", count: compliant, fill: "#006633" },
-    { name: "Non-Compliant", count: nonCompliant, fill: "#dc2626" },
-    { name: "Mixed", count: sadcMixed, fill: "#7c3aed" },
-  ].filter(d => d.count > 0);
-
-  const surveyorData = Array.from(
-    records.reduce((map, r) => { const s = r.surveyor_name ?? "Unknown"; map.set(s, (map.get(s) ?? 0) + 1); return map; }, new Map<string, number>())
-  ).map(([name, count]) => ({ name, count })).sort((a, b) => (b as any).count - (a as any).count).slice(0, 10);
-
-  const tabs: { id: ATab; label: string }[] = [
-    { id: "overview", label: "Overview" },
-    { id: "condition", label: "Condition Analysis" },
-    { id: "assets", label: "Asset Types" },
-    { id: "compliance", label: "SADC Compliance" },
-    { id: "surveyors", label: "Surveyor Activity" },
-  ];
-
-  return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--bg-app)" }}>
-      {/* Tab bar */}
-      <div style={{ display: "flex", gap: 4, padding: "14px 24px 0", borderBottom: "1px solid var(--border)", background: "#fafcfb", flexShrink: 0 }}>
-        {tabs.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "8px 16px", borderRadius: "6px 6px 0 0", border: "1px solid transparent", borderBottom: "none", background: tab === t.id ? "#fff" : "transparent", fontSize: 12, fontWeight: 600, color: tab === t.id ? "var(--green)" : "var(--text-muted)", cursor: "pointer", transition: "all 0.15s", fontFamily: "var(--font-body)", borderColor: tab === t.id ? "var(--border)" : "transparent", borderBottomColor: tab === t.id ? "#fff" : "transparent", marginBottom: tab === t.id ? -1 : 0 }}>
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
-        {tab === "overview" && (
-          <>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <KpiTile num={total}   label="Total Assets" />
-              <KpiTile num={`${total ? Math.round(good/total*100):0}%`} label="Good Condition" color="#006633" />
-              <KpiTile num={`${total ? Math.round(fair/total*100):0}%`} label="Fair Condition" color="#d97706" />
-              <KpiTile num={`${total ? Math.round(poor/total*100):0}%`} label="Poor Condition" color="#dc2626" />
-            </div>
-            <div className="analytics-grid-2col">
-              <div style={{ background: "#fff", borderRadius: 12, padding: 16, border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)" }}>
-                <SectionTitle>Condition Share</SectionTitle>
-                <div style={{ height: 260 }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart><Pie data={condData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={100} innerRadius={45} paddingAngle={3} label={({ name, percent }) => `${name} ${(percent*100).toFixed(0)}%`} labelLine={false} fontSize={11}>
-                      {condData.map((e,i)=><Cell key={i} fill={e.color}/>)}</Pie><Legend iconSize={9} wrapperStyle={{ fontSize: 11 }}/><ChartTooltip/></PieChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-              <div style={{ background: "#fff", borderRadius: 12, padding: 16, border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)" }}>
-                <SectionTitle>Highway Stacked Condition</SectionTitle>
-                <div style={{ height: 260 }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={hwData} margin={{ left: -10, right: 10, top: 5, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,102,51,0.06)" />
-                      <XAxis dataKey="name" fontSize={11} tickLine={false} />
-                      <YAxis fontSize={9} tickLine={false} />
-                      <ChartTooltip contentStyle={{ fontSize: 11, borderRadius: 6 }} />
-                      <Legend iconSize={9} wrapperStyle={{ fontSize: 10 }} />
-                      <Bar dataKey="good" name="Good" stackId="a" fill="#006633" />
-                      <Bar dataKey="fair" name="Fair" stackId="a" fill="#f59e0b" />
-                      <Bar dataKey="poor" name="Poor" stackId="a" fill="#dc2626" radius={[4,4,0,0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-            </div>
-          </>
-        )}
-
-        {tab === "condition" && (
-          <>
-            {[{ label: "Good Condition", val: good, color: "#006633" }, { label: "Fair Condition", val: fair, color: "#f59e0b" }, { label: "Poor Condition", val: poor, color: "#dc2626" }].map(row => (
-              <div key={row.label} style={{ background: "#fff", borderRadius: 12, padding: 16, border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-                  <span style={{ fontWeight: 700, fontSize: 13, color: row.color }}>{row.label}</span>
-                  <span style={{ fontFamily: "var(--font-title)", fontSize: 22, fontWeight: 800, color: row.color }}>{row.val} <span style={{ fontSize: 12, fontWeight: 500, color: "var(--text-muted)" }}>({total ? Math.round(row.val/total*100) : 0}%)</span></span>
-                </div>
-                <div style={{ height: 8, background: "var(--bg-app)", borderRadius: 4, overflow: "hidden", border: "1px solid var(--border)" }}>
-                  <div style={{ height: "100%", width: total ? `${row.val/total*100}%` : "0%", background: row.color, borderRadius: 4, transition: "width 0.6s ease" }} />
-                </div>
-              </div>
-            ))}
-            <div style={{ background: "#fff", borderRadius: 12, padding: 16, border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)" }}>
-              <SectionTitle>Per-Highway Condition</SectionTitle>
-              <div style={{ height: 280 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={hwData} margin={{ left: -10, right: 10, top: 5, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,102,51,0.06)" />
-                    <XAxis dataKey="name" fontSize={12} tickLine={false} />
-                    <YAxis fontSize={10} tickLine={false} />
-                    <ChartTooltip contentStyle={{ fontSize: 11, borderRadius: 6 }} />
-                    <Legend iconSize={9} wrapperStyle={{ fontSize: 11 }} />
-                    <Bar dataKey="good" name="Good" stackId="a" fill="#006633" />
-                    <Bar dataKey="fair" name="Fair" stackId="a" fill="#f59e0b" />
-                    <Bar dataKey="poor" name="Poor" stackId="a" fill="#dc2626" radius={[4,4,0,0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-          </>
-        )}
-
-        {tab === "assets" && (
-          <div style={{ background: "#fff", borderRadius: 12, padding: 16, border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)" }}>
-            <SectionTitle>Asset Type Distribution</SectionTitle>
-            <div style={{ height: 360 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={typeData} layout="vertical" margin={{ left: 10, right: 40, top: 5, bottom: 5 }}>
-                  <XAxis type="number" fontSize={10} tick={{ fill: "#6b8072" }} tickLine={false} />
-                  <YAxis type="category" dataKey="name" fontSize={11} tick={{ fill: "#3d5a48" }} width={90} tickLine={false} />
-                  <ChartTooltip contentStyle={{ fontSize: 11, borderRadius: 6 }} />
-                  <Bar dataKey="count" name="Count" radius={[0,6,6,0]} barSize={18} fill="#006633" label={{ position: "right", fontSize: 11, fill: "#3d5a48", fontWeight: 700 }} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        )}
-
-        {tab === "compliance" && (
-          <>
-            <div style={{ display: "flex", gap: 12 }}>
-              <KpiTile num={compliant}    label="SADC Compliant" color="#006633" sub={`${(compliant+nonCompliant) ? Math.round(compliant/(compliant+nonCompliant)*100) : 0}% of tagged signs`} />
-              <KpiTile num={nonCompliant} label="Non-Compliant"  color="#dc2626" sub={`${(compliant+nonCompliant) ? Math.round(nonCompliant/(compliant+nonCompliant)*100) : 0}% of tagged signs`} />
-            </div>
-            <div style={{ background: "#fff", borderRadius: 12, padding: 16, border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)" }}>
-              <SectionTitle>SADC Sign Compliance</SectionTitle>
-              <div style={{ height: 280 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={sadcData} margin={{ left: -10, right: 10, top: 5, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,102,51,0.06)" />
-                    <XAxis dataKey="name" fontSize={12} tickLine={false} />
-                    <YAxis fontSize={10} tickLine={false} />
-                    <ChartTooltip contentStyle={{ fontSize: 11, borderRadius: 6 }} />
-                    <Bar dataKey="count" radius={[6,6,0,0]} barSize={60}>{sadcData.map((e,i)=><Cell key={i} fill={e.fill}/>)}</Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-          </>
-        )}
-
-        {tab === "surveyors" && (
-          <div style={{ background: "#fff", borderRadius: 12, padding: 16, border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)" }}>
-            <SectionTitle>Surveyor Activity ({surveyorData.length} field officers)</SectionTitle>
-            <div style={{ height: 340 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={surveyorData} layout="vertical" margin={{ left: 10, right: 40, top: 5, bottom: 5 }}>
-                  <XAxis type="number" fontSize={10} tick={{ fill: "#6b8072" }} tickLine={false} />
-                  <YAxis type="category" dataKey="name" fontSize={10} tick={{ fill: "#3d5a48" }} width={110} tickLine={false} />
-                  <ChartTooltip contentStyle={{ fontSize: 11, borderRadius: 6 }} />
-                  <Bar dataKey="count" name="Records" radius={[0,6,6,0]} barSize={16} fill="#FFD100" label={{ position: "right", fontSize: 10, fill: "#3d5a48", fontWeight: 700 }} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
+/* Analytics page lives in ./AnalyticsPage.tsx */
 
 /* ═══════════════════════════════════════════════════════════════════════════
    SURVEY RECORDS
@@ -973,99 +403,36 @@ function SurveyDetailDrawer({
   );
 }
 
-function SurveyPage({ records, onSelectRecord }: { records: any[]; onSelectRecord: (r: any) => void }) {
+function SurveyPage({ onSelectRecord }: { records?: any[]; onSelectRecord: (r: any) => void }) {
   const [category, setCategory] = useState("sealed");
-  const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({});
   const [search, setSearch] = useState("");
   const [searchDebounced, setSearchDebounced] = useState("");
   const [cond, setCond] = useState("all");
   const [road, setRoad] = useState("all");
-  const [roads, setRoads] = useState<string[]>([]);
   const [page, setPage] = useState(0);
-  const [pageRecords, setPageRecords] = useState<any[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [drawerRecord, setDrawerRecord] = useState<any | null>(null);
-
-  const fallbackCounts = useMemo(() => countByLayer(records, getCategoryKey), [records]);
-  const counts = Object.keys(categoryCounts).length > 0 ? categoryCounts : fallbackCounts;
-
-  const categoryStats = useMemo(() => {
-    const scoped = records.filter((r) => getCategoryKey(r) === category);
-    let good = 0;
-    let fair = 0;
-    let poor = 0;
-    for (const r of scoped) {
-      const s = getRecordStatus(r);
-      if (s === "good") good += 1;
-      else if (s === "fair") fair += 1;
-      else if (s === "poor") poor += 1;
-    }
-    return {
-      total: scoped.length || total || counts[category] || 0,
-      good,
-      fair,
-      poor,
-    };
-  }, [records, category, total, counts]);
 
   useEffect(() => {
     const t = window.setTimeout(() => setSearchDebounced(search.trim()), 300);
     return () => window.clearTimeout(t);
   }, [search]);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    let alive = true;
-
-    const load = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const params = new URLSearchParams({
-          page: String(page),
-          pageSize: String(SURVEY_PAGE_SIZE),
-          category,
-          meta: page === 0 ? "1" : "0",
-        });
-        if (searchDebounced) params.set("search", searchDebounced);
-        if (cond !== "all") params.set("condition", cond);
-        if (road !== "all") params.set("road", road);
-
-        const res = await fetch(`/api/roads?${params}`, {
-          cache: "no-store",
-          signal: controller.signal,
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        if (!alive) return;
-
-        setPageRecords(Array.isArray(data.records) ? data.records : []);
-        setTotal(Number(data.total) || 0);
-        if (data.categories && typeof data.categories === "object") {
-          setCategoryCounts(data.categories);
-        }
-        if (Array.isArray(data.roads)) {
-          setRoads(data.roads);
-        }
-      } catch (e: any) {
-        if (e?.name === "AbortError") return;
-        if (!alive) return;
-        setError(e?.message || "Failed to load surveys");
-        setPageRecords([]);
-        setTotal(0);
-      } finally {
-        if (alive) setLoading(false);
-      }
-    };
-
-    load();
-    return () => {
-      alive = false;
-      controller.abort();
-    };
-  }, [category, page, searchDebounced, cond, road]);
+  const {
+    records: pageRecords,
+    total,
+    counts,
+    stats: categoryStats,
+    roads,
+    loading,
+    error,
+  } = useCategoryBrowse({
+    category,
+    page,
+    pageSize: SURVEY_PAGE_SIZE,
+    search: searchDebounced,
+    condition: cond,
+    road,
+  });
 
   const pages = Math.max(1, Math.ceil(total / SURVEY_PAGE_SIZE));
   const pageSafe = Math.min(page, pages - 1);
@@ -1383,6 +750,7 @@ const CATEGORY_GROUPS = [
       { key: "layby",   label: "Lay By",   emoji: "🅿️" },
       { key: "busstop", label: "Bus Stop", emoji: "🚌" },
       { key: "junction",label: "Junction", emoji: "✖️" },
+      { key: "road_rupture", label: "Road Rupture", emoji: "⚠️" },
     ]
   },
   {
@@ -1562,6 +930,10 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
   const [junctionControl, setJunctionControl] = useState("signs");
   const [junctionRoadMarkings, setJunctionRoadMarkings] = useState("yes");
   const [junctionSignage, setJunctionSignage] = useState("yes");
+  const [ruptureKind, setRuptureKind] = useState("rupture");
+  const [ruptureCause, setRuptureCause] = useState("washaway");
+  const [ruptureDetour, setRuptureDetour] = useState("no");
+  const [ruptureCondition, setRuptureCondition] = useState("poor");
 
   // Road Sign Fields
   const [signName, setSignName] = useState("SADC Sign");
@@ -1784,6 +1156,10 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
       setJunctionControl(record.junction_control || "signs");
       setJunctionRoadMarkings(record.junction_road_markings || record.Kerbs || "yes");
       setJunctionSignage(record.junction_signage || "yes");
+      setRuptureKind(recordField(record, "rupture_kind") || "rupture");
+      setRuptureCause(recordField(record, "rupture_cause") || "washaway");
+      setRuptureDetour(recordField(record, "rupture_detour") || "no");
+      setRuptureCondition(recordField(record, "rupture_condition") || "poor");
 
       setSignName(record.Signage_Name || record.sign_name || "SADC Sign");
       setSignCondition(record.Condition || record.sign_condition || "good");
@@ -1976,6 +1352,10 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
       setJunctionControl("signs");
       setJunctionRoadMarkings("yes");
       setJunctionSignage("yes");
+      setRuptureKind("rupture");
+      setRuptureCause("washaway");
+      setRuptureDetour("no");
+      setRuptureCondition("poor");
 
       setSignName("SADC Sign");
       setSignCondition("good");
@@ -2242,6 +1622,11 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
       data.junction_control = junctionControl;
       data.junction_road_markings = junctionRoadMarkings;
       data.junction_signage = junctionSignage;
+    } else if (section === "road_rupture") {
+      data.rupture_kind = ruptureKind;
+      if (ruptureKind === "rupture") data.rupture_cause = ruptureCause;
+      data.rupture_detour = ruptureDetour;
+      data.rupture_condition = ruptureKind === "under_construction" ? "under_construction" : ruptureCondition;
     } else if (section === "sign") {
       data.sign_name = signName;
       data.Signage_Name = signName;
@@ -2306,6 +1691,7 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
     else if (section === "layby") derivedCond = laybyCondition;
     else if (section === "busstop") derivedCond = busstopCondition;
     else if (section === "junction") derivedCond = junctionCondition;
+    else if (section === "road_rupture") derivedCond = ruptureKind === "under_construction" ? "under_construction" : ruptureCondition;
     else if (section === "sign") derivedCond = signCondition;
     else if (section === "shelvet") derivedCond = shelvetCondition;
     else if (section === "culvert") derivedCond = culvertServiceability;
@@ -3108,6 +2494,7 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
                   <select value={earthRoadClass} onChange={e => setEarthRoadClass(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
                     <option value="tertiary_feeder">Tertiary Feeder</option>
                     <option value="access_road">Access Road</option>
+                    <option value="urban_cbd">CBD</option>
                   </select>
                 </div>
                 <div>
@@ -3533,6 +2920,49 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
             </div>
           )}
 
+          {section === "road_rupture" && (
+            <div style={{ background: "#f0f7f3", border: "1px solid rgba(0,102,51,0.15)", borderRadius: 12, padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "var(--green)", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 4 }}>Road Rupture</div>
+              <div>
+                <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>What is at this point?</label>
+                <select value={ruptureKind} onChange={e => setRuptureKind(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                  <option value="rupture">Road rupture (break / washaway)</option>
+                  <option value="under_construction">Under construction / rehabilitation</option>
+                </select>
+              </div>
+              {ruptureKind === "rupture" && (
+                <div>
+                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Cause</label>
+                  <select value={ruptureCause} onChange={e => setRuptureCause(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                    <option value="washaway">Washaway</option>
+                    <option value="collapse">Collapse</option>
+                    <option value="missing_pavement">Missing pavement</option>
+                    <option value="cut_off">Road cut off</option>
+                    <option value="other">Other</option>
+                  </select>
+                </div>
+              )}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Detour available</label>
+                  <select value={ruptureDetour} onChange={e => setRuptureDetour(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                    <option value="yes">Yes</option>
+                    <option value="no">No</option>
+                  </select>
+                </div>
+                {ruptureKind === "rupture" && (
+                  <div>
+                    <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Severity</label>
+                    <select value={ruptureCondition} onChange={e => setRuptureCondition(e.target.value)} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                      <option value="fair">Partial / passable</option>
+                      <option value="poor">Impassable</option>
+                    </select>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {section === "sign" && (
             <div style={{ background: "#f0f7f3", border: "1px solid rgba(0,102,51,0.15)", borderRadius: 12, padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: "var(--green)", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 4 }}>Road Sign Details</div>
@@ -3931,7 +3361,7 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
 }
 
 
-function DatabasePage({ records, onSelectRecord, onRefresh, onToast }: { records: any[]; onSelectRecord: (r: any) => void; onRefresh?: () => void; onToast?: (msg: string, type: "success" | "error" | "info") => void }) {
+function DatabasePage({ onSelectRecord, onRefresh, onToast }: { records?: any[]; onSelectRecord: (r: any) => void; onRefresh?: () => void; onToast?: (msg: string, type: "success" | "error" | "info") => void }) {
   const [category, setCategory] = useState("sealed");
   const [search, setSearch] = useState("");
   const [searchDebounced, setSearchDebounced] = useState("");
@@ -3949,150 +3379,41 @@ function DatabasePage({ records, onSelectRecord, onRefresh, onToast }: { records
   const [editRecord, setEditRecord] = useState<any | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [drawerRecord, setDrawerRecord] = useState<any | null>(null);
-
-  const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({});
-  const [pageRecords, setPageRecords] = useState<any[]>([]);
-  const [total, setTotal] = useState(0);
-  const [roads, setRoads] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const fallbackCounts = useMemo(() => countByLayer(records, getCategoryKey), [records]);
-  const counts = Object.keys(categoryCounts).length > 0 ? categoryCounts : fallbackCounts;
-
-  const categoryStats = useMemo(() => {
-    const scoped = records.filter((r) => getCategoryKey(r) === category);
-    let good = 0;
-    let fair = 0;
-    let poor = 0;
-    for (const r of scoped) {
-      const s = getRecordStatus(r);
-      if (s === "good") good += 1;
-      else if (s === "fair") fair += 1;
-      else if (s === "poor") poor += 1;
-    }
-    return {
-      total: scoped.length || total || counts[category] || 0,
-      good,
-      fair,
-      poor,
-    };
-  }, [records, category, total, counts]);
-
-  const useClientAdvanced =
-    provinceFilter !== "all" ||
-    districtFilter !== "all" ||
-    surveyorFilter !== "all" ||
-    highwayFilter !== "all";
+  const [viewMode, setViewMode] = useState<"cards" | "table">("cards");
 
   useEffect(() => {
     const t = window.setTimeout(() => setSearchDebounced(search.trim()), 300);
     return () => window.clearTimeout(t);
   }, [search]);
 
-  useEffect(() => {
-    if (useClientAdvanced) return;
+  const {
+    records: pageRecords,
+    total,
+    counts,
+    stats: categoryStats,
+    roads,
+    surveyors,
+    loading,
+    error,
+    reload,
+  } = useCategoryBrowse({
+    category,
+    page,
+    pageSize: PAGE_SIZE,
+    search: searchDebounced,
+    condition: condFilter,
+    road: highwayFilter,
+    surveyor: surveyorFilter,
+    province: provinceFilter,
+    district: districtFilter,
+    sort: sortCol,
+    dir: sortDir,
+  });
 
-    const controller = new AbortController();
-    let alive = true;
-
-    const load = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const params = new URLSearchParams({
-          page: String(page),
-          pageSize: String(PAGE_SIZE),
-          category,
-          meta: page === 0 ? "1" : "0",
-        });
-        if (searchDebounced) params.set("search", searchDebounced);
-        if (condFilter !== "all") params.set("condition", condFilter);
-
-        const res = await fetch(`/api/roads?${params}`, { cache: "no-store", signal: controller.signal });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        if (!alive) return;
-
-        const rows = Array.isArray(data.records) ? data.records : [];
-        setPageRecords(rows);
-        setTotal(Number(data.total) || rows.length);
-        if (data.categories && typeof data.categories === "object") setCategoryCounts(data.categories);
-        if (Array.isArray(data.roads)) setRoads(data.roads);
-      } catch (e: any) {
-        if (e?.name === "AbortError") return;
-        if (!alive) return;
-        setError(e?.message || "Failed to load database");
-        setPageRecords([]);
-        setTotal(0);
-      } finally {
-        if (alive) setLoading(false);
-      }
-    };
-
-    load();
-    return () => {
-      alive = false;
-      controller.abort();
-    };
-  }, [category, page, searchDebounced, condFilter, useClientAdvanced, records]);
-
-  // Advanced location/surveyor filters → client-side on category-scoped records
-  const clientFiltered = useMemo(() => {
-    if (!useClientAdvanced) return null;
-    const q = searchDebounced.toLowerCase();
-    return records.filter((r) => {
-      if (getCategoryKey(r) !== category) return false;
-      const matchQ =
-        !q ||
-        getAssetName(r).toLowerCase().includes(q) ||
-        (r.road_name ?? "").toLowerCase().includes(q) ||
-        (r.surveyor_name ?? "").toLowerCase().includes(q);
-      const matchH = highwayFilter === "all" || (r.road_name ?? "").includes(highwayFilter);
-      const matchC = condFilter === "all" || getRecordStatus(r) === condFilter;
-      const matchProv = provinceFilter === "all" || r.province === provinceFilter;
-      const matchDist = districtFilter === "all" || r.district === districtFilter;
-      const matchSurveyor = surveyorFilter === "all" || r.surveyor_name === surveyorFilter;
-      return matchQ && matchH && matchC && matchProv && matchDist && matchSurveyor;
-    });
-  }, [useClientAdvanced, records, category, searchDebounced, highwayFilter, condFilter, provinceFilter, districtFilter, surveyorFilter]);
-
-  const workingRows = useClientAdvanced ? (clientFiltered || []) : pageRecords;
-  const workingTotal = useClientAdvanced ? workingRows.length : total;
-
-  const sorted = useMemo(() => {
-    const rows = [...workingRows];
-    rows.sort((a, b) => {
-      let va = "";
-      let vb = "";
-      if (sortCol === "asset_name") {
-        va = getAssetName(a);
-        vb = getAssetName(b);
-      } else if (sortCol === "condition") {
-        va = getRecordStatus(a);
-        vb = getRecordStatus(b);
-      } else if (sortCol === "gps") {
-        const latA = a._geolocation?.[0] ?? 0;
-        const latB = b._geolocation?.[0] ?? 0;
-        return sortDir === "asc" ? latA - latB : latB - latA;
-      } else {
-        va = String(a[sortCol] ?? "");
-        vb = String(b[sortCol] ?? "");
-      }
-      return sortDir === "asc" ? va.localeCompare(vb) : vb.localeCompare(va);
-    });
-    return rows;
-  }, [workingRows, sortCol, sortDir]);
-
+  const workingTotal = total;
   const pages = Math.max(1, Math.ceil(workingTotal / PAGE_SIZE));
   const pageSafe = Math.min(page, pages - 1);
-  const slice = useClientAdvanced
-    ? sorted.slice(pageSafe * PAGE_SIZE, (pageSafe + 1) * PAGE_SIZE)
-    : sorted;
-
-  useEffect(() => {
-    if (useClientAdvanced) setLoading(false);
-  }, [useClientAdvanced]);
+  const slice = pageRecords;
 
   useEffect(() => {
     if (page > pages - 1) setPage(Math.max(0, pages - 1));
@@ -4101,29 +3422,8 @@ function DatabasePage({ records, onSelectRecord, onRefresh, onToast }: { records
   const activeLabel =
     OVERLAY_GROUPS.flatMap((g) => g.items).find((i) => i.key === category)?.label ?? category;
 
-  const surveyorsList = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          records
-            .filter((r) => getCategoryKey(r) === category)
-            .map((r) => r.surveyor_name)
-            .filter(Boolean)
-        )
-      ).sort(),
-    [records, category]
-  );
-
-  const highwayOptions = useMemo(() => {
-    if (roads.length > 0) return roads;
-    return Array.from(
-      new Set(
-        records
-          .filter((r) => getCategoryKey(r) === category && r.road_name)
-          .map((r) => r.road_name)
-      )
-    ).sort();
-  }, [roads, records, category]);
+  const surveyorsList = surveyors;
+  const highwayOptions = roads;
 
   const handleSort = (col: string) => {
     if (sortCol === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -4152,6 +3452,7 @@ function DatabasePage({ records, onSelectRecord, onRefresh, onToast }: { records
       if (res.ok && data.success) {
         if (onToast) onToast(data.message || "Record deleted successfully.", "success");
         setDrawerRecord(null);
+        reload();
         if (onRefresh) onRefresh();
       } else {
         throw new Error(data.error || "Delete failed");
@@ -4188,6 +3489,7 @@ function DatabasePage({ records, onSelectRecord, onRefresh, onToast }: { records
       if (res.ok && data.success) {
         if (onToast) onToast(isEdit ? "✓ Survey record updated successfully!" : "✓ Survey record saved to Supabase!", "success");
         setIsFormOpen(false);
+        reload();
         if (onRefresh) onRefresh();
       } else {
         throw new Error(data.error || "Saving survey record failed");
@@ -4420,6 +3722,42 @@ function DatabasePage({ records, onSelectRecord, onRefresh, onToast }: { records
             <span>+</span> Add Survey Record
           </button>
 
+          <div style={{ display: "flex", background: "#fff", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 8, overflow: "hidden" }}>
+            <button
+              type="button"
+              onClick={() => setViewMode("cards")}
+              title="Card view"
+              style={{
+                padding: "7px 10px",
+                border: "none",
+                background: viewMode === "cards" ? "var(--bg-active)" : "transparent",
+                color: viewMode === "cards" ? "var(--green)" : "var(--text-muted)",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+              }}
+            >
+              <LayoutGrid size={14} />
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("table")}
+              title="Table view"
+              style={{
+                padding: "7px 10px",
+                border: "none",
+                borderLeft: "1px solid rgba(0,102,51,0.2)",
+                background: viewMode === "table" ? "var(--bg-active)" : "transparent",
+                color: viewMode === "table" ? "var(--green)" : "var(--text-muted)",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+              }}
+            >
+              <Table2 size={14} />
+            </button>
+          </div>
+
           <span style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: "auto", whiteSpace: "nowrap" }}>
             {loading ? "Loading…" : `${workingTotal} rows`} · Page {pageSafe + 1}/{pages}
           </span>
@@ -4465,7 +3803,34 @@ function DatabasePage({ records, onSelectRecord, onRefresh, onToast }: { records
           </div>
         )}
 
-        {/* Table */}
+        {viewMode === "cards" ? (
+        <div style={{ flex: 1, overflowY: "auto", padding: "14px 20px" }}>
+          {error ? (
+            <div style={{ textAlign: "center", color: "#dc2626", padding: 40, fontSize: 13 }}>{error}</div>
+          ) : loading && slice.length === 0 ? (
+            <div style={{ textAlign: "center", color: "var(--text-muted)", padding: 40, fontSize: 13 }}>Loading {activeLabel.toLowerCase()}…</div>
+          ) : slice.length === 0 ? (
+            <div style={{ textAlign: "center", color: "var(--text-muted)", padding: 40, fontSize: 13 }}>
+              No {activeLabel.toLowerCase()} match your filters.
+            </div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12, opacity: loading ? 0.6 : 1 }}>
+              {slice.map((r, i) => {
+                const id = String(r.id || r._id || r.survey_id || "");
+                return (
+                  <SurveyAssetCard
+                    key={id || `${category}-${pageSafe}-${i}`}
+                    record={r}
+                    selected={!!drawerId && id === drawerId}
+                    onOpen={setDrawerRecord}
+                    onShowOnMap={onSelectRecord}
+                  />
+                );
+              })}
+            </div>
+          )}
+        </div>
+        ) : (
         <div style={{ flex: 1, overflowX: "auto", overflowY: "auto", opacity: loading ? 0.65 : 1 }}>
           {error ? (
             <div style={{ padding: 40, textAlign: "center", color: "#dc2626", fontSize: 13 }}>{error}</div>
@@ -4576,6 +3941,7 @@ function DatabasePage({ records, onSelectRecord, onRefresh, onToast }: { records
             </table>
           )}
         </div>
+        )}
 
         {/* Pagination */}
         <div style={{ padding: "10px 20px", borderTop: "1px solid var(--border)", background: "#fafcfb", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
@@ -4612,401 +3978,9 @@ function DatabasePage({ records, onSelectRecord, onRefresh, onToast }: { records
   );
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   EXPORT
- ════════════════════════════════════════════════════════════════════════════ */
-const EXPORT_PARAMETERS = [
-  { key: "sealed",          label: "Sealed Roads",    emoji: "🛣️" },
-  { key: "gravel",          label: "Gravel Roads",    emoji: "🪨" },
-  { key: "earth",           label: "Earth Roads",     emoji: "🚜" },
-  { key: "bridge",          label: "Bridges",         emoji: "🌉" },
-  { key: "footbridge",      label: "Foot Bridges",    emoji: "🚶" },
-  { key: "rail_crossing",   label: "Rail Crossings",  emoji: "🛤️" },
-  { key: "tollgate",        label: "Tollgates",       emoji: "🪙" },
-  { key: "drift",           label: "Drifts",          emoji: "🌊" },
-  { key: "culvert",         label: "Culverts",        emoji: "🕳️" },
-  { key: "piped_causeway",  label: "Piped Causeways", emoji: "🌁" },
-  { key: "shelvet",         label: "Shelverts",        emoji: "🧱" },
-  { key: "grid",            label: "Cattle Grids",    emoji: "🐄" },
-  { key: "catchpit",        label: "Catchpits",       emoji: "🕳️" },
-  { key: "layby",           label: "Lay-bys",         emoji: "🅿️" },
-  { key: "busstop",         label: "Bus Stops",       emoji: "🚌" },
-  { key: "junction",        label: "Junctions",       emoji: "🔀" },
-  { key: "sign",            label: "Road Signs",      emoji: "⚠️" },
-  { key: "traffic_lights",  label: "Traffic Lights",  emoji: "🚦" },
-  { key: "traffic_calming", label: "Traffic Calming", emoji: "🛑" },
-  { key: "streetlight",     label: "Streetlights",    emoji: "💡" }
-];
 
-const ALL_PARAM_KEYS = EXPORT_PARAMETERS.map(p => p.key);
+/* Export page lives in ./ExportPage.tsx */
 
-function ExportPage({ records, onSelectRecord }: { records: any[]; onSelectRecord?: (r: any) => void }) {
-  const [fmt, setFmt]   = useState("csv");
-  const [road, setRoad] = useState("all");
-  const [cond, setCond] = useState("all");
-  const [provinceFilter, setProvinceFilter] = useState("all");
-  const [districtFilter, setDistrictFilter] = useState("all");
-  const [surveyorFilter, setSurveyorFilter] = useState("all");
-
-  const [selectedParams, setSelectedParams] = useState<string[]>(ALL_PARAM_KEYS);
-
-  const roads = Array.from(new Set(records.map(r => r.road_name).filter(Boolean)));
-
-  const filtered = records.filter(r => {
-    const matchR = road === "all" || r.road_name === road;
-    const matchC = cond === "all" || getRecordStatus(r) === cond;
-    const matchProv = provinceFilter === "all" || r.province === provinceFilter;
-    const matchDist = districtFilter === "all" || r.district === districtFilter;
-    const matchSurveyor = surveyorFilter === "all" || r.surveyor_name === surveyorFilter;
-    return matchR && matchC && matchProv && matchDist && matchSurveyor;
-  });
-
-  const recordsToPreview = filtered.filter(r => selectedParams.includes(r.asset_category));
-  const countToExport = recordsToPreview.length;
-
-  const handleDownload = () => {
-    selectedParams.forEach((paramKey, index) => {
-      setTimeout(() => {
-        const paramRecords = filtered.filter(r => r.asset_category === paramKey);
-        if (paramRecords.length === 0) return;
-
-        // Dynamically gather all attributes captured for this parameter
-        const keys = new Set<string>();
-        paramRecords.forEach(r => {
-          Object.keys(r).forEach(k => {
-            if (!EXCLUDED_KEYS.has(k)) {
-              keys.add(k);
-            }
-          });
-        });
-
-        const coreKeys = ["asset_name", "asset_type", "condition", "latitude", "longitude", "road_name", "section_name", "province", "district", "surveyor_name", "survey_date"];
-        const customAttrs = Array.from(keys).filter(k => !coreKeys.includes(k));
-
-        const allAttrs = [
-          "asset_name",
-          "asset_type",
-          "condition",
-          ...customAttrs,
-          "road_name",
-          "section_name",
-          "province",
-          "district",
-          "surveyor_name",
-          "survey_date",
-          "latitude",
-          "longitude"
-        ];
-
-        const paramLabel = EXPORT_PARAMETERS.find(p => p.key === paramKey)?.label || paramKey;
-        const cleanFilename = paramLabel.toLowerCase().replace(/ /g, "_");
-
-        if (fmt === "json") {
-          const dataToExport = paramRecords.map(r => {
-            const obj: any = {};
-            allAttrs.forEach(p => {
-              if (p === "asset_name") obj.asset_name = getAssetName(r);
-              else if (p === "asset_type") obj.asset_type = getAssetType(r);
-              else if (p === "condition") obj.condition = getRecordStatus(r);
-              else if (p === "latitude") obj.latitude = r._geolocation?.[0] ?? "";
-              else if (p === "longitude") obj.longitude = r._geolocation?.[1] ?? "";
-              else if (r[p] !== undefined) obj[p] = r[p];
-            });
-            return obj;
-          });
-          const blob = new Blob([JSON.stringify(dataToExport, null, 2)], { type: "application/json" });
-          const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
-          a.download = `${cleanFilename}_export_${new Date().toISOString().slice(0,10)}.json`;
-          a.click();
-        } else if (fmt === "geojson") {
-          const features = paramRecords.map(r => {
-            const geom = getGeometry(r);
-            const properties: any = {};
-            allAttrs.forEach(p => {
-              if (p === "asset_name") properties.asset_name = getAssetName(r);
-              else if (p === "asset_type") properties.asset_type = getAssetType(r);
-              else if (p === "condition") properties.condition = getRecordStatus(r);
-              else if (p === "latitude") properties.latitude = r._geolocation?.[0] ?? "";
-              else if (p === "longitude") properties.longitude = r._geolocation?.[1] ?? "";
-              else if (r[p] !== undefined) properties[p] = r[p];
-            });
-            return {
-              type: "Feature",
-              geometry: geom,
-              properties: properties
-            };
-          }).filter(f => f.geometry !== null);
-
-          const featureCollection = {
-            type: "FeatureCollection",
-            features: features
-          };
-
-          const blob = new Blob([JSON.stringify(featureCollection, null, 2)], { type: "application/geo+json" });
-          const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
-          a.download = `${cleanFilename}_export_${new Date().toISOString().slice(0,10)}.geojson`;
-          a.click();
-        } else if (fmt === "kml") {
-          let kml = `<?xml version="1.0" encoding="UTF-8"?>\n`;
-          kml += `<kml xmlns="http://www.opengis.net/kml/2.2">\n`;
-          kml += `  <Document>\n`;
-          kml += `    <name>${paramLabel} Export - ${new Date().toISOString().slice(0,10)}</name>\n`;
-
-          kml += `    <Style id="goodStyle">\n`;
-          kml += `      <LineStyle><color>ff336600</color><width>4</width></LineStyle>\n`;
-          kml += `      <IconStyle><color>ff336600</color><scale>1.1</scale></IconStyle>\n`;
-          kml += `    </Style>\n`;
-          kml += `    <Style id="fairStyle">\n`;
-          kml += `      <LineStyle><color>ff0b9ef5</color><width>4</width></LineStyle>\n`;
-          kml += `      <IconStyle><color>ff0b9ef5</color><scale>1.1</scale></IconStyle>\n`;
-          kml += `    </Style>\n`;
-          kml += `    <Style id="poorStyle">\n`;
-          kml += `      <LineStyle><color>ff2626dc</color><width>4</width></LineStyle>\n`;
-          kml += `      <IconStyle><color>ff2626dc</color><scale>1.1</scale></IconStyle>\n`;
-          kml += `    </Style>\n`;
-          kml += `    <Style id="defaultStyle">\n`;
-          kml += `      <LineStyle><color>ff888888</color><width>4</width></LineStyle>\n`;
-          kml += `      <IconStyle><color>ff888888</color><scale>1.1</scale></IconStyle>\n`;
-          kml += `    </Style>\n`;
-
-          paramRecords.forEach(r => {
-            const geom = getGeometry(r);
-            if (!geom) return;
-
-            const condVal = getRecordStatus(r);
-            const styleId = condVal === "good" ? "goodStyle" : condVal === "fair" ? "fairStyle" : condVal === "poor" ? "poorStyle" : "defaultStyle";
-
-            let desc = `<table border="1" style="border-collapse: collapse; font-family: sans-serif; font-size: 11px; width: 100%;">`;
-            desc += `<tr style="background-color: #006633; color: white;"><th>Attribute</th><th>Value</th></tr>`;
-
-            allAttrs.forEach(p => {
-              let val = "";
-              if (p === "asset_name") val = getAssetName(r);
-              else if (p === "asset_type") val = getAssetType(r);
-              else if (p === "condition") val = condVal.toUpperCase();
-              else if (p === "latitude") val = r._geolocation?.[0] ?? "";
-              else if (p === "longitude") val = r._geolocation?.[1] ?? "";
-              else val = r[p] !== undefined ? formatValue(r[p]) : "";
-
-              if (val !== null && val !== undefined && val !== "") {
-                desc += `<tr><td><b>${formatKey(p)}</b></td><td>${val}</td></tr>`;
-              }
-            });
-            desc += `</table>`;
-
-            kml += `    <Placemark>\n`;
-            kml += `      <name>${getAssetName(r)}</name>\n`;
-            kml += `      <styleUrl>#${styleId}</styleUrl>\n`;
-            kml += `      <description><![CDATA[${desc}]]></description>\n`;
-
-            if (geom.type === "LineString") {
-              kml += `      <LineString>\n`;
-              kml += `        <tessellate>1</tessellate>\n`;
-              kml += `        <coordinates>\n`;
-              const coords = geom.coordinates.map((c: any) => `${c[0]},${c[1]},0`).join("\n          ");
-              kml += `          ${coords}\n`;
-              kml += `        </coordinates>\n`;
-              kml += `      </LineString>\n`;
-            } else if (geom.type === "Point") {
-              kml += `      <Point>\n`;
-              kml += `        <coordinates>${geom.coordinates[0]},${geom.coordinates[1]},0</coordinates>\n`;
-              kml += `      </Point>\n`;
-            }
-            kml += `    </Placemark>\n`;
-          });
-
-          kml += `  </Document>\n`;
-          kml += `</kml>\n`;
-
-          const blob = new Blob([kml], { type: "application/vnd.google-earth.kml+xml" });
-          const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
-          a.download = `${cleanFilename}_export_${new Date().toISOString().slice(0,10)}.kml`;
-          a.click();
-        } else {
-          // CSV format
-          const headers = allAttrs;
-          const csvRows = paramRecords.map(r => {
-            return headers.map(header => {
-              let val = "";
-              if (header === "asset_name") val = getAssetName(r);
-              else if (header === "asset_type") val = getAssetType(r);
-              else if (header === "condition") val = getRecordStatus(r);
-              else if (header === "latitude") val = r._geolocation?.[0] ?? "";
-              else if (header === "longitude") val = r._geolocation?.[1] ?? "";
-              else val = r[header] ?? "";
-
-              const cell = String(val).replace(/"/g, '""');
-              return `"${cell}"`;
-            }).join(",");
-          });
-
-          const csv = [headers.map(h => formatKey(h)).join(","), ...csvRows].join("\n");
-          const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-          const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
-          a.download = `${cleanFilename}_export_${new Date().toISOString().slice(0,10)}.csv`;
-          a.click();
-        }
-      }, index * 400);
-    });
-  };
-
-  return (
-    <div style={{ padding: "24px", overflowY: "auto", height: "100%", background: "var(--bg-app)", display: "flex", flexDirection: "column", gap: 20 }}>
-      <SectionTitle>Export Telemetry Data</SectionTitle>
-
-      <div className="export-page-layout">
-        {/* Options panel */}
-        <div style={{ background: "#fff", borderRadius: 12, padding: 20, border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)", display: "flex", flexDirection: "column", gap: 14 }}>
-          <div>
-            <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.7px", color: "var(--text-muted)", marginBottom: 6 }}>Export Format</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-              {["csv", "json", "geojson", "kml"].map(f => (
-                <button key={f} onClick={() => setFmt(f)} style={{ padding: "10px", borderRadius: 8, border: `2px solid ${fmt === f ? "var(--green)" : "var(--border)"}`, background: fmt === f ? "var(--bg-active)" : "#f9fafb", fontSize: 11, fontWeight: 700, color: fmt === f ? "var(--green)" : "var(--text-muted)", cursor: "pointer", textTransform: "uppercase", fontFamily: "var(--font-body)" }}>
-                  {f === "csv" ? "📄 CSV" : f === "json" ? "🔧 JSON" : f === "geojson" ? "🌍 GeoJSON" : "🗺️ KML"}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.7px", color: "var(--text-muted)", marginBottom: 6 }}>Filter by Highway</div>
-            <select value={road} onChange={e => setRoad(e.target.value)} style={{ width: "100%", padding: "9px 12px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 8, fontSize: 12, outline: "none", fontFamily: "var(--font-body)", color: "var(--text-secondary)" }}>
-              <option value="all">All Highways</option>
-              {roads.map(r => <option key={r} value={r}>{(r ?? "").split(" (")[0]}</option>)}
-            </select>
-          </div>
-
-          <div>
-            <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.7px", color: "var(--text-muted)", marginBottom: 6 }}>Filter by Condition</div>
-            <select value={cond} onChange={e => setCond(e.target.value)} style={{ width: "100%", padding: "9px 12px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 8, fontSize: 12, outline: "none", fontFamily: "var(--font-body)", color: "var(--text-secondary)" }}>
-              <option value="all">All Conditions</option>
-              <option value="good">Good</option>
-              <option value="fair">Fair</option>
-              <option value="poor">Poor</option>
-              <option value="mixed">Mixed</option>
-              <option value="under_construction">Under construction</option>
-            </select>
-          </div>
-
-          <div>
-            <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.7px", color: "var(--text-muted)", marginBottom: 6 }}>Filter by Province</div>
-            <select value={provinceFilter} onChange={e => { setProvinceFilter(e.target.value); setDistrictFilter("all"); }} style={{ width: "100%", padding: "9px 12px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 8, fontSize: 12, outline: "none", fontFamily: "var(--font-body)", color: "var(--text-secondary)" }}>
-              <option value="all">All Provinces (National)</option>
-              {Object.keys(ZIM_PROVINCES_DISTRICTS).map(p => (
-                <option key={p} value={p}>{p}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.7px", color: "var(--text-muted)", marginBottom: 6 }}>Filter by District</div>
-            <select value={districtFilter} onChange={e => setDistrictFilter(e.target.value)} disabled={provinceFilter === "all"} style={{ width: "100%", padding: "9px 12px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 8, fontSize: 12, outline: "none", fontFamily: "var(--font-body)", color: "var(--text-secondary)", background: provinceFilter === "all" ? "#f4f6f5" : "#fff", cursor: provinceFilter === "all" ? "not-allowed" : "pointer" }}>
-              <option value="all">All Districts</option>
-              {provinceFilter !== "all" && (ZIM_PROVINCES_DISTRICTS[provinceFilter] || []).map(d => (
-                <option key={d} value={d}>{d}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.7px", color: "var(--text-muted)", marginBottom: 6 }}>Filter by Surveyor</div>
-            <select value={surveyorFilter} onChange={e => setSurveyorFilter(e.target.value)} style={{ width: "100%", padding: "9px 12px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 8, fontSize: 12, outline: "none", fontFamily: "var(--font-body)", color: "var(--text-secondary)" }}>
-              <option value="all">All Surveyors</option>
-              {Array.from(new Set(records.map(r => r.surveyor_name).filter(Boolean))).map(s => (
-                <option key={s} value={s}>{s}</option>
-              ))}
-            </select>
-          </div>
-
-          <div style={{ background: "var(--bg-app)", borderRadius: 10, padding: 14, border: "1px solid var(--border)", textAlign: "center" }}>
-            <div style={{ fontFamily: "var(--font-title)", fontSize: 40, fontWeight: 800, color: "var(--green)" }}>{countToExport}</div>
-            <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.5px" }}>Records to export</div>
-          </div>
-
-          <button onClick={handleDownload} style={{ background: "var(--green)", color: "#fff", border: "none", borderRadius: 10, padding: "13px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontFamily: "var(--font-body)", transition: "background 0.15s" }}
-            onMouseOver={e => (e.currentTarget.style.background = "var(--green-light)")}
-            onMouseOut={e => (e.currentTarget.style.background = "var(--green)")}>
-            <Download size={16} /> Download {fmt.toUpperCase()}
-          </button>
-        </div>
-
-        {/* Dynamic Parameter Checklist + Preview */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 16, overflow: "hidden" }}>
-          {/* Dynamic Checklist */}
-          <div style={{ background: "#fff", borderRadius: 12, padding: 16, border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)", display: "flex", flexDirection: "column", gap: 10 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.7px", color: "var(--text-muted)" }}>Choose Parameters to Export ({selectedParams.length} selected)</div>
-              <div style={{ display: "flex", gap: 12 }}>
-                <button onClick={() => setSelectedParams(ALL_PARAM_KEYS)} style={{ background: "none", border: "none", color: "var(--green)", cursor: "pointer", fontSize: 11, fontWeight: 700, padding: 0 }}>Select All</button>
-                <button onClick={() => setSelectedParams([])} style={{ background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontSize: 11, fontWeight: 700, padding: 0 }}>Clear All</button>
-              </div>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 8, maxHeight: 160, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 8, padding: "10px 14px", background: "var(--bg-app)" }}>
-              {EXPORT_PARAMETERS.map(p => {
-                const isChecked = selectedParams.includes(p.key);
-                return (
-                  <label key={p.key} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, cursor: "pointer", color: isChecked ? "var(--text-primary)" : "var(--text-muted)", fontWeight: isChecked ? 600 : 400 }}>
-                    <input
-                      type="checkbox"
-                      checked={isChecked}
-                      onChange={() => {
-                        if (isChecked) {
-                          setSelectedParams(selectedParams.filter(item => item !== p.key));
-                        } else {
-                          setSelectedParams([...selectedParams, p.key]);
-                        }
-                      }}
-                      style={{ accentColor: "var(--green)" }}
-                    />
-                    <span style={{ textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>{p.emoji} {p.label}</span>
-                  </label>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Preview table */}
-          <div style={{ background: "#fff", borderRadius: 12, padding: 16, border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)", overflow: "auto", flex: 1 }}>
-            <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.7px", color: "var(--text-muted)", marginBottom: 10 }}>Data Preview (first 15 rows)</div>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10.5 }}>
-              <thead>
-                <tr>
-                  {["Asset", "Type", "Road", "Province", "District", "Condition", "Date", "Surveyor"].map(h => (
-                    <th key={h} style={{ background: "#f0f7f3", padding: "7px 10px", textAlign: "left", fontSize: 9.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.5px", color: "var(--text-muted)", borderBottom: "2px solid var(--border)", whiteSpace: "nowrap" }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {recordsToPreview.slice(0, 15).map((r, i) => {
-                  const c = getRecordStatus(r);
-                  return (
-                    <tr
-                      key={r._id ?? i}
-                      onClick={() => onSelectRecord?.(r)}
-                      title="Click to show on map"
-                      style={{ cursor: onSelectRecord ? "pointer" : "default" }}
-                      onMouseOver={e => { if (onSelectRecord) e.currentTarget.style.background = "var(--bg-hover)"; }}
-                      onMouseOut={e => { e.currentTarget.style.background = "transparent"; }}
-                    >
-                      <td style={{ padding: "6px 10px", borderBottom: "1px solid rgba(0,102,51,0.06)", fontWeight: 600, color: "var(--text-primary)" }}>{getAssetName(r)}</td>
-                      <td style={{ padding: "6px 10px", borderBottom: "1px solid rgba(0,102,51,0.06)", color: "var(--text-secondary)" }}>{getAssetType(r)}</td>
-                      <td style={{ padding: "6px 10px", borderBottom: "1px solid rgba(0,102,51,0.06)", color: "var(--text-muted)", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{(r.road_name ?? "—").split(" (")[0]}</td>
-                      <td style={{ padding: "6px 10px", borderBottom: "1px solid rgba(0,102,51,0.06)", color: "var(--text-muted)", whiteSpace: "nowrap" }}>{r.province ?? "—"}</td>
-                      <td style={{ padding: "6px 10px", borderBottom: "1px solid rgba(0,102,51,0.06)", color: "var(--text-muted)", whiteSpace: "nowrap" }}>{r.district ?? "—"}</td>
-                      <td style={{ padding: "6px 10px", borderBottom: "1px solid rgba(0,102,51,0.06)" }}><span className={`badge ${c}`}>{c}</span></td>
-                      <td style={{ padding: "6px 10px", borderBottom: "1px solid rgba(0,102,51,0.06)", color: "var(--text-muted)", whiteSpace: "nowrap" }}>{r.survey_date ?? "—"}</td>
-                      <td style={{ padding: "6px 10px", borderBottom: "1px solid rgba(0,102,51,0.06)", color: "var(--text-muted)", whiteSpace: "nowrap" }}>{r.surveyor_name ?? "—"}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MAIN EXPORT
@@ -5020,31 +3994,33 @@ import DeletionApprovalsPanel from "./DeletionApprovalsPanel";
 import { UserProfile } from "@/components/helpers";
 
 const MODULE_TITLES: Record<string, string> = {
-  dashboard: "National Telemetry Overview & Executive KPI Summary",
+  dashboard: "Road Network Overview",
   highways: "Highway Corridor Performance & Asset Analysis",
-  analytics: "Road Condition & Defect Analytics Engine",
-  survey: "Field Survey Form & Live Asset Data Collection",
-  database: "Central Road & Infrastructure Survey Database",
+  analytics: "Survey Analysis",
+  survey: "Survey Records",
+  database: "Survey Records",
   gallery: "SADC Compliant Asset Photo & Evidence Gallery",
-  reports: "Executive Infrastructure Audit & Condition Reports",
+  reports: "Road Condition Briefing Pack",
   documents: "Ministry Manuals, Guidelines & Policy Document Library",
   export: "Data Export & Geographic Exchange Center",
-  users: "Hierarchical User Provisioning & Access Control System",
-  approvals: "Cascading Soft-Delete Approvals & Audit Trail"
+  users: "User accounts",
+  approvals: "Deletion approvals",
+  settings: "Account & Administration",
 };
 
 const MODULE_ICONS: Record<string, React.ReactNode> = {
   dashboard: <LayoutDashboard size={18} />,
-  highways: <TrendingUp size={18} />,
+  highways: <Route size={18} />,
   analytics: <BarChart2 size={18} />,
   survey: <ClipboardCheck size={18} />,
-  database: <Database size={18} />,
+  database: <ClipboardCheck size={18} />,
   gallery: <Camera size={18} />,
   reports: <FileText size={18} />,
   documents: <BookOpen size={18} />,
   export: <Download size={18} />,
   users: <Users size={18} />,
-  approvals: <ShieldAlert size={18} />
+  approvals: <ShieldAlert size={18} />,
+  settings: <Settings size={18} />,
 };
 
 interface FullPageModuleProps {
@@ -5056,9 +4032,11 @@ interface FullPageModuleProps {
   onToast: (msg: string, type: "success" | "error" | "info") => void;
   lastSynced?: Date | null;
   currentUser?: UserProfile;
+  onNavSelect?: (m: NavModule) => void;
+  onSignOut?: () => void;
 }
 
-export default function FullPageModule({ module, records, onSelectRecord, onClose, onRefresh, onToast, lastSynced, currentUser }: FullPageModuleProps) {
+export default function FullPageModule({ module, records, onSelectRecord, onClose, onRefresh, onToast, lastSynced, currentUser, onNavSelect, onSignOut }: FullPageModuleProps) {
   const activeUser: UserProfile = currentUser || {
     id: "usr-master-1",
     email: "ict.admin@transport.gov.zw",
@@ -5079,1343 +4057,65 @@ export default function FullPageModule({ module, records, onSelectRecord, onClos
           <div>
             <div style={{ fontFamily: "var(--font-title)", fontSize: 15, fontWeight: 800, color: "var(--text-primary)", display: "flex", alignItems: "center", gap: 8 }}>
               {MODULE_TITLES[module] ?? module}
-              <span style={{ background: "var(--bg-active)", color: "var(--green)", fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 10, border: "1px solid var(--border)" }}>
-                {records.length.toLocaleString()} records
-              </span>
+              {module !== "settings" && module !== "users" && module !== "approvals" && (
+                <span style={{ background: "var(--bg-active)", color: "var(--green)", fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 10, border: "1px solid var(--border)" }}>
+                  {module === "survey" || module === "database" || module === "gallery"
+                    ? "Live server pages"
+                    : `${records.length.toLocaleString()} records`}
+                </span>
+              )}
             </div>
             <div style={{ fontSize: 9.5, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.6px" }}>
               Roads Department · Zimbabwe
-              {lastSynced && <span> · Last synced: {lastSynced.toLocaleTimeString()}</span>}
+              {lastSynced && module !== "settings" && module !== "users" && module !== "approvals" && (
+                <span> · Last synced: {lastSynced.toLocaleTimeString()}</span>
+              )}
             </div>
           </div>
         </div>
-        <button onClick={onClose} style={{ background: "var(--bg-app)", border: "1px solid var(--border)", borderRadius: 8, padding: "7px 14px", fontSize: 11.5, fontWeight: 700, color: "var(--text-secondary)", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, fontFamily: "var(--font-body)", transition: "all 0.15s" }}
+        <button onClick={() => {
+          if ((module === "users" || module === "approvals") && onNavSelect) {
+            onNavSelect("settings");
+            return;
+          }
+          onClose();
+        }} style={{ background: "var(--bg-app)", border: "1px solid var(--border)", borderRadius: 8, padding: "7px 14px", fontSize: 11.5, fontWeight: 700, color: "var(--text-secondary)", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, fontFamily: "var(--font-body)", transition: "all 0.15s" }}
           onMouseOver={e => (e.currentTarget.style.borderColor = "var(--green)")}
           onMouseOut={e => (e.currentTarget.style.borderColor = "var(--border)")}>
-          🗺 Back to Map
+          {module === "users" || module === "approvals" ? "← Settings" : "🗺 Back to Map"}
           <X size={13} />
         </button>
       </div>
 
       {/* Module content */}
       <div style={{ flex: 1, overflow: "hidden" }}>
-        {module === "dashboard" && <DashboardPage records={records} lastSynced={lastSynced} />}
-        {module === "highways"  && <HighwaysPage  records={records} />}
+        {module === "dashboard" && <DashboardPage records={records} onSelectRecord={onSelectRecord} lastSynced={lastSynced} />}
+        {module === "highways"  && <HighwaysPage  records={records} onSelectRecord={onSelectRecord} />}
         {module === "analytics" && <AnalyticsPage records={records} />}
-        {module === "survey"    && <SurveyPage    records={records} onSelectRecord={onSelectRecord} />}
+        {module === "survey"    && <DatabasePage  records={records} onSelectRecord={onSelectRecord} onRefresh={onRefresh} onToast={onToast} />}
         {module === "database"  && <DatabasePage  records={records} onSelectRecord={onSelectRecord} onRefresh={onRefresh} onToast={onToast} />}
         {module === "gallery"   && <GalleryPage   records={records} onSelectRecord={onSelectRecord} />}
-        {module === "reports"   && <ReportsPage   records={records} onSelectRecord={onSelectRecord} />}
+        {module === "reports"   && <ReportsPage   records={records} onSelectRecord={onSelectRecord} currentUser={activeUser} />}
         {module === "documents" && <DocumentsPage />}
         {module === "export"    && <ExportPage    records={records} onSelectRecord={onSelectRecord} />}
         {module === "users"     && <UserManagementPanel currentUser={activeUser} onToast={onToast} />}
         {module === "approvals" && <DeletionApprovalsPanel currentUser={activeUser} onToast={onToast} onRefreshRecords={onRefresh} />}
-      </div>
-    </div>
-  );
-}
-
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   GALLERY PAGE (NATIONAL PHOTO GALLERY)
- ════════════════════════════════════════════════════════════════════════════ */
-function GalleryCard({ record, onSelectRecord, onOpenLightbox }: { record: any; onSelectRecord: (r: any) => void; onOpenLightbox: (record: any, photos: string[]) => void }) {
-  const [photos, setPhotos] = useState<string[]>(() => normalizePhotos(record));
-  const [loading, setLoading] = useState<boolean>(false);
-  const cardRef = useRef<HTMLDivElement>(null);
-  const [inView, setInView] = useState(false);
-
-  useEffect(() => {
-    const el = cardRef.current;
-    if (!el) return;
-    const obs = new IntersectionObserver(
-      ([entry]) => { if (entry.isIntersecting) setInView(true); },
-      { rootMargin: "120px" }
-    );
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, []);
-
-  useEffect(() => {
-    const initial = normalizePhotos(record);
-    setPhotos(initial);
-    if (!inView) return;
-    if (initial.length > 0) return;
-
-    const id = record.id || record._id || record.survey_id;
-    if (!id) return;
-
-    setLoading(true);
-    fetch(`/api/roads?photoFor=${encodeURIComponent(id)}`)
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json();
-      })
-      .then((data) => {
-        const remote = Array.isArray(data.photos) && data.photos.length > 0
-          ? data.photos
-          : (data.photo ? [data.photo] : []);
-        if (remote.length > 0) setPhotos(remote);
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [record, inView]);
-
-  const cat = record.asset_category || "unknown";
-  const name = getAssetName(record);
-  const status = getRecordStatus(record);
-  const statusColor = getStatusColor(status);
-  const sadc = getSadcValue(record);
-
-  const mainPhoto = photos[0];
-
-  return (
-    <div ref={cardRef} style={{
-      background: "#fff",
-      borderRadius: 12,
-      border: "1px solid var(--border)",
-      overflow: "hidden",
-      display: "flex",
-      flexDirection: "column",
-      boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
-      transition: "transform 0.2s, box-shadow 0.2s",
-    }}
-    onMouseOver={e => {
-      e.currentTarget.style.transform = "translateY(-3px)";
-      e.currentTarget.style.boxShadow = "0 8px 20px rgba(0,0,0,0.1)";
-    }}
-    onMouseOut={e => {
-      e.currentTarget.style.transform = "translateY(0)";
-      e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.04)";
-    }}>
-      {/* Image Container */}
-      <div 
-        onClick={() => photos.length > 0 && onOpenLightbox(record, photos)}
-        style={{
-          position: "relative",
-          height: 180,
-          background: "rgba(0,0,0,0.04)",
-          cursor: photos.length > 0 ? "pointer" : "default",
-          overflow: "hidden"
-        }}
-      >
-        {mainPhoto ? (
-          <img 
-            src={mainPhoto} 
-            alt={name} 
-            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} 
+        {module === "settings"  && (
+          <SettingsPage
+            currentUser={currentUser ?? activeUser}
+            onNavSelect={onNavSelect}
+            onSignOut={onSignOut}
+            onToast={onToast}
           />
-        ) : loading ? (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--text-muted)", fontSize: 11, gap: 8 }}>
-            <div style={{ width: 18, height: 18, border: "2px solid rgba(0,102,51,0.2)", borderTop: "2px solid #006633", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
-            Loading photo…
-          </div>
-        ) : (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--text-muted)", fontSize: 11, flexDirection: "column", gap: 4 }}>
-            <Camera size={24} style={{ opacity: 0.3 }} />
-            <span>No Image Available</span>
-          </div>
-        )}
-
-        {/* Top Overlay Badges */}
-        <div style={{ position: "absolute", top: 10, left: 10, right: 10, display: "flex", justifyContent: "space-between", pointerEvents: "none" }}>
-          <span style={{ background: "rgba(0,0,0,0.65)", backdropFilter: "blur(4px)", color: "#fff", fontSize: 9.5, fontWeight: 700, padding: "3px 8px", borderRadius: 20, textTransform: "uppercase", letterSpacing: "0.5px" }}>
-            {cat.replace("_", " ")}
-          </span>
-          <span style={{ background: statusColor, color: "#fff", fontSize: 9.5, fontWeight: 700, padding: "3px 8px", borderRadius: 20, textTransform: "uppercase" }}>
-            {formatStatusLabel(status)}
-          </span>
-        </div>
-
-        {/* Bottom Overlay Badges */}
-        <div style={{ position: "absolute", bottom: 10, left: 10, right: 10, display: "flex", justifyContent: "space-between", alignItems: "center", pointerEvents: "none" }}>
-          {sadc === "yes" ? (
-            <span style={{ background: "rgba(0,102,51,0.85)", backdropFilter: "blur(4px)", color: "#fff", fontSize: 9, fontWeight: 700, padding: "2px 7px", borderRadius: 12, display: "flex", alignItems: "center", gap: 3 }}>
-              ✓ SADC Compliant
-            </span>
-          ) : <span />}
-
-          {photos.length > 0 && (
-            <span style={{ background: "rgba(0,0,0,0.75)", backdropFilter: "blur(4px)", color: "#fff", fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 12, display: "flex", alignItems: "center", gap: 4 }}>
-              📷 {photos.length} {photos.length === 1 ? "Photo" : "Photos"}
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* Card Content */}
-      <div style={{ padding: "12px 14px", flex: 1, display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
-        <div>
-          <div style={{ fontWeight: 700, fontSize: 13, color: "var(--text-primary)", marginBottom: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={name}>
-            {name}
-          </div>
-          <div style={{ fontSize: 10.5, color: "var(--text-secondary)", marginBottom: 8, display: "flex", alignItems: "center", gap: 4 }}>
-            <span>📍</span>
-            <span>{record.province || "Harare"} · {record.district || "District"}</span>
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, fontSize: 9.5, color: "var(--text-muted)", background: "rgba(0,0,0,0.02)", padding: "6px 8px", borderRadius: 6, marginBottom: 10 }}>
-            <div><strong style={{ color: "var(--text-secondary)" }}>Surveyor:</strong> {record.surveyor_name || "N/A"}</div>
-            <div><strong style={{ color: "var(--text-secondary)" }}>Date:</strong> {record.survey_date || "N/A"}</div>
-          </div>
-        </div>
-
-        {/* Action Buttons */}
-        <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
-          <button
-            onClick={() => photos.length > 0 ? onOpenLightbox(record, photos) : null}
-            disabled={photos.length === 0}
-            style={{
-              flex: 1,
-              padding: "6px 10px",
-              borderRadius: 6,
-              border: "1px solid var(--border)",
-              background: photos.length > 0 ? "rgba(0,102,51,0.08)" : "#f3f4f6",
-              color: photos.length > 0 ? "#006633" : "#9ca3af",
-              fontSize: 10.5,
-              fontWeight: 700,
-              cursor: photos.length > 0 ? "pointer" : "default",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 4
-            }}
-          >
-            <span>🔍</span> View Photos ({photos.length})
-          </button>
-          <button
-            onClick={() => onSelectRecord(record)}
-            style={{
-              padding: "6px 10px",
-              borderRadius: 6,
-              border: "none",
-              background: "#006633",
-              color: "#fff",
-              fontSize: 10.5,
-              fontWeight: 700,
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              gap: 4
-            }}
-            title="Inspect asset on map"
-          >
-            <span>📍</span> Map View
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function GalleryPage({ records, onSelectRecord }: { records: any[]; onSelectRecord: (r: any) => void }) {
-  const [search, setSearch] = useState("");
-  const [catFilter, setCatFilter] = useState("all");
-  const [condFilter, setCondFilter] = useState("all");
-  const [sadcFilter, setSadcFilter] = useState("all");
-  const [lightbox, setLightbox] = useState<{ record: any; photos: string[]; index: number } | null>(null);
-
-  // Filter records
-  const filtered = records.filter(r => {
-    // Category match
-    if (catFilter !== "all" && r.asset_category !== catFilter) return false;
-    // Condition match
-    if (condFilter !== "all" && getRecordStatus(r) !== condFilter) return false;
-    // SADC match
-    if (sadcFilter !== "all" && getSadcValue(r) !== sadcFilter) return false;
-    // Search query
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      const name = (getAssetName(r) || "").toLowerCase();
-      const road = (r.road_name || "").toLowerCase();
-      const surveyor = (r.surveyor_name || "").toLowerCase();
-      const province = (r.province || "").toLowerCase();
-      const district = (r.district || "").toLowerCase();
-      if (!name.includes(q) && !road.includes(q) && !surveyor.includes(q) && !province.includes(q) && !district.includes(q)) return false;
-    }
-    return true;
-  });
-
-  // Photo stats
-  const totalWithPhoto = records.filter((r) => recordHasPhotos(r) || normalizePhotos(r).length > 0).length;
-
-  return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--bg-app)", overflow: "hidden" }}>
-      
-      {/* Gallery Header Controls */}
-      <div style={{ background: "#fff", borderBottom: "1px solid var(--border)", padding: "14px 24px", flexShrink: 0, display: "flex", flexDirection: "column", gap: 12 }}>
-        
-        {/* Top Banner Stats */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
-          <div>
-            <h2 style={{ fontSize: 16, fontWeight: 800, color: "var(--text-primary)", margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
-              <span>📷</span> National Photo Gallery &amp; Inspection Evidence
-            </h2>
-            <p style={{ fontSize: 11, color: "var(--text-secondary)", margin: "2px 0 0 0" }}>
-              Visual inspection photos collected by field survey teams across Zimbabwe's road network
-            </p>
-          </div>
-
-          <div style={{ display: "flex", gap: 10 }}>
-            <div style={{ background: "rgba(0,102,51,0.08)", border: "1px solid rgba(0,102,51,0.15)", borderRadius: 8, padding: "6px 14px", textAlign: "center" }}>
-              <div style={{ fontSize: 14, fontWeight: 800, color: "#006633" }}>{filtered.length}</div>
-              <div style={{ fontSize: 9.5, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase" }}>Assets in View</div>
-            </div>
-            <div style={{ background: "rgba(0,0,0,0.04)", border: "1px solid var(--border)", borderRadius: 8, padding: "6px 14px", textAlign: "center" }}>
-              <div style={{ fontSize: 14, fontWeight: 800, color: "var(--text-primary)" }}>{totalWithPhoto}</div>
-              <div style={{ fontSize: 9.5, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase" }}>Media Records</div>
-            </div>
-          </div>
-        </div>
-
-        {/* Filter Controls Row */}
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-          
-          {/* Search */}
-          <div style={{ position: "relative", flex: "1 1 200px", minWidth: 200 }}>
-            <input
-              type="text"
-              placeholder="Search by road, surveyor, province..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              style={{
-                width: "100%",
-                padding: "7px 12px 7px 32px",
-                borderRadius: 8,
-                border: "1px solid var(--border)",
-                fontSize: 11.5,
-                background: "var(--bg-app)",
-                outline: "none"
-              }}
-            />
-            <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", fontSize: 12, opacity: 0.5 }}>🔍</span>
-            {search && (
-              <button onClick={() => setSearch("")} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", border: "none", background: "none", cursor: "pointer", fontSize: 12, color: "var(--text-muted)" }}>✕</button>
-            )}
-          </div>
-
-          {/* Category Filter */}
-          <select
-            value={catFilter}
-            onChange={e => setCatFilter(e.target.value)}
-            style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 11.5, background: "#fff", fontWeight: 600, color: "var(--text-primary)", outline: "none", cursor: "pointer" }}
-          >
-            <option value="all">All Asset Types</option>
-            <option value="sealed">🛣️ Sealed Roads</option>
-            <option value="gravel">🪨 Gravel Roads</option>
-            <option value="earth">🚜 Earth Roads</option>
-            <option value="bridge">🌉 Bridges</option>
-            <option value="culvert">🕳️ Culverts</option>
-            <option value="busstop">🚌 Bus Stops</option>
-            <option value="junction">🔀 Junctions</option>
-            <option value="sign">⚠️ Road Signs</option>
-            <option value="streetlight">💡 Streetlights</option>
-            <option value="traffic_lights">🚦 Traffic Lights</option>
-          </select>
-
-          {/* Condition Filter */}
-          <select
-            value={condFilter}
-            onChange={e => setCondFilter(e.target.value)}
-            style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 11.5, background: "#fff", fontWeight: 600, color: "var(--text-primary)", outline: "none", cursor: "pointer" }}
-          >
-            <option value="all">All Conditions</option>
-            <option value="good">🟢 Good</option>
-            <option value="fair">🟡 Fair</option>
-            <option value="poor">🔴 Poor</option>
-            <option value="bad">🔴 Bad / Severely Damaged</option>
-            <option value="under_construction">🔵 Under Construction</option>
-          </select>
-
-          {/* SADC Filter */}
-          <select
-            value={sadcFilter}
-            onChange={e => setSadcFilter(e.target.value)}
-            style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 11.5, background: "#fff", fontWeight: 600, color: "var(--text-primary)", outline: "none", cursor: "pointer" }}
-          >
-            <option value="all">SADC Compliance (All)</option>
-            <option value="yes">✓ SADC Compliant</option>
-            <option value="no">✕ Non-Compliant</option>
-          </select>
-
-          {/* Reset Filters */}
-          {(catFilter !== "all" || condFilter !== "all" || sadcFilter !== "all" || search) && (
-            <button
-              onClick={() => { setCatFilter("all"); setCondFilter("all"); setSadcFilter("all"); setSearch(""); }}
-              style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "#fff", fontSize: 11.5, fontWeight: 700, color: "#dc2626", cursor: "pointer" }}
-            >
-              Reset Filters
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Gallery Grid */}
-      <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
-        {filtered.length === 0 ? (
-          <div style={{ textAlign: "center", padding: "60px 20px", color: "var(--text-muted)" }}>
-            <Camera size={48} style={{ opacity: 0.2, marginBottom: 12 }} />
-            <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text-primary)" }}>No photo assets found</div>
-            <div style={{ fontSize: 12, marginTop: 4 }}>Try adjusting your search terms or filters above</div>
-          </div>
-        ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 18 }}>
-            {filtered.map(r => (
-              <GalleryCard 
-                key={r.id || r._id || r.survey_id || Math.random()} 
-                record={r} 
-                onSelectRecord={onSelectRecord} 
-                onOpenLightbox={(record, photos) => setLightbox({ record, photos, index: 0 })}
-              />
-            ))}
-          </div>
         )}
       </div>
-
-      {/* Fullscreen Lightbox Modal */}
-      {lightbox && (
-        <div 
-          onClick={() => setLightbox(null)}
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 9999,
-            background: "rgba(0,0,0,0.9)",
-            backdropFilter: "blur(8px)",
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: 24
-          }}
-        >
-          {/* Lightbox Top Header */}
-          <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 1000, display: "flex", justifyContent: "space-between", alignItems: "center", color: "#fff" }}>
-            <div>
-              <div style={{ fontSize: 16, fontWeight: 800 }}>{getAssetName(lightbox.record)}</div>
-              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.6)" }}>
-                {lightbox.record.asset_category?.replace("_", " ")} · {lightbox.record.province || "Harare"} · {lightbox.record.surveyor_name ? `Surveyor: ${lightbox.record.surveyor_name}` : ""}
-              </div>
-            </div>
-            <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-              <button
-                onClick={() => {
-                  const rec = lightbox.record;
-                  setLightbox(null);
-                  onSelectRecord(rec);
-                }}
-                style={{ background: "#006633", border: "none", borderRadius: 8, color: "#fff", padding: "8px 16px", fontWeight: 700, fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}
-              >
-                📍 Inspect on Map
-              </button>
-              <button
-                onClick={() => setLightbox(null)}
-                style={{ background: "rgba(255,255,255,0.15)", border: "none", borderRadius: "50%", color: "#fff", width: 36, height: 36, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}
-              >
-                ✕
-              </button>
-            </div>
-          </div>
-
-          {/* Lightbox Main Image */}
-          <div onClick={e => e.stopPropagation()} style={{ position: "relative", width: "100%", maxWidth: 1000, flex: 1, display: "flex", alignItems: "center", justifyContent: "center", margin: "16px 0" }}>
-            <img 
-              src={lightbox.photos[lightbox.index]} 
-              alt="Full inspection photo"
-              style={{ maxWidth: "100%", maxHeight: "75vh", objectFit: "contain", borderRadius: 10, boxShadow: "0 12px 40px rgba(0,0,0,0.6)" }} 
-            />
-
-            {lightbox.photos.length > 1 && (
-              <>
-                <button
-                  onClick={() => setLightbox(prev => prev ? { ...prev, index: (prev.index - 1 + prev.photos.length) % prev.photos.length } : null)}
-                  style={{ position: "absolute", left: 10, background: "rgba(0,0,0,0.6)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: "50%", color: "#fff", width: 44, height: 44, fontSize: 18, cursor: "pointer" }}
-                >
-                  ←
-                </button>
-                <button
-                  onClick={() => setLightbox(prev => prev ? { ...prev, index: (prev.index + 1) % prev.photos.length } : null)}
-                  style={{ position: "absolute", right: 10, background: "rgba(0,0,0,0.6)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: "50%", color: "#fff", width: 44, height: 44, fontSize: 18, cursor: "pointer" }}
-                >
-                  →
-                </button>
-              </>
-            )}
-          </div>
-
-          {/* Lightbox Footer Counter */}
-          <div onClick={e => e.stopPropagation()} style={{ color: "rgba(255,255,255,0.8)", fontSize: 12, fontWeight: 700, background: "rgba(255,255,255,0.1)", padding: "4px 14px", borderRadius: 20 }}>
-            Photo {lightbox.index + 1} of {lightbox.photos.length}
-          </div>
-        </div>
-      )}
-
     </div>
   );
 }
 
 
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   REPORTS PAGE (NATIONAL, PROVINCIAL & DISTRICT REPORT GENERATOR)
- ════════════════════════════════════════════════════════════════════════════ */
-
-/* ─── Comprehensive Multi-Page PDF Report Generator ──────────────────────── */
-function generateWrittenPDFReport(filteredRecords: any[], reportLevel: string, province: string, district: string) {
-  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-  
-  const primaryGreen = [0, 102, 51];
-  const goldAccent   = [217, 119, 6];
-  const darkSlate    = [30, 41, 59];
-  const mutedText    = [100, 116, 139];
-
-  // Helper for Section Headers
-  const addSectionHeader = (title: string, yPos: number) => {
-    doc.setFillColor(0, 102, 51);
-    doc.rect(14, yPos, 4, 12, "F");
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(11);
-    doc.setTextColor(30, 41, 59);
-    doc.text(title, 22, yPos + 8.5);
-  };
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // PAGE 1: TITLE PAGE & EXECUTIVE SUMMARY NARRATIVE
-  // ═══════════════════════════════════════════════════════════════════════════
-  
-  // Header Banner
-  doc.setFillColor(0, 102, 51);
-  doc.rect(0, 0, 210, 28, "F");
-
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(14);
-  doc.setFont("helvetica", "bold");
-  doc.text("REPUBLIC OF ZIMBABWE", 14, 12);
-  
-  doc.setFontSize(9);
-  doc.setFont("helvetica", "normal");
-  doc.text("MINISTRY OF TRANSPORT AND INFRASTRUCTURAL DEVELOPMENT", 14, 18);
-  doc.text("DEPARTMENT OF ROADS · NATIONAL ROAD INFRASTRUCTURE AUDIT UNIT", 14, 23);
-
-  // Document Metadata Box (Top Right)
-  doc.setFontSize(8);
-  doc.text(`DATE: ${new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}`, 142, 12);
-  doc.text(`SCOPE: ${reportLevel.toUpperCase()} AUDIT`, 142, 17);
-  doc.text("DOC REF: ZIM-RD-2026-REP", 142, 22);
-
-  // Main Report Title
-  doc.setTextColor(0, 102, 51);
-  doc.setFontSize(16);
-  doc.setFont("helvetica", "bold");
-  const titleText = reportLevel === "national"
-    ? "NATIONAL ROAD NETWORK INFRASTRUCTURE & CONDITION EVALUATION REPORT"
-    : reportLevel === "provincial"
-    ? `${province.toUpperCase()} PROVINCIAL ROAD NETWORK EVALUATION REPORT`
-    : `${district.toUpperCase()} DISTRICT INFRASTRUCTURE AUDIT REPORT`;
-
-  doc.text(titleText, 14, 40);
-
-  doc.setLineWidth(0.6);
-  doc.setDrawColor(217, 119, 6);
-  doc.line(14, 44, 196, 44);
-
-  // 1. Executive Summary Written Narrative
-  addSectionHeader("1. EXECUTIVE SUMMARY & BACKGROUND NARRATIVE", 48);
-
-  const total = filteredRecords.length;
-  const good = filteredRecords.filter(r => getRecordStatus(r) === "good").length;
-  const fair = filteredRecords.filter(r => getRecordStatus(r) === "fair").length;
-  const poor = filteredRecords.filter(r => getRecordStatus(r) === "poor").length;
-  const constr = filteredRecords.filter(r => getRecordStatus(r) === "under_construction").length;
-
-  const goodPct = total > 0 ? Math.round((good / total) * 100) : 0;
-  const fairPct = total > 0 ? Math.round((fair / total) * 100) : 0;
-  const poorPct = total > 0 ? Math.round((poor / total) * 100) : 0;
-  const sadcCount = filteredRecords.filter(r => getSadcValue(r) === "yes").length;
-  const sadcPct = total > 0 ? Math.round((sadcCount / total) * 100) : 0;
-
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(9.5);
-  doc.setTextColor(30, 41, 59);
-
-  const para1 = `1.1 Introduction: This comprehensive technical report provides an official condition assessment of the road network and associated infrastructure within the ${reportLevel.toUpperCase()} jurisdiction (${reportLevel === "national" ? "All 10 Provinces of Zimbabwe" : province + " Province"}). The evaluation encompasses a full audit of ${total} surveyed infrastructure assets, including trunk highways, feeder roads, bridges, culverts, road signs, and urban traffic management installations.`;
-
-  const para2 = `1.2 Overall Network Health Index: Out of the total ${total} evaluated infrastructure elements, ${goodPct}% (${good} assets) are rated in Good / Optimal condition, meeting national operational standards. Approximately ${fairPct}% (${fair} assets) exhibit moderate wear and are classified in Fair condition, requiring routine scheduled preservation. Critically, ${poorPct}% (${poor} assets) display severe structural distress, pavement deterioration, or drainage impairment, requiring urgent rehabilitation intervention.`;
-
-  const para3 = `1.3 Visual Evidence & SADC Compliance: Field telemetry teams utilized standardized mobile GIS surveying tools to capture geo-referenced imagery. SADC compliance verification indicates that ${sadcPct}% (${sadcCount} assets) possess verified compliant visual evidence adhering to regional highway safety inspection criteria.`;
-
-  const splitP1 = doc.splitTextToSize(para1, 182);
-  const splitP2 = doc.splitTextToSize(para2, 182);
-  const splitP3 = doc.splitTextToSize(para3, 182);
-
-  let curY = 65;
-  doc.text(splitP1, 14, curY);
-  curY += splitP1.length * 4.8 + 4;
-  doc.text(splitP2, 14, curY);
-  curY += splitP2.length * 4.8 + 4;
-  doc.text(splitP3, 14, curY);
-  curY += splitP3.length * 4.8 + 8;
-
-  // Executive KPI Summary Table Box
-  autoTable(doc, {
-    startY: curY,
-    head: [["Key Performance Indicator (KPI)", "Measured Metric", "Percentage", "Operational Status"]],
-    body: [
-      ["Total Evaluated Infrastructure Assets", `${total} Assets`, "100%", "Audit Complete"],
-      ["Passable & Optimal Assets (Good)", `${good} Assets`, `${goodPct}%`, "Satisfactory"],
-      ["Preservation Candidate Assets (Fair)", `${fair} Assets`, `${fairPct}%`, "Routine Maintenance Needed"],
-      ["Defective / High Risk Assets (Poor)", `${poor} Assets`, `${poorPct}%`, "Urgent Intervention Needed"],
-      ["Assets Under Active Construction", `${constr} Assets`, `${total > 0 ? Math.round((constr/total)*100) : 0}%`, "Capital Works In Progress"],
-      ["SADC Standardized Compliant Media", `${sadcCount} Media`, `${sadcPct}%`, "Verified Compliant"],
-    ],
-    headStyles: { fillColor: [0, 102, 51], textColor: [255, 255, 255], fontStyle: "bold" },
-    styles: { fontSize: 8.5, cellPadding: 2.8 },
-    theme: "striped"
-  });
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // PAGE 2: TECHNICAL SECTORAL ANALYSIS & INFRASTRUCTURE NARRATIVE
-  // ═══════════════════════════════════════════════════════════════════════════
-  doc.addPage();
-
-  // Page 2 Header Banner
-  doc.setFillColor(0, 102, 51);
-  doc.rect(0, 0, 210, 14, "F");
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(9);
-  doc.setFont("helvetica", "bold");
-  doc.text("TECHNICAL INFRASTRUCTURE EVALUATION & SECTORAL ANALYSIS", 14, 9.5);
-
-  addSectionHeader("2. TECHNICAL SECTORAL AUDIT & CONDITION ANALYSIS", 20);
-
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(9.5);
-  doc.setTextColor(30, 41, 59);
-
-  const sealedCount = filteredRecords.filter(r => r.asset_category === "sealed").length;
-  const gravelCount = filteredRecords.filter(r => r.asset_category === "gravel").length;
-  const earthCount  = filteredRecords.filter(r => r.asset_category === "earth").length;
-  const bridgeCount = filteredRecords.filter(r => r.asset_category === "bridge").length;
-  const culvertCount = filteredRecords.filter(r => r.asset_category === "culvert").length;
-  const safetyCount = filteredRecords.filter(r => ["sign", "traffic_lights", "streetlight"].includes(r.asset_category)).length;
-
-  const tech1 = `2.1 Road Pavement Condition (Sealed, Gravel & Earth Networks):
-The survey audited ${sealedCount} paved road sections, ${gravelCount} unpaved gravel corridors, and ${earthCount} rural earth access tracks. Sealed road distresses predominantly consist of surface oxidation, rutting along heavy transport routes, and localized edge-break. Gravel roads require periodic regravelling to restore wearing course thickness, while earth roads remain highly vulnerable to seasonal erosion and washouts.`;
-
-  const tech2 = `2.2 Drainage & Structural Infrastructure (Bridges, Culverts & Causeways):
-Structural audit results identified ${bridgeCount} major bridge structures and ${culvertCount} cross-drainage culvert installations. Drainage serviceability is a critical factor influencing pavement longevity. Unblocked culverts and intact bridge abutments maintain structural integrity, whereas sediment-clogged culverts have caused severe stormwater ponding and subgrade saturation on affected segments.`;
-
-  const tech3 = `2.3 Road Furniture, Safety & Traffic Control Infrastructure:
-A total of ${safetyCount} traffic management and safety assets were audited, including regulatory road signs, traffic signals, and streetlighting installations. Functional streetlighting and visible retroreflective signage significantly reduce night-time traffic incidents. Installations flagged as damaged or vandalized have been scheduled for immediate municipal and departmental restoration.`;
-
-  const splitT1 = doc.splitTextToSize(tech1, 182);
-  const splitT2 = doc.splitTextToSize(tech2, 182);
-  const splitT3 = doc.splitTextToSize(tech3, 182);
-
-  let curY2 = 36;
-  doc.text(splitT1, 14, curY2);
-  curY2 += splitT1.length * 4.8 + 6;
-  doc.text(splitT2, 14, curY2);
-  curY2 += splitT2.length * 4.8 + 6;
-  doc.text(splitT3, 14, curY2);
-  curY2 += splitT3.length * 4.8 + 8;
-
-  // Sectoral Summary Table
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10);
-  doc.text("2.4 Asset Category Scorecard & Maintenance Priority", 14, curY2);
-  curY2 += 4;
-
-  const categoriesList = ["sealed", "gravel", "earth", "bridge", "culvert", "busstop", "junction", "sign", "traffic_lights", "streetlight"];
-  const scorecardBody = categoriesList.map(c => {
-    const sub = filteredRecords.filter(r => r.asset_category === c);
-    const cTotal = sub.length;
-    const cGood  = sub.filter(r => getRecordStatus(r) === "good").length;
-    const cPoor  = sub.filter(r => getRecordStatus(r) === "poor").length;
-    const cSadc  = sub.filter(r => getSadcValue(r) === "yes").length;
-    return [
-      c.replace("_", " ").toUpperCase(),
-      cTotal.toString(),
-      cGood.toString(),
-      cPoor.toString(),
-      cTotal > 0 ? `${Math.round((cSadc / cTotal) * 100)}%` : "N/A",
-      cPoor > 0 ? "REHABILITATION PRIORITY" : "ROUTINE PRESERVATION"
-    ];
-  }).filter(row => row[1] !== "0");
-
-  autoTable(doc, {
-    startY: curY2,
-    head: [["Asset Category", "Total Count", "Good Condition", "Poor / Damaged", "SADC Rate %", "Recommended Strategy"]],
-    body: scorecardBody,
-    headStyles: { fillColor: [30, 41, 59], textColor: [255, 255, 255], fontStyle: "bold" },
-    styles: { fontSize: 8, cellPadding: 2.2 },
-    theme: "grid"
-  });
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // PAGE 3: STRATEGIC MAINTENANCE RECOMMENDATIONS & SIGN-OFF
-  // ═══════════════════════════════════════════════════════════════════════════
-  doc.addPage();
-
-  // Page 3 Header Banner
-  doc.setFillColor(0, 102, 51);
-  doc.rect(0, 0, 210, 14, "F");
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(9);
-  doc.setFont("helvetica", "bold");
-  doc.text("STRATEGIC RECOMMENDATIONS & OFFICIAL SIGN-OFF", 14, 9.5);
-
-  addSectionHeader("3. STRATEGIC INTERVENTION & CAPITAL WORK PRIORITIES", 20);
-
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(9.5);
-  doc.setTextColor(30, 41, 59);
-
-  const rec1 = `3.1 Priority 1 (Emergency Structural Repairs & Safety Hazard Remediation):
-Immediate financial and engineering resources must be allocated to repair the ${poor} assets flagged in Poor/Bad condition. High-priority interventions include culvert desilting along flood-prone arterial corridors, bridge expansion joint repairs, and replacing missing warning signage along major trunk routes.`;
-
-  const rec2 = `3.2 Priority 2 (Periodic Resurfacing & Pothole Patching Programs):
-For the ${fair} assets categorized in Fair condition, routine asphalt overlay, pothole patching, and shoulder grading programs must be executed within the next 6 to 12 months to prevent further structural degradation into severe pavement failure.`;
-
-  const rec3 = `3.3 Priority 3 (GIS Telemetry Expansion & Continuous Monitoring):
-Expand regular field telemetry collection across all provincial road authorities using standardized mobile GIS tools. Maintain 100% SADC image compliance logging to ensure robust auditability for national infrastructure budgeting.`;
-
-  const splitR1 = doc.splitTextToSize(rec1, 182);
-  const splitR2 = doc.splitTextToSize(rec2, 182);
-  const splitR3 = doc.splitTextToSize(rec3, 182);
-
-  let curY3 = 36;
-  doc.text(splitR1, 14, curY3);
-  curY3 += splitR1.length * 4.8 + 6;
-  doc.text(splitR2, 14, curY3);
-  curY3 += splitR2.length * 4.8 + 6;
-  doc.text(splitR3, 14, curY3);
-  curY3 += splitR3.length * 4.8 + 12;
-
-  // Official Certification & Sign-off Block
-  doc.setFillColor(250, 252, 251);
-  doc.rect(14, curY3, 182, 60, "F");
-  doc.setLineWidth(0.4);
-  doc.setDrawColor(0, 102, 51);
-  doc.rect(14, curY3, 182, 60, "S");
-
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10);
-  doc.setTextColor(0, 102, 51);
-  doc.text("4. OFFICIAL REPORT CERTIFICATION & AUDIT SIGN-OFF", 18, curY3 + 10);
-
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(8.5);
-  doc.setTextColor(30, 41, 59);
-  doc.text("I hereby certify that this Infrastructure Evaluation Report reflects genuine field survey telemetry and condition assessments conducted in accordance with Ministry of Transport & Infrastructural Development auditing standards.", 18, curY3 + 18, { maxWidth: 174 });
-
-  // Signature Lines
-  const sigY = curY3 + 45;
-  
-  // Sig 1
-  doc.setLineWidth(0.4);
-  doc.setDrawColor(30, 41, 59);
-  doc.line(22, sigY, 70, sigY);
-  doc.setFontSize(8);
-  doc.setFont("helvetica", "bold");
-  doc.text("Eng. T. Moyo", 22, sigY + 4);
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(7.5);
-  doc.text("Chief Roads Engineer (Audit)", 22, sigY + 8);
-
-  // Sig 2
-  doc.line(82, sigY, 130, sigY);
-  doc.setFontSize(8);
-  doc.setFont("helvetica", "bold");
-  doc.text("Eng. R. Ndlovu", 82, sigY + 4);
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(7.5);
-  doc.text("Director of Maintenance", 82, sigY + 8);
-
-  // Sig 3
-  doc.line(142, sigY, 190, sigY);
-  doc.setFontSize(8);
-  doc.setFont("helvetica", "bold");
-  doc.text("Dr. K. Gumbo", 142, sigY + 4);
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(7.5);
-  doc.text("Permanent Secretary", 142, sigY + 8);
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // PAGE 4+: COMPLETE DETAILED INFRASTRUCTURE ASSET REGISTER
-  // ═══════════════════════════════════════════════════════════════════════════
-  doc.addPage();
-
-  doc.setFillColor(0, 102, 51);
-  doc.rect(0, 0, 210, 14, "F");
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(9);
-  doc.setFont("helvetica", "bold");
-  doc.text("ANNEXURE A: COMPLETE INFRASTRUCTURE ASSET AUDIT REGISTER", 14, 9.5);
-
-  const fullRegisterData = filteredRecords.map(r => [
-    (r.asset_category || "other").replace("_", " ").toUpperCase(),
-    getAssetName(r),
-    r.section_name || "N/A",
-    r.province || "Harare",
-    r.district || "Central",
-    formatStatusLabel(getRecordStatus(r)).toUpperCase(),
-    r.surveyor_name || "N/A",
-    r.survey_date || "N/A",
-    r.gps || formatGpsLabel(r)
-  ]);
-
-  autoTable(doc, {
-    startY: 20,
-    head: [["Category", "Asset Name / Route", "Section", "Province", "District", "Condition", "Surveyor", "Date", "GPS Coords"]],
-    body: fullRegisterData,
-    headStyles: { fillColor: [0, 102, 51], textColor: [255, 255, 255], fontStyle: "bold" },
-    styles: { fontSize: 7, cellPadding: 2 },
-    theme: "grid"
-  });
-
-  // Global Page Footer for All Pages
-  const totalPageCount = (doc as any).internal.getNumberOfPages();
-  for (let i = 1; i <= totalPageCount; i++) {
-    doc.setPage(i);
-    doc.setFontSize(8);
-    doc.setTextColor(100, 116, 139);
-    doc.text(`Ministry of Transport & Infrastructural Development · Department of Roads · Page ${i} of ${totalPageCount}`, 14, 288);
-  }
-
-  doc.save(`Comprehensive_Road_Condition_Report_${reportLevel}_${Date.now()}.pdf`);
-}
-
-
-function ReportsPage({ records, onSelectRecord }: { records: any[]; onSelectRecord?: (r: any) => void }) {
-  // Report scope & filter state
-  const [reportLevel, setReportLevel] = useState<"national" | "provincial" | "district">("national");
-  const [selectedProvince, setSelectedProvince] = useState<string>("Harare");
-  const [selectedDistrict, setSelectedDistrict] = useState<string>("all");
-  const [selectedCategory, setSelectedCategory] = useState<string>("all");
-  const [selectedCondition, setSelectedCondition] = useState<string>("all");
-  const [selectedRoad, setSelectedRoad] = useState<string>("all");
-  const [page, setPage] = useState(0);
-  const PAGE_SIZE = 12;
-
-  // Extract unique options
-  const provinces = Array.from(new Set(records.map(r => r.province).filter(Boolean))).sort();
-  const districtsForProv = Array.from(new Set(
-    records
-      .filter(r => selectedProvince === "all" || r.province === selectedProvince)
-      .map(r => r.district)
-      .filter(Boolean)
-  )).sort();
-  const roadsList = Array.from(new Set(records.map(r => r.road_name).filter(Boolean))).sort();
-
-  // Filter records based on selected report parameters
-  const filtered = records.filter(r => {
-    if (reportLevel === "provincial" && selectedProvince !== "all" && r.province !== selectedProvince) return false;
-    if (reportLevel === "district") {
-      if (selectedProvince !== "all" && r.province !== selectedProvince) return false;
-      if (selectedDistrict !== "all" && r.district !== selectedDistrict) return false;
-    }
-    if (selectedCategory !== "all" && r.asset_category !== selectedCategory) return false;
-    if (selectedCondition !== "all" && getRecordStatus(r) !== selectedCondition) return false;
-    if (selectedRoad !== "all" && r.road_name !== selectedRoad) return false;
-    return true;
-  });
-
-  // Calculate Key Summary Metrics
-  const totalAssets = filtered.length;
-  const goodCount = filtered.filter(r => getRecordStatus(r) === "good").length;
-  const fairCount = filtered.filter(r => getRecordStatus(r) === "fair").length;
-  const poorCount = filtered.filter(r => getRecordStatus(r) === "poor").length;
-  const constrCount = filtered.filter(r => getRecordStatus(r) === "under_construction").length;
-
-  const goodPct = totalAssets > 0 ? Math.round((goodCount / totalAssets) * 100) : 0;
-  const fairPct = totalAssets > 0 ? Math.round((fairCount / totalAssets) * 100) : 0;
-  const poorPct = totalAssets > 0 ? Math.round((poorCount / totalAssets) * 100) : 0;
-
-  const sadcCompliant = filtered.filter(r => getSadcValue(r) === "yes").length;
-  const sadcPct = totalAssets > 0 ? Math.round((sadcCompliant / totalAssets) * 100) : 0;
-
-  // Chart Data: Condition Breakdown by Asset Category
-  const catMap: Record<string, { good: number; fair: number; poor: number; total: number }> = {};
-  filtered.forEach(r => {
-    const c = r.asset_category || "other";
-    if (!catMap[c]) catMap[c] = { good: 0, fair: 0, poor: 0, total: 0 };
-    catMap[c].total += 1;
-    const s = getRecordStatus(r);
-    if (s === "good") catMap[c].good += 1;
-    else if (s === "fair") catMap[c].fair += 1;
-    else catMap[c].poor += 1;
-  });
-
-  const categoryChartData = Object.entries(catMap).map(([cat, val]) => ({
-    name: cat.replace("_", " ").toUpperCase(),
-    Good: val.good,
-    Fair: val.fair,
-    "Poor / Bad": val.poor,
-    Total: val.total
-  })).sort((a, b) => b.Total - a.Total).slice(0, 8);
-
-  // Chart Data: Condition Distribution Pie
-  const conditionPieData = [
-    { name: "Good", value: goodCount, color: "#006633" },
-    { name: "Fair", value: fairCount, color: "#d97706" },
-    { name: "Poor / Bad", value: poorCount, color: "#dc2626" },
-    { name: "Under Construction", value: constrCount, color: "#2563eb" },
-  ].filter(d => d.value > 0);
-
-  // Print Report Handler
-  const handlePrint = () => {
-    window.print();
-  };
-
-  // CSV Export Handler
-  const handleExportCSV = () => {
-    const keys = ["asset_category", "road_name", "section_name", "province", "district", "road_condition", "surveyor_name", "survey_date", "gps_point"];
-    const header = keys.map(k => k.replace("_", " ").toUpperCase()).join(",");
-    const rows = filtered.map(r => keys.map(k => `"${String(r[k] || "").replace(/"/g, '""')}"`).join(","));
-    const csvContent = "data:text/csv;charset=utf-8," + [header, ...rows].join("\n");
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `road_condition_report_${reportLevel}_${Date.now()}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
-  const pages = Math.ceil(filtered.length / PAGE_SIZE);
-  const pageSlice = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
-
-  return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--bg-app)", overflow: "hidden" }}>
-      
-      {/* Report Controls Header */}
-      <div style={{ background: "#fff", borderBottom: "1px solid var(--border)", padding: "14px 24px", flexShrink: 0, display: "flex", flexDirection: "column", gap: 12 }}>
-        
-        {/* Top Title & Primary Actions */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
-          <div>
-            <h2 style={{ fontSize: 16, fontWeight: 800, color: "var(--text-primary)", margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
-              <span>📑</span> Comprehensive Road Condition Report Generator
-            </h2>
-            <p style={{ fontSize: 11, color: "var(--text-secondary)", margin: "2px 0 0 0" }}>
-              Official executive evaluation reports for National, Provincial, and District road networks
-            </p>
-          </div>
-
-          <div style={{ display: "flex", gap: 8 }}>
-            <button
-              onClick={() => generateWrittenPDFReport(filtered, reportLevel, selectedProvince, selectedDistrict)}
-              style={{
-                padding: "8px 16px",
-                borderRadius: 8,
-                border: "none",
-                background: "#006633",
-                color: "#fff",
-                fontSize: 11.5,
-                fontWeight: 700,
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                boxShadow: "0 2px 6px rgba(0,102,51,0.25)"
-              }}
-            >
-              <span>📄</span> Download Written PDF Report
-            </button>
-
-            <button
-              onClick={handlePrint}
-              style={{
-                padding: "8px 16px",
-                borderRadius: 8,
-                border: "1px solid var(--border)",
-                background: "#fff",
-                color: "var(--text-primary)",
-                fontSize: 11.5,
-                fontWeight: 700,
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                gap: 6
-              }}
-            >
-              <span>🖨️</span> Print Formal Report
-            </button>
-
-            <button
-              onClick={handleExportCSV}
-              style={{
-                padding: "8px 16px",
-                borderRadius: 8,
-                border: "none",
-                background: "#006633",
-                color: "#fff",
-                fontSize: 11.5,
-                fontWeight: 700,
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                gap: 6
-              }}
-            >
-              <span>📥</span> Export Report CSV
-            </button>
-          </div>
-        </div>
-
-        {/* Report Scope & Parameters Bar */}
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", background: "var(--bg-app)", padding: 10, borderRadius: 10, border: "1px solid var(--border)" }}>
-          
-          {/* Level Switcher Buttons */}
-          <div style={{ display: "flex", background: "#fff", padding: 3, borderRadius: 8, border: "1px solid var(--border)" }}>
-            <button
-              onClick={() => { setReportLevel("national"); setSelectedProvince("all"); setSelectedDistrict("all"); }}
-              style={{
-                padding: "5px 12px",
-                borderRadius: 6,
-                border: "none",
-                background: reportLevel === "national" ? "#006633" : "transparent",
-                color: reportLevel === "national" ? "#fff" : "var(--text-secondary)",
-                fontSize: 11,
-                fontWeight: 700,
-                cursor: "pointer"
-              }}
-            >
-              🇿🇼 National Report
-            </button>
-            <button
-              onClick={() => { setReportLevel("provincial"); if (selectedProvince === "all" && provinces.length > 0) setSelectedProvince(provinces[0]); }}
-              style={{
-                padding: "5px 12px",
-                borderRadius: 6,
-                border: "none",
-                background: reportLevel === "provincial" ? "#006633" : "transparent",
-                color: reportLevel === "provincial" ? "#fff" : "var(--text-secondary)",
-                fontSize: 11,
-                fontWeight: 700,
-                cursor: "pointer"
-              }}
-            >
-              🏛️ Provincial Report
-            </button>
-            <button
-              onClick={() => { setReportLevel("district"); if (selectedProvince === "all" && provinces.length > 0) setSelectedProvince(provinces[0]); }}
-              style={{
-                padding: "5px 12px",
-                borderRadius: 6,
-                border: "none",
-                background: reportLevel === "district" ? "#006633" : "transparent",
-                color: reportLevel === "district" ? "#fff" : "var(--text-secondary)",
-                fontSize: 11,
-                fontWeight: 700,
-                cursor: "pointer"
-              }}
-            >
-              📍 District Report
-            </button>
-          </div>
-
-          {/* Province Dropdown */}
-          {(reportLevel === "provincial" || reportLevel === "district") && (
-            <select
-              value={selectedProvince}
-              onChange={e => { setSelectedProvince(e.target.value); setSelectedDistrict("all"); }}
-              style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 11, background: "#fff", fontWeight: 700, color: "var(--text-primary)", outline: "none" }}
-            >
-              <option value="all">All Provinces</option>
-              {provinces.map(p => (
-                <option key={p} value={p}>{p} Province</option>
-              ))}
-            </select>
-          )}
-
-          {/* District Dropdown */}
-          {reportLevel === "district" && (
-            <select
-              value={selectedDistrict}
-              onChange={e => setSelectedDistrict(e.target.value)}
-              style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 11, background: "#fff", fontWeight: 700, color: "var(--text-primary)", outline: "none" }}
-            >
-              <option value="all">All Districts in {selectedProvince}</option>
-              {districtsForProv.map(d => (
-                <option key={d} value={d}>{d} District</option>
-              ))}
-            </select>
-          )}
-
-          {/* Asset Category Filter */}
-          <select
-            value={selectedCategory}
-            onChange={e => setSelectedCategory(e.target.value)}
-            style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 11, background: "#fff", fontWeight: 600, color: "var(--text-primary)", outline: "none" }}
-          >
-            <option value="all">All Asset Categories</option>
-            <option value="sealed">🛣️ Sealed Roads</option>
-            <option value="gravel">🪨 Gravel Roads</option>
-            <option value="earth">🚜 Earth Roads</option>
-            <option value="bridge">🌉 Bridges</option>
-            <option value="culvert">🕳️ Culverts</option>
-            <option value="busstop">🚌 Bus Stops</option>
-            <option value="junction">🔀 Junctions</option>
-            <option value="sign">⚠️ Signs</option>
-            <option value="traffic_lights">🚦 Traffic Lights</option>
-          </select>
-
-          {/* Condition Filter */}
-          <select
-            value={selectedCondition}
-            onChange={e => setSelectedCondition(e.target.value)}
-            style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 11, background: "#fff", fontWeight: 600, color: "var(--text-primary)", outline: "none" }}
-          >
-            <option value="all">All Condition Ratings</option>
-            <option value="good">🟢 Good</option>
-            <option value="fair">🟡 Fair</option>
-            <option value="poor">🔴 Poor / Bad</option>
-          </select>
-
-          {/* Road Route Filter */}
-          <select
-            value={selectedRoad}
-            onChange={e => setSelectedRoad(e.target.value)}
-            style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 11, background: "#fff", fontWeight: 600, color: "var(--text-primary)", outline: "none", maxWidth: 180 }}
-          >
-            <option value="all">All Highway Routes</option>
-            {roadsList.map(r => (
-              <option key={r} value={r}>{r}</option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      {/* Report Document Workspace */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "24px 32px" }}>
-        
-        {/* Printable Official Document Sheet */}
-        <div style={{
-          background: "#fff",
-          borderRadius: 12,
-          border: "1px solid var(--border)",
-          boxShadow: "0 4px 20px rgba(0,0,0,0.06)",
-          padding: "36px 40px",
-          maxWidth: 1100,
-          margin: "0 auto",
-          fontFamily: "var(--font-body)"
-        }}>
-          
-          {/* Document Official Header */}
-          <div style={{ borderBottom: "3px double #006633", paddingBottom: 20, marginBottom: 24, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-              <img src="/coat_of_arms.png" alt="Coat of Arms" style={{ width: 64, height: 64, objectFit: "contain" }} />
-              <div>
-                <div style={{ fontSize: 16, fontWeight: 900, color: "#006633", letterSpacing: "0.5px" }}>REPUBLIC OF ZIMBABWE</div>
-                <div style={{ fontSize: 13, fontWeight: 800, color: "var(--text-primary)" }}>MINISTRY OF TRANSPORT &amp; INFRASTRUCTURAL DEVELOPMENT</div>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase" }}>Department of Roads · National Infrastructure Audit Unit</div>
-              </div>
-            </div>
-            <div style={{ textAlign: "right" }}>
-              <div style={{ background: "rgba(0,102,51,0.08)", color: "#006633", fontSize: 11, fontWeight: 800, padding: "4px 12px", borderRadius: 6, display: "inline-block", marginBottom: 4 }}>
-                OFFICIAL REPORT
-              </div>
-              <div style={{ fontSize: 10, color: "var(--text-muted)" }}>Date: {new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}</div>
-              <div style={{ fontSize: 10, color: "var(--text-muted)" }}>Scope: {reportLevel.toUpperCase()} LEVEL AUDIT</div>
-            </div>
-          </div>
-
-          {/* Report Title */}
-          <div style={{ marginBottom: 24 }}>
-            <h1 style={{ fontSize: 20, fontWeight: 800, color: "var(--text-primary)", margin: 0 }}>
-              {reportLevel === "national" && "ZIMBABWE NATIONAL ROAD NETWORK CONDITION REPORT"}
-              {reportLevel === "provincial" && `${selectedProvince.toUpperCase()} PROVINCIAL ROAD CONDITION REPORT`}
-              {reportLevel === "district" && `${selectedDistrict.toUpperCase()} DISTRICT ROAD CONDITION REPORT`}
-            </h1>
-            <div style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 4 }}>
-              Comprehensive infrastructure survey analysis, condition index evaluation, and visual audit metrics
-            </div>
-          </div>
-
-          {/* Executive Summary Cards Grid */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14, marginBottom: 28 }}>
-            
-            <div style={{ background: "rgba(0,102,51,0.04)", border: "1px solid rgba(0,102,51,0.15)", borderRadius: 10, padding: "14px 16px" }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase" }}>Total Assets Evaluated</div>
-              <div style={{ fontSize: 22, fontWeight: 900, color: "#006633", marginTop: 4 }}>{totalAssets.toLocaleString()}</div>
-              <div style={{ fontSize: 9.5, color: "var(--text-muted)", marginTop: 2 }}>Across surveyed routes</div>
-            </div>
-
-            <div style={{ background: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.2)", borderRadius: 10, padding: "14px 16px" }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "#047857", textTransform: "uppercase" }}>Good Condition Rate</div>
-              <div style={{ fontSize: 22, fontWeight: 900, color: "#047857", marginTop: 4 }}>{goodPct}% <span style={{ fontSize: 13, fontWeight: 700 }}>({goodCount})</span></div>
-              <div style={{ fontSize: 9.5, color: "#047857", marginTop: 2 }}>Passable &amp; Optimal</div>
-            </div>
-
-            <div style={{ background: "rgba(220,38,38,0.06)", border: "1px solid rgba(220,38,38,0.2)", borderRadius: 10, padding: "14px 16px" }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "#b91c1c", textTransform: "uppercase" }}>Poor / Defective Rate</div>
-              <div style={{ fontSize: 22, fontWeight: 900, color: "#b91c1c", marginTop: 4 }}>{poorPct}% <span style={{ fontSize: 13, fontWeight: 700 }}>({poorCount})</span></div>
-              <div style={{ fontSize: 9.5, color: "#b91c1c", marginTop: 2 }}>Requires Urgent Intervention</div>
-            </div>
-
-            <div style={{ background: "rgba(37,99,235,0.06)", border: "1px solid rgba(37,99,235,0.2)", borderRadius: 10, padding: "14px 16px" }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "#1d4ed8", textTransform: "uppercase" }}>SADC Compliance</div>
-              <div style={{ fontSize: 22, fontWeight: 900, color: "#1d4ed8", marginTop: 4 }}>{sadcPct}% <span style={{ fontSize: 13, fontWeight: 700 }}>({sadcCompliant})</span></div>
-              <div style={{ fontSize: 9.5, color: "#1d4ed8", marginTop: 2 }}>Compliant image evidence</div>
-            </div>
-
-          </div>
-
-          {/* Visual Analytics Charts Section */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 32 }}>
-            
-            {/* Chart 1: Bar Chart */}
-            <div style={{ border: "1px solid var(--border)", borderRadius: 10, padding: 18, background: "#fafcfb" }}>
-              <div style={{ fontSize: 12, fontWeight: 800, color: "var(--text-primary)", marginBottom: 12 }}>
-                📊 Asset Condition Breakdown by Category
-              </div>
-              <div style={{ height: 220 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={categoryChartData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(0,0,0,0.06)" />
-                    <XAxis dataKey="name" tick={{ fontSize: 8.5 }} />
-                    <YAxis tick={{ fontSize: 9 }} />
-                    <ChartTooltip />
-                    <Legend wrapperStyle={{ fontSize: 10 }} />
-                    <Bar dataKey="Good" stackId="a" fill="#006633" />
-                    <Bar dataKey="Fair" stackId="a" fill="#d97706" />
-                    <Bar dataKey="Poor / Bad" stackId="a" fill="#dc2626" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-
-            {/* Chart 2: Pie Chart */}
-            <div style={{ border: "1px solid var(--border)", borderRadius: 10, padding: 18, background: "#fafcfb" }}>
-              <div style={{ fontSize: 12, fontWeight: 800, color: "var(--text-primary)", marginBottom: 12 }}>
-                🎯 Overall Condition Rating Share
-              </div>
-              <div style={{ height: 220, display: "flex", alignItems: "center" }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={conditionPieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={75} label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
-                      {conditionPieData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.color} />
-                      ))}
-                    </Pie>
-                    <ChartTooltip />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-
-          </div>
-
-          {/* Asset Audit Register Table */}
-          <div style={{ marginBottom: 20 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-              <div style={{ fontSize: 13, fontWeight: 800, color: "var(--text-primary)" }}>
-                📋 Detailed Asset Audit Register ({filtered.length} items)
-              </div>
-              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                Page {page + 1} of {pages || 1}
-              </div>
-            </div>
-
-            <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10.5, textAlign: "left" }}>
-                <thead>
-                  <tr style={{ background: "rgba(0,102,51,0.06)", borderBottom: "1px solid var(--border)" }}>
-                    <th style={{ padding: "8px 12px", fontWeight: 700 }}>Asset Type</th>
-                    <th style={{ padding: "8px 12px", fontWeight: 700 }}>Road Route Name</th>
-                    <th style={{ padding: "8px 12px", fontWeight: 700 }}>Province / District</th>
-                    <th style={{ padding: "8px 12px", fontWeight: 700 }}>Condition</th>
-                    <th style={{ padding: "8px 12px", fontWeight: 700 }}>Surveyor</th>
-                    <th style={{ padding: "8px 12px", fontWeight: 700 }}>GPS Coords</th>
-                    <th style={{ padding: "8px 12px", fontWeight: 700, textAlign: "right" }}>Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {pageSlice.length === 0 ? (
-                    <tr>
-                      <td colSpan={7} style={{ padding: 24, textAlign: "center", color: "var(--text-muted)" }}>No assets match the selected report criteria</td>
-                    </tr>
-                  ) : (
-                    pageSlice.map((r, idx) => {
-                      const st = getRecordStatus(r);
-                      const col = getStatusColor(st);
-                      return (
-                        <tr key={idx} style={{ borderBottom: "1px solid var(--border)", background: idx % 2 === 0 ? "#fff" : "#fafcfb" }}>
-                          <td style={{ padding: "8px 12px", fontWeight: 700, textTransform: "capitalize" }}>{r.asset_category?.replace("_", " ")}</td>
-                          <td style={{ padding: "8px 12px", fontWeight: 600 }}>{getAssetName(r)}</td>
-                          <td style={{ padding: "8px 12px" }}>{r.province || "Harare"} · {r.district || "District"}</td>
-                          <td style={{ padding: "8px 12px" }}>
-                            <span style={{ background: col, color: "#fff", padding: "2px 6px", borderRadius: 10, fontSize: 9, fontWeight: 700, textTransform: "uppercase" }}>
-                              {formatStatusLabel(st)}
-                            </span>
-                          </td>
-                          <td style={{ padding: "8px 12px" }}>{r.surveyor_name || "N/A"}</td>
-                          <td style={{ padding: "8px 12px", fontFamily: "monospace", fontSize: 9.5 }}>{r.gps || formatGpsLabel(r)}</td>
-                          <td style={{ padding: "8px 12px", textAlign: "right" }}>
-                            {onSelectRecord && (
-                              <button
-                                onClick={() => onSelectRecord(r)}
-                                style={{ background: "#006633", border: "none", color: "#fff", padding: "3px 8px", borderRadius: 4, fontSize: 9.5, fontWeight: 700, cursor: "pointer" }}
-                              >
-                                📍 Map
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Pagination Controls */}
-            {pages > 1 && (
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12 }}>
-                <button
-                  onClick={() => setPage(p => Math.max(0, p - 1))}
-                  disabled={page === 0}
-                  style={{ padding: "4px 12px", borderRadius: 6, border: "1px solid var(--border)", background: "#fff", fontSize: 10.5, fontWeight: 700, cursor: "pointer" }}
-                >
-                  ← Previous
-                </button>
-                <span style={{ fontSize: 10.5, color: "var(--text-secondary)" }}>
-                  Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length)} of {filtered.length}
-                </span>
-                <button
-                  onClick={() => setPage(p => Math.min(pages - 1, p + 1))}
-                  disabled={page >= pages - 1}
-                  style={{ padding: "4px 12px", borderRadius: 6, border: "1px solid var(--border)", background: "#fff", fontSize: 10.5, fontWeight: 700, cursor: "pointer" }}
-                >
-                  Next →
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Official Sign-off Footer */}
-          <div style={{ borderTop: "1px solid var(--border)", paddingTop: 16, marginTop: 24, display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
-            <div style={{ fontSize: 9.5, color: "var(--text-muted)" }}>
-              Report Generated by Roads Department Survey Platform · Ministry of Transport &amp; Infrastructural Development
-            </div>
-            <div style={{ textAlign: "right" }}>
-              <div style={{ borderBottom: "1px solid var(--text-primary)", width: 160, marginBottom: 4 }} />
-              <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-primary)" }}>Chief Roads Engineer</div>
-              <div style={{ fontSize: 9, color: "var(--text-secondary)" }}>National Infrastructure Quality Assurance</div>
-            </div>
-          </div>
-
-        </div>
-
-      </div>
-
-    </div>
-  );
-}
-
-
+/* Reports page lives in ./ReportsPage.tsx */
 
 /* ═══════════════════════════════════════════════════════════════════════════
    DOCUMENTS PAGE (MANUALS, GUIDELINES & TECHNICAL DOCUMENTATION LIBRARY)

@@ -1,6 +1,7 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { MapContainer, TileLayer, Marker, useMap, ZoomControl, Polyline } from "react-leaflet";
+import { useEffect, useMemo, useRef, useState, type ReactNode, type CSSProperties } from "react";
+import { TileLayer, Marker, useMap, ZoomControl, Polyline } from "react-leaflet";
+import { LeafletProvider, createLeafletContext, type LeafletContextInterface } from "@react-leaflet/core";
 import L from "leaflet";
 import {
   getRecordStatus,
@@ -146,6 +147,79 @@ const hasValidGeo = (r: any) => {
 function recordKey(record: any, prefix: string, index: number) {
   const id = record?._id ?? record?.id ?? record?.survey_id;
   return id != null && String(id).length > 0 ? `${prefix}-${id}-${index}` : `${prefix}-${index}`;
+}
+
+function clearLeafletNode(node: HTMLElement) {
+  const existing = (window as any).__motidMap as L.Map | undefined;
+  if (existing) {
+    try {
+      existing.remove();
+    } catch {
+      /* already gone */
+    }
+    if ((window as any).__motidMap === existing) (window as any).__motidMap = null;
+  }
+  if ((node as any)._leaflet_id) {
+    delete (node as any)._leaflet_id;
+  }
+}
+
+/** react-leaflet MapContainer throws if the same DOM node is initialized twice (HMR / overlay remounts). */
+function SafeMapContainer({
+  center,
+  zoom,
+  children,
+  style,
+}: {
+  center: [number, number];
+  zoom: number;
+  children: ReactNode;
+  style?: CSSProperties;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<L.Map | null>(null);
+  const [context, setContext] = useState<LeafletContextInterface | null>(null);
+
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node || mapRef.current) return;
+
+    if ((node as any)._leaflet_id) {
+      clearLeafletNode(node);
+    }
+
+    let map: L.Map;
+    try {
+      map = L.map(node, { zoomControl: false, scrollWheelZoom: true });
+    } catch (err) {
+      console.warn("Leaflet map init skipped:", err);
+      return;
+    }
+
+    map.setView(center, zoom);
+    mapRef.current = map;
+    (window as any).__motidMap = map;
+    setContext(createLeafletContext(map));
+
+    return () => {
+      mapRef.current = null;
+      try {
+        map.remove();
+      } catch {
+        /* ignore */
+      }
+      if ((window as any).__motidMap === map) (window as any).__motidMap = null;
+      if ((node as any)._leaflet_id) delete (node as any)._leaflet_id;
+    };
+    // One map per mount — center/zoom are the Zimbabwe default
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div ref={containerRef} style={style}>
+      {context ? <LeafletProvider value={context}>{children}</LeafletProvider> : null}
+    </div>
+  );
 }
 
 interface MapViewProps {
@@ -332,11 +406,9 @@ export default function MapView({
         </button>
       </div>
 
-      <MapContainer
+      <SafeMapContainer
         center={defaultCenter}
         zoom={6.5}
-        scrollWheelZoom
-        zoomControl={false}
         style={{ width: "100%", height: "100%" }}
       >
         <ZoomControl position="bottomright" />
@@ -345,7 +417,7 @@ export default function MapView({
         {markerLayers}
         <MapGoToController focus={mapFocus} />
         <SelectedAssetMarker focus={mapFocus} />
-      </MapContainer>
+      </SafeMapContainer>
     </div>
   );
 }

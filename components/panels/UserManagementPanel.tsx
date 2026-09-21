@@ -1,9 +1,13 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { UserProfile, UserRole, ROLE_LABELS, canProvisionRole, isSuperAdmin } from "@/components/helpers";
 import { authFetch } from "@/lib/authClient";
-import { Users, UserPlus, Shield, MapPin, CheckCircle, AlertCircle, RefreshCw, Key, Lock } from "lucide-react";
+import { Users, UserPlus, Shield, RefreshCw, Search } from "lucide-react";
+import ListPager, { LIST_FILTER } from "./ListPager";
+
+const PAGE_SIZE = 20;
+const ALL_ROLES = Object.keys(ROLE_LABELS) as UserRole[];
 
 interface UserManagementPanelProps {
   currentUser: UserProfile;
@@ -49,6 +53,11 @@ export default function UserManagementPanel({ currentUser, onToast }: UserManage
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [lastTempPassword, setLastTempPassword] = useState<{ email: string; password: string } | null>(null);
   const [resettingId, setResettingId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [roleFilter, setRoleFilter] = useState<"all" | UserRole>("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "disabled">("all");
+  const [provinceFilter, setProvinceFilter] = useState("all");
+  const [page, setPage] = useState(0);
 
   // Auto-lock location fields based on supervisor scope
   useEffect(() => {
@@ -158,6 +167,46 @@ export default function UserManagementPanel({ currentUser, onToast }: UserManage
   if (canProvisionRole(currentUser, "district_coordinator")) roleOptions.push("district_coordinator");
   if (canProvisionRole(currentUser, "data_collector")) roleOptions.push("data_collector");
 
+  const provinceOptions = useMemo(() => {
+    const set = new Set<string>();
+    users.forEach((u) => {
+      const p = u.province?.trim();
+      if (p) set.add(p);
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [users]);
+
+  const filteredUsers = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return users.filter((u) => {
+      if (roleFilter !== "all" && u.role !== roleFilter) return false;
+      if (statusFilter === "active" && !u.is_active) return false;
+      if (statusFilter === "disabled" && u.is_active) return false;
+      if (provinceFilter !== "all") {
+        const p = u.province?.trim() || "";
+        if (provinceFilter === "__none__") {
+          if (p) return false;
+        } else if (p.toLowerCase() !== provinceFilter.toLowerCase()) {
+          return false;
+        }
+      }
+      if (!q) return true;
+      const hay = [u.full_name, u.email, u.phone_number, u.province, u.district, ROLE_LABELS[u.role]]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return hay.includes(q);
+    });
+  }, [users, search, roleFilter, statusFilter, provinceFilter]);
+
+  const pages = Math.max(1, Math.ceil(filteredUsers.length / PAGE_SIZE) || 1);
+  const pageSafe = Math.min(page, pages - 1);
+  const pageSlice = filteredUsers.slice(pageSafe * PAGE_SIZE, (pageSafe + 1) * PAGE_SIZE);
+
+  useEffect(() => {
+    if (page > pages - 1) setPage(Math.max(0, pages - 1));
+  }, [page, pages]);
+
   const getRoleBadgeStyle = (role: UserRole) => {
     switch (role) {
       case "master_admin": return { bg: "rgba(220,38,38,0.1)", color: "#dc2626", border: "1px solid rgba(220,38,38,0.2)" };
@@ -222,6 +271,40 @@ export default function UserManagementPanel({ currentUser, onToast }: UserManage
         </div>
       )}
 
+      {/* Filters */}
+      <div style={{ padding: "12px 24px", borderBottom: "1px solid var(--border)", background: "#fafcfb", display: "flex", gap: 10, alignItems: "center", flexShrink: 0, flexWrap: "wrap" }}>
+        <div style={{ position: "relative", flex: "2 1 220px", minWidth: 180 }}>
+          <Search size={13} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
+          <input
+            placeholder="Search name, email, phone…"
+            value={search}
+            onChange={(e) => { setSearch(e.target.value); setPage(0); }}
+            style={{ ...LIST_FILTER, width: "100%", padding: "8px 10px 8px 30px", color: "var(--text-primary)" }}
+          />
+        </div>
+        <select value={roleFilter} onChange={(e) => { setRoleFilter(e.target.value as "all" | UserRole); setPage(0); }} style={LIST_FILTER}>
+          <option value="all">All roles</option>
+          {ALL_ROLES.map((r) => (
+            <option key={r} value={r}>{ROLE_LABELS[r]}</option>
+          ))}
+        </select>
+        <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value as "all" | "active" | "disabled"); setPage(0); }} style={LIST_FILTER}>
+          <option value="all">All status</option>
+          <option value="active">Active</option>
+          <option value="disabled">Disabled</option>
+        </select>
+        <select value={provinceFilter} onChange={(e) => { setProvinceFilter(e.target.value); setPage(0); }} style={LIST_FILTER}>
+          <option value="all">All provinces</option>
+          <option value="__none__">No province (national)</option>
+          {provinceOptions.map((p) => (
+            <option key={p} value={p}>{p}</option>
+          ))}
+        </select>
+        <span style={{ fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+          {isLoading ? "Loading…" : `${filteredUsers.length} of ${users.length} accounts`}
+        </span>
+      </div>
+
       {/* User Table Workspace */}
       <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
         {isLoading ? (
@@ -235,11 +318,17 @@ export default function UserManagementPanel({ currentUser, onToast }: UserManage
             <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text-primary)" }}>No sub-accounts provisioned yet</div>
             <div style={{ fontSize: 12, marginTop: 4 }}>Click "Provision New Account" above to invite users within your scope.</div>
           </div>
+        ) : filteredUsers.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "60px 20px", color: "var(--text-muted)", background: "#fff", borderRadius: 12, border: "1px solid var(--border)" }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text-primary)" }}>No accounts match these filters</div>
+            <div style={{ fontSize: 12, marginTop: 4 }}>Clear search or change role, status, or province.</div>
+          </div>
         ) : (
           <div style={{ background: "#fff", borderRadius: 12, border: "1px solid var(--border)", overflow: "hidden", boxShadow: "0 2px 8px rgba(0,0,0,0.04)" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: 11.5 }}>
               <thead>
                 <tr style={{ background: "var(--bg-app)", borderBottom: "1px solid var(--border)", color: "var(--text-secondary)", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                  <th style={{ padding: "12px 16px" }}>#</th>
                   <th style={{ padding: "12px 16px" }}>Full Name &amp; Email</th>
                   <th style={{ padding: "12px 16px" }}>Role Level</th>
                   <th style={{ padding: "12px 16px" }}>Assigned Jurisdiction</th>
@@ -251,10 +340,11 @@ export default function UserManagementPanel({ currentUser, onToast }: UserManage
                 </tr>
               </thead>
               <tbody>
-                {users.map(u => {
+                {pageSlice.map((u, i) => {
                   const b = getRoleBadgeStyle(u.role);
                   return (
                     <tr key={u.id} style={{ borderBottom: "1px solid var(--border)" }}>
+                      <td style={{ padding: "14px 16px", color: "var(--text-muted)", fontWeight: 700, width: 40 }}>{pageSafe * PAGE_SIZE + i + 1}</td>
                       <td style={{ padding: "14px 16px" }}>
                         <div style={{ fontWeight: 800, color: "var(--text-primary)" }}>{u.full_name}</div>
                         <div style={{ fontSize: 10.5, color: "var(--text-muted)", marginTop: 2 }}>{u.email}</div>
@@ -305,6 +395,10 @@ export default function UserManagementPanel({ currentUser, onToast }: UserManage
           </div>
         )}
       </div>
+
+      {!isLoading && filteredUsers.length > 0 && (
+        <ListPager page={pageSafe} pageSize={PAGE_SIZE} total={filteredUsers.length} onPage={setPage} />
+      )}
 
       {/* Account Provisioning Modal */}
       {showCreateModal && (

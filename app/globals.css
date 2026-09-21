@@ -45,7 +45,7 @@
   --shadow-md: 0 4px 14px rgba(0,0,0,0.09);
   --shadow-lg: 0 8px 28px rgba(0,0,0,0.12);
 
-  --nav-w:        56px;
+  --nav-w:        72px;
   --inner-w:      300px;
   --right-w:      320px;
   --header-h:     62px;
@@ -190,33 +190,47 @@ h1,h2,h3,h4,h5,h6 { font-family: var(--font-title); }
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 10px 0;
-  gap: 4px;
+  padding: 8px 0 10px;
+  gap: 0;
   flex-shrink: 0;
   z-index: 150;
   border-right: 1px solid rgba(255,255,255,0.06);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.nav-rail::-webkit-scrollbar { width: 0; height: 0; }
+
+.nav-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
 }
 
 .nav-item {
-  width: 40px;
-  height: 40px;
+  width: 64px;
+  min-height: 44px;
+  height: auto;
+  padding: 7px 4px 6px;
   border-radius: var(--radius-md);
   background: transparent;
   border: none;
-  color: rgba(255,255,255,0.5);
+  color: rgba(255,255,255,0.55);
   cursor: pointer;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 3px;
-  transition: all 0.15s;
+  gap: 4px;
+  transition: background 0.15s, color 0.15s;
   position: relative;
 }
 
 .nav-item:hover {
   background: rgba(255,255,255,0.1);
-  color: rgba(255,255,255,0.9);
+  color: rgba(255,255,255,0.95);
 }
 
 .nav-item.active {
@@ -225,21 +239,22 @@ h1,h2,h3,h4,h5,h6 { font-family: var(--font-title); }
 }
 
 .nav-item-label {
-  font-size: 7.5px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
-  line-height: 1;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1.15;
+  text-align: center;
+  max-width: 100%;
 }
 
 .nav-divider {
-  width: 28px;
+  width: 32px;
   height: 1px;
-  background: rgba(255,255,255,0.1);
-  margin: 4px 0;
+  background: rgba(255,255,255,0.14);
+  margin: 7px 0;
 }
 
-.nav-spacer { flex: 1; }
+.nav-spacer { flex: 1; min-height: 8px; }
 
 /* ─── Inner Panel ────────────────────────────────────────────────────────── */
 .inner-panel {
@@ -1616,7 +1631,7 @@ h1,h2,h3,h4,h5,h6 { font-family: var(--font-title); }
     z-index: 1003;
   }
 
-  /* Hide right panel when a full-page module (Survey, Database, …) is open */
+  /* Hide right panel when a full-page module is open */
   .fullpage-active .right-panel,
   .fullpage-active .panel-toggle-btn.right-toggle {
     display: none !important;

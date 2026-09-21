@@ -45,6 +45,8 @@ interface Props {
   autoResume?: boolean;
   /** Called when an in-progress session is cleared so App can drop pausedRoadContext. */
   onSessionCleared?: () => void;
+  /** True while GPS tracking or paused (unsaved line still in progress). */
+  onRecordingStateChange?: (active: boolean) => void;
   /** Snap a roadside photo while the segment is recording / paused. */
   onAddPhoto?: () => void | Promise<void>;
   photoCount?: number;
@@ -111,6 +113,39 @@ function readInitialSegmentState(existingGeometry?: SegmentGeometry | null): {
 const SESSION_PERSIST_EVERY_N = 2; // persist frequently so pause never loses recent points
 const MIN_DISTANCE_M = 2;        // denser sampling for better line fidelity
 const AUTO_ADD_INTERVAL_MS = 2500; // slightly more sensitive auto-sampling
+/** After pause→point, ignore GPS until back near the last line vertex. */
+const RESUME_JOIN_MAX_M = 12;
+/** Ignore auto GPS that sits on a mid-route point asset. */
+const POINT_EXCLUDE_M = 15;
+
+type ExcludePoint = { lat: number; lng: number };
+
+function readSessionExcludePoints(): ExcludePoint[] {
+  try {
+    const raw = localStorage.getItem(SEGMENT_SESSION_KEY);
+    if (!raw) return [];
+    const sess = JSON.parse(raw);
+    return Array.isArray(sess.excludePoints) ? sess.excludePoints : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Remember a collected point so resume does not add it as a line vertex. */
+export function appendPausedLineExcludePoint(lat: number, lng: number) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+  try {
+    const raw = localStorage.getItem(SEGMENT_SESSION_KEY);
+    if (!raw) return;
+    const sess = JSON.parse(raw);
+    const list: ExcludePoint[] = Array.isArray(sess.excludePoints) ? sess.excludePoints : [];
+    list.push({ lat, lng });
+    sess.excludePoints = list;
+    localStorage.setItem(SEGMENT_SESSION_KEY, JSON.stringify(sess));
+  } catch {
+    /* ignore */
+  }
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -268,6 +303,7 @@ export function SegmentTracker({
   onCollectPointAlongRoute,
   autoResume = false,
   onSessionCleared,
+  onRecordingStateChange,
   onAddPhoto,
   photoCount = 0,
   maxPhotos = 12,
@@ -313,7 +349,20 @@ export function SegmentTracker({
     phaseRef.current = phase;
   }, [phase]);
 
+  useEffect(() => {
+    onRecordingStateChange?.(phase === "tracking" || phase === "paused");
+  }, [phase, onRecordingStateChange]);
+
+  useEffect(() => {
+    return () => {
+      onRecordingStateChange?.(false);
+    };
+  }, [onRecordingStateChange]);
+
   const lastAutoAddRef = useRef<number>(0);
+  const debugResumeAtRef = useRef(0);
+  const resumeJoinRef = useRef(false);
+  const excludePointsRef = useRef<ExcludePoint[]>(readSessionExcludePoints());
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
@@ -353,8 +402,18 @@ export function SegmentTracker({
         roadLabel,
         phase: sessionPhase,
         savedAt: Date.now(),
+        excludePoints: readSessionExcludePoints(),
       };
       localStorage.setItem(SEGMENT_SESSION_KEY, JSON.stringify(session));
+      // #region agent log
+      {
+        const last = pts[pts.length - 1];
+        const sinceResume = debugResumeAtRef.current > 0 ? Date.now() - debugResumeAtRef.current : -1;
+        if (sessionPhase === "paused" || (sinceResume >= 0 && sinceResume < 20000)) {
+          fetch('http://127.0.0.1:7881/ingest/63c8d1b8-da33-490e-a74c-51bee6811989',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5deffd'},body:JSON.stringify({sessionId:'5deffd',runId:'pre-fix',hypothesisId:'B',location:'SegmentTracker.tsx:persistSession',message:'session persisted',data:{phase:sessionPhase,count:pts.length,last:last?{lat:last.lat,lng:last.lng}:null,sinceResume},timestamp:Date.now()})}).catch(()=>{});
+        }
+      }
+      // #endregion
     } catch (e) {
       console.warn("Failed to persist GPS session:", e);
     }
@@ -411,8 +470,18 @@ export function SegmentTracker({
         // Auto-resume path after returning from point-asset collection
         setPhase("tracking");
         phaseRef.current = "tracking";
+        debugResumeAtRef.current = Date.now();
+        lastAutoAddRef.current = Date.now();
+        excludePointsRef.current = readSessionExcludePoints();
+        resumeJoinRef.current = excludePointsRef.current.length > 0;
         void enableScreenAwake();
         persistSession(restoredPoints, startTimeRef.current, trackingModeRef.current, "tracking");
+        // #region agent log
+        {
+          const last = restoredPoints[restoredPoints.length - 1];
+          fetch('http://127.0.0.1:7881/ingest/63c8d1b8-da33-490e-a74c-51bee6811989',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5deffd'},body:JSON.stringify({sessionId:'5deffd',runId:'post-fix',hypothesisId:'D',location:'SegmentTracker.tsx:autoResume',message:'auto-resume started watching',data:{count:restoredPoints.length,last:last?{lat:last.lat,lng:last.lng}:null,lastAutoAddRef:lastAutoAddRef.current,resumeJoin:resumeJoinRef.current,excludeCount:excludePointsRef.current.length},timestamp:Date.now()})}).catch(()=>{});
+        }
+        // #endregion
         if (reconnectTrackingRef.current) reconnectTrackingRef.current(restoredPoints.length);
       }, 500);
     }
@@ -724,7 +793,32 @@ export function SegmentTracker({
     if (!isManual) {
       if (current.length > 0) {
         const last = current[current.length - 1];
-        if (haversine(last.lat, last.lng, finalPos.lat, finalPos.lng) < MIN_DISTANCE_M) return false;
+        const dist = haversine(last.lat, last.lng, finalPos.lat, finalPos.lng);
+        const distOrig = haversine(last.lat, last.lng, pos.lat, pos.lng);
+        let skipReason: string | null = null;
+        const nearExclude = excludePointsRef.current.some(
+          (ex) =>
+            haversine(pos.lat, pos.lng, ex.lat, ex.lng) < POINT_EXCLUDE_M ||
+            haversine(finalPos.lat, finalPos.lng, ex.lat, ex.lng) < POINT_EXCLUDE_M
+        );
+        if (nearExclude) skipReason = "exclude-point";
+        else if (resumeJoinRef.current && distOrig > RESUME_JOIN_MAX_M) skipReason = "resume-join";
+        // #region agent log
+        {
+          const _dbgSinceResume = Date.now() - debugResumeAtRef.current;
+          if (debugResumeAtRef.current > 0 && (_dbgSinceResume < 15000 || dist >= 15 || phaseRef.current !== "tracking" || skipReason)) {
+            fetch('http://127.0.0.1:7881/ingest/63c8d1b8-da33-490e-a74c-51bee6811989',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5deffd'},body:JSON.stringify({sessionId:'5deffd',runId:'post-fix',hypothesisId:'A',location:'SegmentTracker.tsx:addPoint',message:'addPoint candidate',data:{phase:phaseRef.current,isManual,distM:Math.round(dist*10)/10,distOrigM:Math.round(distOrig*10)/10,accepted:!skipReason&&dist>=MIN_DISTANCE_M,skipReason,from:{lat:last.lat,lng:last.lng},to:{lat:finalPos.lat,lng:finalPos.lng},prevCount:current.length,msSinceResume:_dbgSinceResume,resumeJoin:resumeJoinRef.current},timestamp:Date.now()})}).catch(()=>{});
+          }
+        }
+        // #endregion
+        if (skipReason) {
+          if (skipReason === "resume-join") {
+            setStatusMsg("▶ Waiting to rejoin the line at the last road point…");
+          }
+          return false;
+        }
+        if (resumeJoinRef.current) resumeJoinRef.current = false;
+        if (dist < MIN_DISTANCE_M) return false;
       }
       setAutoAdded((n) => n + 1);
     } else {
@@ -928,6 +1022,9 @@ export function SegmentTracker({
     setPhase("paused");
     phaseRef.current = "paused";
     void disableScreenAwake();
+    // #region agent log
+    fetch('http://127.0.0.1:7881/ingest/63c8d1b8-da33-490e-a74c-51bee6811989',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5deffd'},body:JSON.stringify({sessionId:'5deffd',runId:'pre-fix',hypothesisId:'C',location:'SegmentTracker.tsx:pauseSegment',message:'paused line',data:{count:pts.length,last:pts[pts.length-1]?{lat:pts[pts.length-1].lat,lng:pts[pts.length-1].lng}:null,forPointCollect,currentPos:currentPos?{lat:currentPos.lat,lng:currentPos.lng}:null},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     setStatusMsg("⏸ Segment paused — GPS points kept. Resume anytime or collect a point asset.");
 
     const info = { pointCount: pts.length, length_m: totalDistance(pts) };
@@ -950,11 +1047,17 @@ export function SegmentTracker({
       setCurrentPos(last);
       setCurrentAcc(last.acc);
     }
-    lastAutoAddRef.current = 0;
+    lastAutoAddRef.current = Date.now();
+    debugResumeAtRef.current = Date.now();
+    excludePointsRef.current = readSessionExcludePoints();
+    resumeJoinRef.current = excludePointsRef.current.length > 0;
     setPhase("tracking");
     phaseRef.current = "tracking";
     void enableScreenAwake();
     persistSession(pts, startTimeRef.current, trackingModeRef.current, "tracking");
+    // #region agent log
+    fetch('http://127.0.0.1:7881/ingest/63c8d1b8-da33-490e-a74c-51bee6811989',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5deffd'},body:JSON.stringify({sessionId:'5deffd',runId:'post-fix',hypothesisId:'A',location:'SegmentTracker.tsx:resumeSegment',message:'manual resume',data:{count:pts.length,last:last?{lat:last.lat,lng:last.lng}:null,lastAutoAddRef:lastAutoAddRef.current,resumeJoin:resumeJoinRef.current,excludeCount:excludePointsRef.current.length},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     setStatusMsg("▶ Resuming segment recording from last point…");
     await reconnectTracking(pts.length);
   };

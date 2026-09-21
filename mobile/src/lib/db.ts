@@ -42,7 +42,7 @@ export interface SurveyDraft {
   culvet_serviceability?: string;
   culvert_size_m2?: number;
   culvert_openings?: number;
-  /** Pipe culvert diameter in mm (450, 600, 900, 1200). */
+  /** Pipe culvert diameter in mm (450, 600, 750, 900, 1200). */
   culvert_pipe_diameter?: string;
   /** Number of barrel pipes (pipe culvert only). */
   culvert_barrels?: number;
@@ -234,6 +234,12 @@ export interface SurveyDraft {
   junction_control?: string;
   junction_road_markings?: string;
   junction_signage?: string;
+
+  // Road rupture / under-construction point
+  rupture_kind?: string;
+  rupture_cause?: string;
+  rupture_detour?: string;
+  rupture_condition?: string;
 
   // Road Sign optional fields
   sign_type?: string;

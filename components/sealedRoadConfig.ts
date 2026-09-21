@@ -9,10 +9,12 @@ export const SEALED_ROAD_CLASS_OPTIONS: Option[] = [
   { value: "urban_arterial", label: "Urban Arterial" },
   { value: "urban_collector", label: "Urban Collector" },
   { value: "urban_local", label: "Urban Local" },
+  { value: "urban_cbd", label: "CBD" },
   { value: "industrial", label: "Industrial" },
 ];
 
 export const SEALED_ROAD_TYPE_OPTIONS: Option[] = [
+  { value: "wide_mat", label: "Wide Mat" },
   { value: "wide_mat_ss", label: "Wide Mat SS" },
   { value: "wide_mat_gs", label: "Wide Mat GS" },
   { value: "narrow_mat", label: "Narrow Mat" },
