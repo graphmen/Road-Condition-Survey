@@ -359,6 +359,9 @@ def _build_row(record: dict, table_name: str) -> dict:
         row["junction_control"] = inner.get("junction_control")
         row["junction_road_markings"] = inner.get("junction_road_markings")
         row["junction_signage"] = inner.get("junction_signage")
+        row["junction_has_filter_lanes"] = inner.get("junction_has_filter_lanes") or "no"
+        lanes = inner.get("junction_filter_lanes")
+        row["junction_filter_lanes"] = lanes if isinstance(lanes, list) else []
 
     elif table_name == "survey_road_ruptures":
         row["rupture_kind"] = inner.get("rupture_kind")

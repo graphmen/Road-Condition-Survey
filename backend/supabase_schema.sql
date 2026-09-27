@@ -467,7 +467,9 @@ CREATE TABLE IF NOT EXISTS survey_junctions (
     junction_condition TEXT,
     junction_control TEXT,
     junction_road_markings TEXT,
-    junction_signage TEXT
+    junction_signage TEXT,
+    junction_has_filter_lanes TEXT,
+    junction_filter_lanes JSONB
 );
 
 -- ---------------------------------------------------------
@@ -783,6 +785,8 @@ ALTER TABLE survey_tollgates ADD COLUMN IF NOT EXISTS photos JSONB;
 ALTER TABLE survey_laybys ADD COLUMN IF NOT EXISTS photos JSONB;
 ALTER TABLE survey_busstops ADD COLUMN IF NOT EXISTS photos JSONB;
 ALTER TABLE survey_junctions ADD COLUMN IF NOT EXISTS photos JSONB;
+ALTER TABLE survey_junctions ADD COLUMN IF NOT EXISTS junction_has_filter_lanes TEXT;
+ALTER TABLE survey_junctions ADD COLUMN IF NOT EXISTS junction_filter_lanes JSONB;
 ALTER TABLE survey_road_signs ADD COLUMN IF NOT EXISTS photos JSONB;
 ALTER TABLE survey_shelvets ADD COLUMN IF NOT EXISTS photos JSONB;
 ALTER TABLE survey_culverts ADD COLUMN IF NOT EXISTS photos JSONB;

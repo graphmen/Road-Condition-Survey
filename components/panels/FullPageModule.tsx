@@ -5,6 +5,8 @@ import {
   getRecordStatus, getAssetType, getAssetName, formatStatusLabel, getStatusColor, normalizePhotos, mergePhotoLists, getSadcValue,
   AUTHORITY_OPTIONS, CONDITION_WITH_CONSTRUCTION_OPTIONS,
   formatGpsLabel,
+  parseJunctionFilterLanes, resizeJunctionFilterLanes, serializeJunctionFilterLanes, MAX_JUNCTION_FILTER_LANES,
+  type JunctionFilterLane,
 } from "@/components/helpers";
 import { OVERLAY_GROUPS } from "@/lib/mapLayers";
 import { ZIM_PROVINCES_DISTRICTS } from "@/lib/zimbabwe";
@@ -930,6 +932,8 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
   const [junctionControl, setJunctionControl] = useState("signs");
   const [junctionRoadMarkings, setJunctionRoadMarkings] = useState("yes");
   const [junctionSignage, setJunctionSignage] = useState("yes");
+  const [junctionHasFilterLanes, setJunctionHasFilterLanes] = useState("no");
+  const [junctionFilterLanes, setJunctionFilterLanes] = useState<JunctionFilterLane[]>([{ length_m: "", condition: "good" }]);
   const [ruptureKind, setRuptureKind] = useState("rupture");
   const [ruptureCause, setRuptureCause] = useState("washaway");
   const [ruptureDetour, setRuptureDetour] = useState("no");
@@ -1156,6 +1160,11 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
       setJunctionControl(record.junction_control || "signs");
       setJunctionRoadMarkings(record.junction_road_markings || record.Kerbs || "yes");
       setJunctionSignage(record.junction_signage || "yes");
+      setJunctionHasFilterLanes(record.junction_has_filter_lanes === "yes" ? "yes" : "no");
+      {
+        const loaded = parseJunctionFilterLanes(record.junction_filter_lanes);
+        setJunctionFilterLanes(loaded.length > 0 ? loaded : [{ length_m: "", condition: "good" }]);
+      }
       setRuptureKind(recordField(record, "rupture_kind") || "rupture");
       setRuptureCause(recordField(record, "rupture_cause") || "washaway");
       setRuptureDetour(recordField(record, "rupture_detour") || "no");
@@ -1352,6 +1361,8 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
       setJunctionControl("signs");
       setJunctionRoadMarkings("yes");
       setJunctionSignage("yes");
+      setJunctionHasFilterLanes("no");
+      setJunctionFilterLanes([{ length_m: "", condition: "good" }]);
       setRuptureKind("rupture");
       setRuptureCause("washaway");
       setRuptureDetour("no");
@@ -1622,6 +1633,8 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
       data.junction_control = junctionControl;
       data.junction_road_markings = junctionRoadMarkings;
       data.junction_signage = junctionSignage;
+      data.junction_has_filter_lanes = junctionHasFilterLanes;
+      data.junction_filter_lanes = serializeJunctionFilterLanes(junctionHasFilterLanes, junctionFilterLanes);
     } else if (section === "road_rupture") {
       data.rupture_kind = ruptureKind;
       if (ruptureKind === "rupture") data.rupture_cause = ruptureCause;
@@ -2917,6 +2930,56 @@ function SurveyFormModal({ isOpen, onClose, record, onSave, onToast }: SurveyFor
                   </select>
                 </div>
               </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Are there filter lanes?</label>
+                <select value={junctionHasFilterLanes} onChange={e => {
+                  const next = e.target.value === "yes" ? "yes" : "no";
+                  setJunctionHasFilterLanes(next);
+                  if (next === "yes" && junctionFilterLanes.length === 0) {
+                    setJunctionFilterLanes([{ length_m: "", condition: "good" }]);
+                  }
+                }} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                  <option value="no">No</option>
+                  <option value="yes">Yes</option>
+                </select>
+              </div>
+              {junctionHasFilterLanes === "yes" && (
+                <>
+                  <div>
+                    <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Number of filter lanes</label>
+                    <select value={String(junctionFilterLanes.length)} onChange={e => setJunctionFilterLanes(resizeJunctionFilterLanes(junctionFilterLanes, Number(e.target.value)))} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                      {Array.from({ length: MAX_JUNCTION_FILTER_LANES }, (_, i) => i + 1).map((n) => (
+                        <option key={n} value={n}>{n}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {junctionFilterLanes.map((lane, idx) => (
+                    <div key={idx} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <div>
+                        <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Lane {idx + 1} length (m)</label>
+                        <input type="number" min="0" step="0.1" placeholder="e.g. 45" value={lane.length_m} onChange={e => {
+                          const next = [...junctionFilterLanes];
+                          next[idx] = { ...next[idx], length_m: e.target.value };
+                          setJunctionFilterLanes(next);
+                        }} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }} />
+                      </div>
+                      <div>
+                        <label style={{ display: "block", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Lane {idx + 1} condition</label>
+                        <select value={lane.condition} onChange={e => {
+                          const next = [...junctionFilterLanes];
+                          next[idx] = { ...next[idx], condition: e.target.value };
+                          setJunctionFilterLanes(next);
+                        }} style={{ width: "100%", padding: "7px 10px", border: "1px solid rgba(0,102,51,0.2)", borderRadius: 6, fontSize: 11.5, background: "#fff" }}>
+                          <option value="good">Good</option>
+                          <option value="fair">Fair</option>
+                          <option value="poor">Poor</option>
+                        </select>
+                      </div>
+                    </div>
+                  ))}
+                </>
+              )}
             </div>
           )}
 

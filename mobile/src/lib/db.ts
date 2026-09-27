@@ -234,6 +234,8 @@ export interface SurveyDraft {
   junction_control?: string;
   junction_road_markings?: string;
   junction_signage?: string;
+  junction_has_filter_lanes?: "yes" | "no";
+  junction_filter_lanes?: { length_m: number; condition: string }[];
 
   // Road rupture / under-construction point
   rupture_kind?: string;

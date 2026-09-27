@@ -54,6 +54,8 @@ interface Props {
   /** Max allowed segment length in metres (urban/rural). Auto-stops recording at limit. */
   maxSegmentLengthM?: number;
   segmentLimitHint?: string;
+  /** Block Start until a road class has been chosen. */
+  startDisabled?: boolean;
 }
 
 type Phase = "idle" | "tracking" | "paused" | "completed";
@@ -309,6 +311,7 @@ export function SegmentTracker({
   maxPhotos = 12,
   maxSegmentLengthM,
   segmentLimitHint,
+  startDisabled = false,
 }: Props) {
   const initial = readInitialSegmentState(existingGeometry);
   const [phase, setPhase] = useState<Phase>(initial.phase);
@@ -899,6 +902,7 @@ export function SegmentTracker({
   }, [addPoint]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const startTracking = async () => {
+    if (startDisabled) return;
     try {
       setStatusMsg("Requesting background location permission…");
       const status = await BackgroundGeolocation.requestPermissions({
@@ -1301,11 +1305,19 @@ export function SegmentTracker({
         <button
           type="button"
           onClick={startTracking}
+          disabled={startDisabled}
           className="mobile-btn"
-          style={{ width: "100%", height: "46px", fontSize: "13px", gap: "10px", letterSpacing: "0.02em" }}
+          style={{
+            width: "100%",
+            height: "46px",
+            fontSize: "13px",
+            gap: "10px",
+            letterSpacing: "0.02em",
+            opacity: startDisabled ? 0.55 : 1,
+          }}
         >
           <Navigation size={17} />
-          Start Segment Recording
+          {startDisabled ? "Choose a road class to start" : "Start Segment Recording"}
         </button>
       </div>
     );

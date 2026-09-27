@@ -809,6 +809,8 @@ const mapDraftToSupabaseTable = (draft: any, tableName: string) => {
     row.junction_control = draft.junction_control || null;
     row.junction_road_markings = draft.junction_road_markings || null;
     row.junction_signage = draft.junction_signage || null;
+    row.junction_has_filter_lanes = draft.junction_has_filter_lanes || "no";
+    row.junction_filter_lanes = Array.isArray(draft.junction_filter_lanes) ? draft.junction_filter_lanes : [];
   } else if (tableName === "survey_road_ruptures") {
     row.rupture_kind = draft.rupture_kind || null;
     row.rupture_cause = draft.rupture_cause || null;
@@ -946,7 +948,7 @@ const CATEGORY_EXTRA: Record<string, string> = {
   tollgate: "tollgate_name,tollgate_condition,tollgate_type",
   layby: "layby_condition,layby_surface",
   busstop: "busstop_type,busstop_condition",
-  junction: "junction_type,junction_condition",
+  junction: "junction_type,junction_condition,junction_has_filter_lanes,junction_filter_lanes",
   road_rupture: "rupture_kind,rupture_cause,rupture_detour,rupture_condition",
   sign: "sign_type,sign_name,sign_condition",
   shelvet: "shelvets_type,shelvet_condition",

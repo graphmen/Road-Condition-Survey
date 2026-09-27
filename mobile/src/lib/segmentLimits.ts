@@ -41,3 +41,19 @@ export function fmtSegmentLimitHint(roadClass: string, assetCategory?: string): 
   const kind = isUrbanSegmentClass(roadClass) ? "Urban" : "Rural";
   return `${kind} segment limit: ${SEGMENT_MIN_M}–${max} m`;
 }
+
+/** Shown before a class is chosen, so the cap rules are visible up front. */
+export const SEGMENT_CAP_GUIDE =
+  "Urban sealed and earth roads, including CBD and industrial, stop at 500 m. Rural sealed and earth roads stop at 5 km. Gravel roads stop at 5 km for every class. Recording ends automatically at the cap; start a new segment to continue.";
+
+export function segmentCapExplanation(roadClass: string, assetCategory?: string): string {
+  const max = segmentMaxLengthM(roadClass, assetCategory);
+  const maxLabel = max >= 1000 ? `${max / 1000} km` : `${max} m`;
+  if (assetCategory === "gravel") {
+    return `Gravel: this segment stops at ${maxLabel}. Recording ends automatically at the cap.`;
+  }
+  if (isUrbanSegmentClass(roadClass)) {
+    return `Urban class: this segment stops at ${maxLabel}. Recording ends automatically at the cap.`;
+  }
+  return `Rural class: this segment stops at ${maxLabel}. Recording ends automatically at the cap.`;
+}

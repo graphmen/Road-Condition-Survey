@@ -481,6 +481,60 @@ export function getAssetType(record: any): string {
   return "Asset";
 }
 
+export type JunctionFilterLane = { length_m: number | string; condition: string };
+
+export const MAX_JUNCTION_FILTER_LANES = 6;
+
+export function parseJunctionFilterLanes(val: unknown): JunctionFilterLane[] {
+  if (typeof val === "string") {
+    try { val = JSON.parse(val); } catch { val = []; }
+  }
+  if (!Array.isArray(val) || val.length === 0) return [];
+  const parsed = val
+    .map((row) => {
+      if (!row || typeof row !== "object") return null;
+      const rec = row as { length_m?: unknown; condition?: unknown };
+      const n = typeof rec.length_m === "number" ? rec.length_m : parseFloat(String(rec.length_m ?? ""));
+      return {
+        length_m: Number.isFinite(n) ? n : "",
+        condition: ["good", "fair", "poor"].includes(String(rec.condition)) ? String(rec.condition) : "good",
+      } as JunctionFilterLane;
+    })
+    .filter(Boolean) as JunctionFilterLane[];
+  return parsed.slice(0, MAX_JUNCTION_FILTER_LANES);
+}
+
+export function resizeJunctionFilterLanes(lanes: JunctionFilterLane[], count: number): JunctionFilterLane[] {
+  const n = Math.max(1, Math.min(MAX_JUNCTION_FILTER_LANES, Math.round(count) || 1));
+  const next = lanes.slice(0, n);
+  while (next.length < n) next.push({ length_m: "", condition: "good" });
+  return next;
+}
+
+export function serializeJunctionFilterLanes(has: string, lanes: JunctionFilterLane[]): { length_m: number; condition: string }[] {
+  if (has !== "yes") return [];
+  return lanes
+    .map((lane) => {
+      const n = typeof lane.length_m === "number" ? lane.length_m : parseFloat(String(lane.length_m));
+      return { length_m: n, condition: lane.condition || "good" };
+    })
+    .filter((lane) => Number.isFinite(lane.length_m) && lane.length_m > 0);
+}
+
+export function junctionFilterLaneSummary(record: any): string | null {
+  if (!record || record.junction_has_filter_lanes === "no") return null;
+  const raw = record.junction_filter_lanes;
+  const lanes = parseJunctionFilterLanes(raw);
+  const withLen = lanes.filter((l) => Number(l.length_m) > 0);
+  if (withLen.length === 0) {
+    return record.junction_has_filter_lanes === "yes" ? "filter lanes" : null;
+  }
+  const n = withLen.length;
+  const total = withLen.reduce((sum, l) => sum + Number(l.length_m), 0);
+  const noun = n === 1 ? "filter lane" : "filter lanes";
+  return `${n} ${noun}, ${Math.round(total)} m`;
+}
+
 export function getAssetName(record: any): string {
   if (!record) return "Unnamed Asset";
 
@@ -552,7 +606,9 @@ export function getAssetName(record: any): string {
     }
     case "junction": {
       const jt = pick("junction_type");
-      return jt ? `Junction (${titleCase(jt)})` : roadBit ? `${roadBit} Junction` : "Junction";
+      const filterBit = junctionFilterLaneSummary(record);
+      const base = jt ? `Junction (${titleCase(jt)})` : roadBit ? `${roadBit} Junction` : "Junction";
+      return filterBit ? `${base} · ${filterBit}` : base;
     }
     case "road_rupture": {
       const kind = pick("rupture_kind");
