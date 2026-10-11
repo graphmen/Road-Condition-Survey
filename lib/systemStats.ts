@@ -195,7 +195,7 @@ export function buildSystemStats(records: any[]): SystemStats {
     }
   }
 
-  const monthKeys = [...monthMap.keys()].sort();
+  const monthKeys = Array.from(monthMap.keys()).sort();
   const monthWindow = monthKeys.length > 18 ? monthKeys.slice(-18) : monthKeys;
 
   const groupRows = Array.from(groupMap.values()).map((row) => {

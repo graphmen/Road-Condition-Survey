@@ -103,5 +103,6 @@ export function buildZip(entries: ZipEntry[]): Blob {
     u16(0),
   ]);
 
-  return new Blob([concat([...locals, centralDir, eocd])], { type: "application/zip" });
+  const zipBytes = concat([...locals, centralDir, eocd]);
+  return new Blob([zipBytes.buffer as ArrayBuffer], { type: "application/zip" });
 }
