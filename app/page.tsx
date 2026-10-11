@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import { RefreshCw, CheckCircle, AlertTriangle, Info, X, ChevronLeft, ChevronRight, LogOut, ShieldCheck, User } from "lucide-react";
 import LeftNav, { type NavModule } from "@/components/panels/LeftNav";
@@ -8,6 +8,7 @@ import InnerPanel from "@/components/panels/InnerPanel";
 import RightPanel from "@/components/panels/RightPanel";
 import FullPageModule from "@/components/panels/FullPageModule";
 import LoginModal from "@/components/LoginModal";
+import FeatureDetailModal from "@/components/FeatureDetailModal";
 import MapErrorBoundary from "@/components/MapErrorBoundary";
 import { useInactivityTimeout, clearInactivityTimestamp } from "@/hooks/useInactivityTimeout";
 import { validateStoredSession, clearAuthSession } from "@/lib/authClient";
@@ -16,6 +17,7 @@ import {
   buildMapGoto,
   fireMapGoto,
   getAssetName,
+  getCategoryKey,
   normalizePhotos,
   recordHasPhotos,
   mergePhotoLists,
@@ -26,6 +28,7 @@ import {
   canManageUsers,
   canReviewDeletions,
 } from "@/components/helpers";
+import { INITIAL_VISIBLE_LAYERS, ALL_OVERLAY_KEYS } from "@/lib/mapLayers";
 
 const MapView = dynamic(() => import("@/components/MapView"), {
   ssr: false,
@@ -40,7 +43,23 @@ const MapView = dynamic(() => import("@/components/MapView"), {
 });
 
 // Full-page overlay modules
-const FULLPAGE_MODULES: NavModule[] = ["dashboard", "highways", "analytics", "survey", "database", "gallery", "reports", "documents", "export", "users", "approvals"];
+const FULLPAGE_MODULES: NavModule[] = ["dashboard", "highways", "analytics", "survey", "database", "gallery", "reports", "documents", "export", "users", "approvals", "settings"];
+const NAV_STORAGE_KEY = "roads_active_module";
+const ALL_NAV_MODULES: NavModule[] = [
+  "dashboard", "assets", "highways", "analytics", "survey",
+  "database", "gallery", "reports", "documents", "export",
+  "users", "approvals", "settings",
+];
+
+function canonicalizeNavModule(m: NavModule): NavModule {
+  return m === "database" ? "survey" : m;
+}
+
+function parseStoredNavModule(value: string | null): NavModule | null {
+  if (!value) return null;
+  if (!ALL_NAV_MODULES.includes(value as NavModule)) return null;
+  return canonicalizeNavModule(value as NavModule);
+}
 
 const EMPTY_USER: UserProfile = {
   id: "",
@@ -62,15 +81,19 @@ export default function Home() {
 
   const [activeModule, setActiveModule]       = useState<NavModule>("assets");
   const [fullPageModule, setFullPageModule]   = useState<NavModule | null>(null);
+  const [navHydrated, setNavHydrated]         = useState(false);
   const [selectedRecord, setSelectedRecord]   = useState<any | null>(null);
+  const [featureModalOpen, setFeatureModalOpen] = useState(false);
   const [mapFocus, setMapFocus]               = useState<MapGotoDetail | null>(null);
   const [selectedRoad, setSelectedRoad]       = useState("all");
   const [lastSynced, setLastSynced]           = useState<Date | null>(null);
+  const [visibleLayers, setVisibleLayers]     = useState<Record<string, boolean>>(INITIAL_VISIBLE_LAYERS);
 
   const [innerOpen, setInnerOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
   // Once the map has mounted, never unmount it (Leaflet crashes on remount)
   const [mapUnlocked, setMapUnlocked] = useState(false);
+  const fullDatasetStarted = useRef(false);
 
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
 
@@ -152,9 +175,49 @@ export default function Home() {
     }
   };
 
-  // Load live server data after sign-in (skip stale local fallback that lacks photos)
+  // Remember the last page so a reload does not dump the user back on Layers
   useEffect(() => {
     if (isAuthenticated !== true) return;
+    if (navHydrated) return;
+
+    const stored = parseStoredNavModule(sessionStorage.getItem(NAV_STORAGE_KEY));
+    let next: NavModule | null = stored;
+    if (next === "users" && !canManageUsers(currentUser)) next = null;
+    if (next === "approvals" && !canReviewDeletions(currentUser)) next = null;
+
+    if (next) {
+      setActiveModule(next);
+      if (FULLPAGE_MODULES.includes(next)) {
+        setFullPageModule(next);
+        setInnerOpen(false);
+      } else {
+        setFullPageModule(null);
+        setInnerOpen(true);
+      }
+    }
+    setNavHydrated(true);
+  }, [isAuthenticated, currentUser, navHydrated]);
+
+  useEffect(() => {
+    if (!navHydrated) return;
+    sessionStorage.setItem(NAV_STORAGE_KEY, activeModule);
+  }, [navHydrated, activeModule]);
+
+  // Survey / Database / Gallery page from the API. Skip the full 2k-record dump until the map needs it.
+  useEffect(() => {
+    if (isAuthenticated !== true) return;
+    if (!navHydrated) return;
+
+    const browseOnly =
+      activeModule === "survey" || activeModule === "database" || activeModule === "gallery";
+    if (browseOnly) {
+      setIsLoading(false);
+      setSourceInfo((prev) => (prev === "Loading..." ? "Server · paged browse" : prev));
+      return;
+    }
+
+    if (fullDatasetStarted.current) return;
+    fullDatasetStarted.current = true;
 
     let alive = true;
     const load = async () => {
@@ -169,7 +232,7 @@ export default function Home() {
       alive = false;
       window.clearInterval(interval);
     };
-  }, [isAuthenticated]);
+  }, [isAuthenticated, navHydrated, activeModule]);
 
   // Keep selected asset in sync when fresh records arrive (photos load after list refresh)
   useEffect(() => {
@@ -240,7 +303,7 @@ export default function Home() {
       setFullPageModule(null);
       setActiveModule("assets");
       setInnerOpen(true);
-    } else if (activeModule !== "assets" && activeModule !== "settings") {
+    } else if (activeModule !== "assets") {
       setActiveModule("assets");
       setInnerOpen(true);
     }
@@ -250,7 +313,12 @@ export default function Home() {
     }
 
     setSelectedRecord(enriched);
-    if (!rightOpen) setRightOpen(true);
+    setFeatureModalOpen(true);
+
+    const cat = getCategoryKey(enriched);
+    if (cat && visibleLayers[cat] === false) {
+      setVisibleLayers((prev) => ({ ...prev, [cat]: true }));
+    }
 
     if (!focusBase) {
       setMapFocus(null);
@@ -261,19 +329,14 @@ export default function Home() {
     const focus: MapGotoDetail = { ...focusBase, label, preserveZoom: true };
 
     setMapFocus(focus);
-    setToast({
-      message: `Showing on map: ${label}  Â·  ${focus.lat.toFixed(5)}, ${focus.lng.toFixed(5)}`,
-      type: "success",
-    });
-
-    // 2) Fire go-to immediately (direct Leaflet + event)
     fireMapGoto(focus);
   };
 
   // Clicking a nav module:
-  // - "assets" â†’ show inner panel (map mode)
-  // - everything else â†’ open full-page overlay, hide inner panel
+  // - "assets" → show inner panel (map mode)
+  // - everything else → open full-page overlay, hide inner panel
   const handleNavSelect = (m: NavModule) => {
+    m = canonicalizeNavModule(m);
     if (m === "users" && !canManageUsers(currentUser)) {
       setToast({ message: "You do not have permission to manage users.", type: "error" });
       return;
@@ -285,10 +348,11 @@ export default function Home() {
     setActiveModule(m);
     if (FULLPAGE_MODULES.includes(m)) {
       setFullPageModule(m);
-      setInnerOpen(false);   // hide inner panel while full-page is open
+      setInnerOpen(false);
+      setFeatureModalOpen(false);
     } else {
       setFullPageModule(null);
-      setInnerOpen(true);    // re-show inner panel for assets/settings
+      setInnerOpen(true);
     }
   };
 
@@ -423,14 +487,9 @@ export default function Home() {
         <LeftNav
           active={activeModule}
           onSelect={handleNavSelect}
-          innerOpen={innerOpen}
-          onToggleInner={() => {
-            // only toggle if we're NOT in full-page mode
-            if (!fullPageModule) setInnerOpen(o => !o);
-          }}
         />
 
-        {/* Inner panel — only shown for assets/settings, not during full-page */}
+        {/* Inner panel — map layers only, hidden during full-page overlays */}
         {!fullPageModule && (
           <div className={`inner-panel${innerOpen ? "" : " collapsed"}`}>
             {isLoading ? (
@@ -446,8 +505,22 @@ export default function Home() {
                 onSelectRecord={handleSelectRecord}
                 selectedRoad={selectedRoad}
                 onRoadFilter={setSelectedRoad}
-                onNavSelect={handleNavSelect}
-                currentUser={currentUser}
+                visibleLayers={visibleLayers}
+                onToggleLayer={(key) => setVisibleLayers((prev) => ({ ...prev, [key]: prev[key] === false }))}
+                onSetGroupVisible={(keys, visible) =>
+                  setVisibleLayers((prev) => {
+                    const next = { ...prev };
+                    keys.forEach((key) => { next[key] = visible; });
+                    return next;
+                  })
+                }
+                onSetAllVisible={(visible) =>
+                  setVisibleLayers((prev) => {
+                    const next = { ...prev };
+                    ALL_OVERLAY_KEYS.forEach((key) => { next[key] = visible; });
+                    return next;
+                  })
+                }
               />
             )}
           </div>
@@ -479,6 +552,7 @@ export default function Home() {
                 selectedRecord={selectedRecord}
                 mapFocus={mapFocus}
                 onSelectRecord={handleSelectRecord}
+                visibleLayers={visibleLayers}
               />
             </MapErrorBoundary>
           )}
@@ -494,6 +568,8 @@ export default function Home() {
               onToast={(msg, type) => setToast({ message: msg, type })}
               lastSynced={lastSynced}
               currentUser={currentUser}
+              onNavSelect={handleNavSelect}
+              onSignOut={handleSignOut}
             />
           )}
         </div>
@@ -512,12 +588,18 @@ export default function Home() {
         <div className={`right-panel${rightOpen ? "" : " collapsed"}`}>
           <RightPanel
             records={visibleRecords}
-            selectedRecord={selectedRecord}
-            onClose={() => setSelectedRecord(null)}
+            onSelectRecord={handleSelectRecord}
           />
         </div>
 
       </div>
+
+      {featureModalOpen && selectedRecord && (
+        <FeatureDetailModal
+          record={selectedRecord}
+          onClose={() => setFeatureModalOpen(false)}
+        />
+      )}
 
       {/* --- Footer ------------------------------------------------------------ */}
       <footer className="app-footer">

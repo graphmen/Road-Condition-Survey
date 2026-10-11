@@ -234,6 +234,13 @@ body {
   border-color: var(--border-active);
 }
 
+.mobile-input:disabled {
+  background: var(--bg-secondary, #f3f4f6);
+  color: var(--text-primary);
+  opacity: 1;
+  -webkit-text-fill-color: var(--text-primary);
+}
+
 .mobile-btn {
   background: var(--accent-emerald);
   color: #ffffff;

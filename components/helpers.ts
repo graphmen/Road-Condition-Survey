@@ -379,6 +379,12 @@ export function getSadcValue(r: any): "yes" | "no" | "mixed" | "" {
 export function getRecordStatus(record: any): RecordStatus {
   if (!record) return "good";
 
+  if (record.rupture_kind === "under_construction") return "under_construction";
+  if (record.rupture_kind === "rupture") {
+    return normalizeConditionValue(record.rupture_condition || "poor");
+  }
+  if (record.rupture_condition) return normalizeConditionValue(record.rupture_condition);
+
   if (record.catchpit_condition) return normalizeConditionValue(record.catchpit_condition);
   if (record.traffic_calming_condition) return normalizeConditionValue(record.traffic_calming_condition);
 
@@ -441,6 +447,7 @@ export function getAssetType(record: any): string {
       layby: "Lay By",
       busstop: "Bus Stop",
       junction: "Junction",
+      road_rupture: "Road Rupture",
       sign: "Road Sign",
       shelvet: "Shelvert",
       culvert: "Culvert",
@@ -459,6 +466,7 @@ export function getAssetType(record: any): string {
   if (record.culvet_class) return "Culvert";
   if (record.shelvets_type) return "Shelvert";
   if (record.junction_type) return "Junction";
+  if (record.rupture_kind) return "Road Rupture";
   if (record.bus_stop_present || record.busstop_type) return "Bus Stop";
   if (record.gravel_road_name) return "Gravel Road";
   if (record.paved_road_name) {
@@ -471,6 +479,60 @@ export function getAssetType(record: any): string {
   if (record.Status_001 || record.Power_Source_001 || record.streetlight_type) return "Street Light";
   if (record.sign_type || record.sign_name) return "Road Sign";
   return "Asset";
+}
+
+export type JunctionFilterLane = { length_m: number | string; condition: string };
+
+export const MAX_JUNCTION_FILTER_LANES = 6;
+
+export function parseJunctionFilterLanes(val: unknown): JunctionFilterLane[] {
+  if (typeof val === "string") {
+    try { val = JSON.parse(val); } catch { val = []; }
+  }
+  if (!Array.isArray(val) || val.length === 0) return [];
+  const parsed = val
+    .map((row) => {
+      if (!row || typeof row !== "object") return null;
+      const rec = row as { length_m?: unknown; condition?: unknown };
+      const n = typeof rec.length_m === "number" ? rec.length_m : parseFloat(String(rec.length_m ?? ""));
+      return {
+        length_m: Number.isFinite(n) ? n : "",
+        condition: ["good", "fair", "poor"].includes(String(rec.condition)) ? String(rec.condition) : "good",
+      } as JunctionFilterLane;
+    })
+    .filter(Boolean) as JunctionFilterLane[];
+  return parsed.slice(0, MAX_JUNCTION_FILTER_LANES);
+}
+
+export function resizeJunctionFilterLanes(lanes: JunctionFilterLane[], count: number): JunctionFilterLane[] {
+  const n = Math.max(1, Math.min(MAX_JUNCTION_FILTER_LANES, Math.round(count) || 1));
+  const next = lanes.slice(0, n);
+  while (next.length < n) next.push({ length_m: "", condition: "good" });
+  return next;
+}
+
+export function serializeJunctionFilterLanes(has: string, lanes: JunctionFilterLane[]): { length_m: number; condition: string }[] {
+  if (has !== "yes") return [];
+  return lanes
+    .map((lane) => {
+      const n = typeof lane.length_m === "number" ? lane.length_m : parseFloat(String(lane.length_m));
+      return { length_m: n, condition: lane.condition || "good" };
+    })
+    .filter((lane) => Number.isFinite(lane.length_m) && lane.length_m > 0);
+}
+
+export function junctionFilterLaneSummary(record: any): string | null {
+  if (!record || record.junction_has_filter_lanes === "no") return null;
+  const raw = record.junction_filter_lanes;
+  const lanes = parseJunctionFilterLanes(raw);
+  const withLen = lanes.filter((l) => Number(l.length_m) > 0);
+  if (withLen.length === 0) {
+    return record.junction_has_filter_lanes === "yes" ? "filter lanes" : null;
+  }
+  const n = withLen.length;
+  const total = withLen.reduce((sum, l) => sum + Number(l.length_m), 0);
+  const noun = n === 1 ? "filter lane" : "filter lanes";
+  return `${n} ${noun}, ${Math.round(total)} m`;
 }
 
 export function getAssetName(record: any): string {
@@ -544,7 +606,18 @@ export function getAssetName(record: any): string {
     }
     case "junction": {
       const jt = pick("junction_type");
-      return jt ? `Junction (${titleCase(jt)})` : roadBit ? `${roadBit} Junction` : "Junction";
+      const filterBit = junctionFilterLaneSummary(record);
+      const base = jt ? `Junction (${titleCase(jt)})` : roadBit ? `${roadBit} Junction` : "Junction";
+      return filterBit ? `${base} · ${filterBit}` : base;
+    }
+    case "road_rupture": {
+      const kind = pick("rupture_kind");
+      const cause = pick("rupture_cause");
+      if (kind === "under_construction") {
+        return roadBit ? `${roadBit} Under Construction` : "Under Construction";
+      }
+      if (cause) return roadBit ? `${roadBit} Rupture (${titleCase(cause)})` : `Road Rupture (${titleCase(cause)})`;
+      return roadBit ? `${roadBit} Road Rupture` : "Road Rupture";
     }
     case "grid":
       return grid || (roadBit ? `${roadBit} Grid` : "Grid");
@@ -626,6 +699,7 @@ export function getCategoryKey(record: any): string {
   if (type === "Lay By" || type === "Layby") return "layby";
   if (type === "Bus Stop") return "busstop";
   if (type === "Junction") return "junction";
+  if (type === "Road Rupture") return "road_rupture";
   if (type === "Road Sign") return "sign";
   if (type === "Shelvert" || type === "Shelvet") return "shelvet";
   if (type === "Culvert") return "culvert";

@@ -30,6 +30,9 @@ export function LoginScreen({ serverUrl, onLoginSuccess, onServerUrlChange }: Lo
     const resolved = ensureNativeServerUrl();
     setBackendUrl(resolved);
     onServerUrlChange?.(resolved);
+    if (typeof window !== "undefined" && window.location.port === "5173") {
+      localStorage.setItem("roads_server_url", resolved);
+    }
   }, [onServerUrlChange]);
 
   const persistServerUrl = (url: string) => {
