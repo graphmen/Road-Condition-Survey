@@ -1458,14 +1458,17 @@ async function fetchCategoryStats(category: string, signal: AbortSignal): Promis
     let good = 0;
     let fair = 0;
     let poor = 0;
-    const goodVals = new Set(CONDITION_FILTER_VALUES.good);
-    const fairVals = new Set(CONDITION_FILTER_VALUES.fair);
-    const poorVals = new Set(CONDITION_FILTER_VALUES.poor);
+    const goodList = CONDITION_FILTER_VALUES.good;
+    const fairList = CONDITION_FILTER_VALUES.fair;
+    const poorList = CONDITION_FILTER_VALUES.poor;
+    const goodVals = new Set(goodList);
+    const fairVals = new Set(fairList);
+    const poorVals = new Set(poorList);
     for (const row of rows) {
       const raw = String(row[col] ?? "").toLowerCase().trim();
-      if (goodVals.has(raw) || [...goodVals].some((v) => raw.includes(v))) good += 1;
-      else if (fairVals.has(raw) || [...fairVals].some((v) => raw.includes(v))) fair += 1;
-      else if (poorVals.has(raw) || [...poorVals].some((v) => raw.includes(v))) poor += 1;
+      if (goodVals.has(raw) || goodList.some((v) => raw.includes(v))) good += 1;
+      else if (fairVals.has(raw) || fairList.some((v) => raw.includes(v))) fair += 1;
+      else if (poorVals.has(raw) || poorList.some((v) => raw.includes(v))) poor += 1;
     }
     return { total: Number.isFinite(total) ? total : rows.length, good, fair, poor };
   } catch {
